@@ -499,9 +499,10 @@ function SettingsView() {
 
   const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
     try {
+      // @ts-expect-error - Dynamic field update requires type assertion
       await supabase
         .from('player_settings')
-        .update({ [field]: value } as any)
+        .update({ [field]: value })
         .eq('player_id', PLAYER_ID);
     } catch (error) {
       console.error('Failed to update settings:', error);
