@@ -119,7 +119,7 @@ function App() {
 function QueueView() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
-  const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [settings, setSettings] = useState<PlayerSettings | null>(null); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -414,7 +414,7 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null); // eslint-disable-line @typescript-eslint/no-unused-vars
 
   useEffect(() => {
     loadPlaylists();
@@ -499,10 +499,10 @@ function SettingsView() {
 
   const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
     try {
-      const updateData: Record<string, any> = { [field]: value };
+      const updateData = { [field]: value } as Partial<PlayerSettings>;
       await supabase
         .from('player_settings')
-        .update(updateData)
+        .update(updateData as any)
         .eq('player_id', PLAYER_ID);
     } catch (error) {
       console.error('Failed to update settings:', error);
