@@ -128,8 +128,8 @@ export interface Database {
 // CLIENT INITIALIZATION
 // =============================================================================
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseUrl = (import.meta.env?.VITE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_URL : '')) as string;
+const supabaseAnonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_ANON_KEY : '')) as string;
 
 export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -137,7 +137,7 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supa
 // REALTIME HELPERS
 // =============================================================================
 
-export interface RealtimeSubscription<T> {
+export interface RealtimeSubscription {
   channel: RealtimeChannel;
   unsubscribe: () => void;
 }
@@ -149,14 +149,14 @@ export function subscribeToTable<T = any>(
   table: string,
   filter: { column?: string; value?: any } | null,
   callback: (payload: { eventType: 'INSERT' | 'UPDATE' | 'DELETE'; new: T; old: T }) => void
-): RealtimeSubscription<T> {
+): RealtimeSubscription {
   const channelName = filter?.column && filter?.value
     ? `${table}:${filter.column}=eq.${filter.value}`
     : `${table}:*`;
 
   const channel = supabase.channel(channelName);
 
-  const subscription = channel
+  channel
     .on(
       'postgres_changes',
       {
@@ -361,7 +361,7 @@ export async function callQueueManager(params: {
       p_player_id: params.player_id,
       p_queue_ids: params.queue_ids,
       p_type: params.type || 'normal'
-    });
+    } as any);
     if (error) throw error;
     return { success: true };
   }
@@ -438,7 +438,7 @@ export async function callPlaylistManager(params: {
 export async function initializePlayerPlaylist(playerId: string) {
   const { data, error } = await supabase.rpc('initialize_player_playlist', {
     p_player_id: playerId
-  });
+  } as any);
 
   if (error) throw error;
   return data?.[0] || null;
@@ -452,7 +452,7 @@ export async function loadPlaylist(playerId: string, playlistId: string, startIn
     p_player_id: playerId,
     p_playlist_id: playlistId,
     p_start_index: startIndex
-  });
+  } as any);
 
   if (error) throw error;
   return data?.[0] || null;
@@ -464,7 +464,7 @@ export async function loadPlaylist(playerId: string, playlistId: string, startIn
 export async function getDefaultPlaylist(playerId: string) {
   const { data, error } = await supabase.rpc('get_default_playlist', {
     p_player_id: playerId
-  });
+  } as any);
 
   if (error) throw error;
   return data?.[0] || null;
