@@ -128,8 +128,8 @@ export interface Database {
 // CLIENT INITIALIZATION
 // =============================================================================
 
-const supabaseUrl = (import.meta.env?.VITE_SUPABASE_URL || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_URL : '')) as string;
-const supabaseAnonKey = (import.meta.env?.VITE_SUPABASE_ANON_KEY || (typeof process !== 'undefined' ? process.env.VITE_SUPABASE_ANON_KEY : '')) as string;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supabaseAnonKey);
 
@@ -189,7 +189,7 @@ export function subscribeToTable<T = any>(
 export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
-): RealtimeSubscription<PlayerStatus> {
+): RealtimeSubscription {
   // Fetch initial status with media_item join
   supabase
     .from('player_status')
@@ -225,7 +225,7 @@ export function subscribeToPlayerStatus(
 export function subscribeToQueue(
   playerId: string,
   callback: (items: QueueItem[]) => void
-): RealtimeSubscription<QueueItem> {
+): RealtimeSubscription {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   
   const fetchQueue = () => {
@@ -269,7 +269,7 @@ export function subscribeToQueue(
 export function subscribeToPlayerSettings(
   playerId: string,
   callback: (settings: PlayerSettings) => void
-): RealtimeSubscription<PlayerSettings> {
+): RealtimeSubscription {
   // Fetch initial settings
   supabase
     .from('player_settings')
@@ -297,7 +297,7 @@ export function subscribeToPlayerSettings(
 export function subscribeToKioskSession(
   sessionId: string,
   callback: (session: KioskSession) => void
-): RealtimeSubscription<KioskSession> {
+): RealtimeSubscription {
   // Fetch initial session
   supabase
     .from('kiosk_sessions')
@@ -325,7 +325,7 @@ export function subscribeToKioskSession(
 export function subscribeToSystemLogs(
   playerId: string,
   callback: (log: SystemLog) => void
-): RealtimeSubscription<SystemLog> {
+): RealtimeSubscription {
   return subscribeToTable<SystemLog>(
     'system_logs',
     { column: 'player_id', value: playerId },

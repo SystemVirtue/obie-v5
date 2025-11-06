@@ -119,7 +119,7 @@ function App() {
 function QueueView() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
-  // const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [settings, setSettings] = useState<PlayerSettings | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -414,7 +414,7 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  // const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
 
   useEffect(() => {
     loadPlaylists();
