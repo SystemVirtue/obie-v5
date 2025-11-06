@@ -1,0 +1,76 @@
+🎵 Importing multiple playlists to Obie Jukebox...
+📋 Getting Supabase credentials...
+Stopped services: [supabase_imgproxy_obie-v5 supabase_pooler_obie-v5]
+supabase local development setup is running.
+
+Stopped services: [supabase_imgproxy_obie-v5 supabase_pooler_obie-v5]
+supabase local development setup is running.
+
+
+📚 Found 7 playlists to import
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: DJAMMMS Default Playlist
+   ID: PLJ7vMjpVbhBWLWJpweVDki43Wlcqzsqdu
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: Obie Nights
+   ID: PLN9QqCogPsXIoSObV0F39OZ_MlRZ9tRT9
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: Obie Playlist
+   ID: PLN9QqCogPsXJCgeL_iEgYnW6Rl_8nIUUH
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: Obie Jo
+   ID: PLN9QqCogPsXIkPh6xm7cxSN9yTVaEoj0j
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: Karaoke
+   ID: PLN9QqCogPsXLAtgvLQ0tvpLv820R7PQsM
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: Poly
+   ID: PLN9QqCogPsXLsv5D5ZswnOSnRIbGU80IS
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+📂 Processing: Obie Johno
+   ID: PLN9QqCogPsXIqfwdfe4hf3qWM1mFweAXP
+
+   Creating playlist...
+   ❌ Failed to get playlist ID from response
+   Response: {"msg":"Error: Missing authorization header"}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 Import Summary:
+   Total Playlists: 7
+   ✅ Successful: 0
+   ❌ Failed: 7
+   🎵 Total Videos: 0
+
+⚠️  No playlists were successfully imported

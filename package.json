@@ -1,0 +1,29 @@
+{
+  "name": "obie-jukebox-v2",
+  "version": "2.0.0",
+  "description": "Server-first real-time jukebox with Supabase",
+  "private": true,
+  "workspaces": [
+    "web/admin",
+    "web/player",
+    "web/kiosk"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:admin\" \"npm run dev:player\" \"npm run dev:kiosk\"",
+    "dev:admin": "cd web/admin && npm run dev",
+    "dev:player": "cd web/player && npm run dev",
+    "dev:kiosk": "cd web/kiosk && npm run dev",
+    "build": "npm run build:admin && npm run build:player && npm run build:kiosk",
+    "build:admin": "cd web/admin && npm run build",
+    "build:player": "cd web/player && npm run build",
+    "build:kiosk": "cd web/kiosk && npm run build",
+    "supabase:start": "supabase start",
+    "supabase:stop": "supabase stop",
+    "supabase:reset": "supabase db reset",
+    "supabase:deploy": "supabase functions deploy"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "supabase": "^1.145.0"
+  }
+}
