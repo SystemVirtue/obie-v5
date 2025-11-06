@@ -119,7 +119,7 @@ function App() {
 function QueueView() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
-  const [settings, setSettings] = useState<PlayerSettings | null>(null); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [_settings, _setSettings] = useState<PlayerSettings | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -131,7 +131,7 @@ function QueueView() {
   useEffect(() => {
     const queueSub = subscribeToQueue(PLAYER_ID, setQueue);
     const statusSub = subscribeToPlayerStatus(PLAYER_ID, setStatus);
-    const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
+    const settingsSub = subscribeToPlayerSettings(PLAYER_ID, _setSettings);
 
     return () => {
       queueSub.unsubscribe();
@@ -414,7 +414,7 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null); // eslint-disable-line @typescript-eslint/no-unused-vars
+  const [_selectedPlaylist, _setSelectedPlaylist] = useState<string | null>(null);
 
   useEffect(() => {
     loadPlaylists();
@@ -463,7 +463,7 @@ function PlaylistsView() {
           <div
             key={playlist.id}
             className="bg-gray-800 rounded-lg p-6 cursor-pointer hover:bg-gray-700 transition"
-            onClick={() => setSelectedPlaylist(playlist.id)}
+            onClick={() => _setSelectedPlaylist(playlist.id)}
           >
             <h3 className="text-xl font-bold mb-2">{playlist.name}</h3>
             {playlist.description && (
@@ -499,10 +499,9 @@ function SettingsView() {
 
   const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
     try {
-      const updateData = { [field]: value } as Partial<PlayerSettings>;
       await supabase
         .from('player_settings')
-        .update(updateData as any)
+        .update({ [field]: value } as any)
         .eq('player_id', PLAYER_ID);
     } catch (error) {
       console.error('Failed to update settings:', error);
