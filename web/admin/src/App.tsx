@@ -499,10 +499,9 @@ function SettingsView() {
 
   const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
     try {
-      // @ts-ignore - Dynamic field update with computed property name
-      await supabase
-        .from('player_settings')
-        .update({ [field]: value })
+      const updateObj: any = { [field]: value };
+      await (supabase.from('player_settings') as any)
+        .update(updateObj)
         .eq('player_id', PLAYER_ID);
     } catch (error) {
       console.error('Failed to update settings:', error);
