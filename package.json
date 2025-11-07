@@ -17,6 +17,7 @@
     "build:admin": "cd web/admin && npm run build",
     "build:player": "cd web/player && npm run build",
     "build:kiosk": "cd web/kiosk && npm run build",
+    "start": "npx serve web/admin/dist -l 3000",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
