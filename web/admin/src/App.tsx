@@ -414,7 +414,8 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
-  const [_selectedPlaylist, _setSelectedPlaylist] = useState<string | null>(null);
+  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     loadPlaylists();
@@ -445,6 +446,36 @@ function PlaylistsView() {
     }
   };
 
+  const handleLoadPlaylist = async (playlistId: string) => {
+    if (loading) return;
+    
+    setLoading(true);
+    try {
+      console.log('[handleLoadPlaylist] Loading playlist:', playlistId);
+      
+      // Call the load_playlist RPC function
+      const { data, error } = await (supabase.rpc as any)('load_playlist', {
+        p_player_id: PLAYER_ID,
+        p_playlist_id: playlistId,
+        p_start_index: 0
+      });
+
+      if (error) throw error;
+
+      console.log('[handleLoadPlaylist] Playlist loaded successfully:', data);
+      const loadedCount = data?.[0]?.loaded_count || 0;
+      alert(`Playlist loaded successfully! Added ${loadedCount} songs to queue.`);
+      
+      // Refresh playlists to show updated is_active status
+      await loadPlaylists();
+    } catch (error) {
+      console.error('[handleLoadPlaylist] Failed to load playlist:', error);
+      alert('Failed to load playlist. Check console for details.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -458,20 +489,39 @@ function PlaylistsView() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {playlists.map((playlist) => (
           <div
             key={playlist.id}
-            className="bg-gray-800 rounded-lg p-6 cursor-pointer hover:bg-gray-700 transition"
-            onClick={() => _setSelectedPlaylist(playlist.id)}
+            className={`bg-gray-800 rounded-lg p-6 transition border-2 ${
+              selectedPlaylist === playlist.id 
+                ? 'border-blue-500' 
+                : 'border-transparent hover:border-gray-600'
+            }`}
+            onClick={() => setSelectedPlaylist(playlist.id)}
           >
-            <h3 className="text-xl font-bold mb-2">{playlist.name}</h3>
+            <div className="flex justify-between items-start mb-3">
+              <h3 className="text-xl font-bold">{playlist.name}</h3>
+              {playlist.is_active && (
+                <span className="px-2 py-1 bg-green-600 text-xs rounded">Active</span>
+              )}
+            </div>
+            
             {playlist.description && (
-              <p className="text-sm text-gray-400">{playlist.description}</p>
+              <p className="text-sm text-gray-400 mb-4">{playlist.description}</p>
             )}
-            {playlist.is_active && (
-              <span className="inline-block mt-2 px-2 py-1 bg-green-600 text-xs rounded">Active</span>
-            )}
+            
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                handleLoadPlaylist(playlist.id);
+              }}
+              disabled={loading}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-lg transition text-sm font-semibold"
+            >
+              <Play size={16} />
+              {loading && selectedPlaylist === playlist.id ? 'Loading...' : 'Load Playlist'}
+            </button>
           </div>
         ))}
       </div>
