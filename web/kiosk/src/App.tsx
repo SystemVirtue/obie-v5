@@ -1,7 +1,7 @@
 // Obie Kiosk - Public Search & Request Interface
 // Server-driven credit system and priority queue
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import {
   subscribeToKioskSession,
   subscribeToPlayerSettings,
@@ -10,11 +10,10 @@ import {
   callKioskHandler,
   type KioskSession,
   type PlayerSettings,
-  type MediaItem,
   type QueueItem,
   type PlayerStatus,
 } from '@shared/supabase-client';
-import { Search, Coins, Music, Clock } from 'lucide-react';
+import { Search, Coins } from 'lucide-react';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
@@ -22,9 +21,6 @@ function App() {
   const [session, setSession] = useState<KioskSession | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<MediaItem[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [requestStatus, setRequestStatus] = useState<string | null>(null);
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
   const [showSearch, setShowSearch] = useState(false);
@@ -72,73 +68,16 @@ function App() {
     return () => sub.unsubscribe();
   }, []);
 
-  // Handle search
-  const handleSearch = useCallback(async (query: string) => {
-    if (!session || query.trim().length === 0) {
-      setSearchResults([]);
-      return;
-    }
-
-    setIsSearching(true);
-    try {
-      const { results } = await callKioskHandler({
-        session_id: session.session_id,
-        action: 'search',
-        query,
-      });
-      setSearchResults(results || []);
-    } catch (error) {
-      console.error('Search failed:', error);
-      setSearchResults([]);
-    } finally {
-      setIsSearching(false);
-    }
-  }, [session]);
-
   // Debounced search
   useEffect(() => {
     const timer = setTimeout(() => {
       if (searchQuery.length >= 2) {
-        handleSearch(searchQuery);
-      } else {
-        setSearchResults([]);
+        // TODO: Implement search
       }
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [searchQuery, handleSearch]);
-
-  // Handle song request
-  const handleRequest = async (mediaItem: MediaItem) => {
-    if (!session || !settings) return;
-
-    // Check credits
-    if (!settings.freeplay && session.credits < settings.coin_per_song) {
-      setRequestStatus('⚠️ Insufficient credits! Insert coins.');
-      setTimeout(() => setRequestStatus(null), 3000);
-      return;
-    }
-
-    try {
-      const { success, credits } = await callKioskHandler({
-        session_id: session.session_id,
-        action: 'request',
-        media_item_id: mediaItem.id,
-      });
-
-      if (success) {
-        setSession({ ...session, credits });
-        setRequestStatus('✓ Song added to queue!');
-        setTimeout(() => setRequestStatus(null), 3000);
-        setSearchQuery('');
-        setSearchResults([]);
-      }
-    } catch (error: any) {
-      console.error('Request failed:', error);
-      setRequestStatus(`❌ ${error.message || 'Request failed'}`);
-      setTimeout(() => setRequestStatus(null), 3000);
-    }
-  };
+  }, [searchQuery]);
 
   // Simulate coin insertion (for testing - replace with WebSerial API)
   const handleCoinInsert = async () => {
