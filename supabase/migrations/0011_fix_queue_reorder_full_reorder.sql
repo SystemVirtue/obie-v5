@@ -13,6 +13,8 @@ DECLARE
   v_remaining_ids uuid[];
   v_combined_ids uuid[];
   v_count int;
+  v_max_position int;
+  v_temp_offset int;
 BEGIN
   PERFORM pg_advisory_xact_lock(hashtext('queue_' || p_player_id::text));
 
@@ -54,17 +56,36 @@ BEGIN
     RETURN; -- nothing to do
   END IF;
 
-  -- Atomically update positions for all ids in the combined array
+  -- To avoid unique-constraint collisions during the positional update we
+  -- perform a two-phase update: first write temporary positions offset by a
+  -- large number, then subtract the offset to set the final positions. The
+  -- offset is computed from the current max position so it's safe.
+  SELECT COALESCE(MAX(position), 0) INTO v_max_position
+  FROM queue
+  WHERE player_id = p_player_id AND type = p_type AND played_at IS NULL;
+
+  v_temp_offset := v_max_position + v_count + 1000;
+
   WITH new_positions AS (
     SELECT unnest(v_combined_ids) AS queue_id,
-           generate_series(v_start_position, v_start_position + array_length(v_combined_ids, 1) - 1) AS new_position
+           generate_series(v_start_position, v_start_position + v_count - 1) AS new_position
   )
+  -- Phase 1: write to temporary high positions
   UPDATE queue q
-  SET position = np.new_position
+  SET position = np.new_position + v_temp_offset
   FROM new_positions np
   WHERE q.id = np.queue_id
     AND q.player_id = p_player_id
-    AND q.type = p_type;
+    AND q.type = p_type
+    AND q.played_at IS NULL;
+
+  -- Phase 2: shift back into final positions
+  UPDATE queue
+  SET position = position - v_temp_offset
+  WHERE player_id = p_player_id
+    AND type = p_type
+    AND played_at IS NULL
+    AND position > v_temp_offset - 1; -- only touch the temporary positions we set
 
   PERFORM log_event(p_player_id, 'queue_reorder', 'info', jsonb_build_object('count', v_count, 'start_position', v_start_position));
 END;

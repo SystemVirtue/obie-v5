@@ -137,7 +137,7 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supa
 // REALTIME HELPERS
 // =============================================================================
 
-export interface RealtimeSubscription {
+export interface RealtimeSubscription<T> {
   channel: RealtimeChannel;
   unsubscribe: () => void;
 }
@@ -149,14 +149,14 @@ export function subscribeToTable<T = any>(
   table: string,
   filter: { column?: string; value?: any } | null,
   callback: (payload: { eventType: 'INSERT' | 'UPDATE' | 'DELETE'; new: T; old: T }) => void
-): RealtimeSubscription {
+): RealtimeSubscription<T> {
   const channelName = filter?.column && filter?.value
     ? `${table}:${filter.column}=eq.${filter.value}`
     : `${table}:*`;
 
   const channel = supabase.channel(channelName);
 
-  channel
+  const subscription = channel
     .on(
       'postgres_changes',
       {
@@ -189,7 +189,7 @@ export function subscribeToTable<T = any>(
 export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
-): RealtimeSubscription {
+): RealtimeSubscription<PlayerStatus> {
   // Fetch initial status with media_item join
   supabase
     .from('player_status')
@@ -225,7 +225,7 @@ export function subscribeToPlayerStatus(
 export function subscribeToQueue(
   playerId: string,
   callback: (items: QueueItem[]) => void
-): RealtimeSubscription {
+): RealtimeSubscription<QueueItem> {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   
   const fetchQueue = () => {
@@ -269,7 +269,7 @@ export function subscribeToQueue(
 export function subscribeToPlayerSettings(
   playerId: string,
   callback: (settings: PlayerSettings) => void
-): RealtimeSubscription {
+): RealtimeSubscription<PlayerSettings> {
   // Fetch initial settings
   supabase
     .from('player_settings')
@@ -297,7 +297,7 @@ export function subscribeToPlayerSettings(
 export function subscribeToKioskSession(
   sessionId: string,
   callback: (session: KioskSession) => void
-): RealtimeSubscription {
+): RealtimeSubscription<KioskSession> {
   // Fetch initial session
   supabase
     .from('kiosk_sessions')
@@ -325,7 +325,7 @@ export function subscribeToKioskSession(
 export function subscribeToSystemLogs(
   playerId: string,
   callback: (log: SystemLog) => void
-): RealtimeSubscription {
+): RealtimeSubscription<SystemLog> {
   return subscribeToTable<SystemLog>(
     'system_logs',
     { column: 'player_id', value: playerId },
@@ -343,7 +343,6 @@ export function subscribeToSystemLogs(
 
 /**
  * Call queue manager edge function
- * For large reorder operations (>50 items), calls RPC directly to avoid request size limits
  */
 export async function callQueueManager(params: {
   player_id: string;
@@ -354,25 +353,39 @@ export async function callQueueManager(params: {
   type?: 'normal' | 'priority';
   requested_by?: string;
 }) {
-  // For reorder with many items, call RPC directly to avoid Edge Function request size limits
-  if (params.action === 'reorder' && params.queue_ids && params.queue_ids.length > 50) {
-    console.log('[callQueueManager] Large reorder detected, calling RPC directly');
-    const { error } = await supabase.rpc('queue_reorder', {
-      p_player_id: params.player_id,
-      p_queue_ids: params.queue_ids,
-      p_type: params.type || 'normal'
-    } as any);
-    if (error) throw error;
-    return { success: true };
+  // For very large reorders, call the RPC directly to avoid sending a huge
+  // payload through the Edge Function and to allow the client to use the
+  // database RPC which accepts uuid[] more directly. This matches the
+  // optimized behavior used in the compiled app bundle.
+  try {
+    if (params.action === 'reorder' && Array.isArray(params.queue_ids) && params.queue_ids.length > 50) {
+      const { error } = await supabase.rpc('queue_reorder', {
+        p_player_id: params.player_id,
+        p_queue_ids: params.queue_ids,
+        p_type: params.type || 'normal'
+      });
+      if (error) throw error;
+      return { success: true } as any;
+    }
+
+    const { data, error } = await supabase.functions.invoke('queue-manager', {
+      body: params
+    });
+
+    if (error) {
+      // Normalize error to a real Error so callers receive a message string
+      throw new Error(error.message || JSON.stringify(error));
+    }
+
+    return data;
+  } catch (err: any) {
+    // If the caught error is a Postgres error object, normalize it so UI logs
+    // show readable information (code/message/detail).
+    if (err && typeof err === 'object' && (err.message || err.code)) {
+      throw new Error(err.message || `db_error:${err.code || JSON.stringify(err)}`);
+    }
+    throw err;
   }
-
-  // Otherwise use Edge Function
-  const { data, error } = await supabase.functions.invoke('queue-manager', {
-    body: params
-  });
-
-  if (error) throw error;
-  return data;
 }
 
 /**
@@ -403,12 +416,32 @@ export async function callKioskHandler(params: {
   media_item_id?: string;
   amount?: number;
 }) {
-  const { data, error } = await supabase.functions.invoke('kiosk-handler', {
-    body: params
-  });
+  try {
+    const { data, error } = await supabase.functions.invoke('kiosk-handler', {
+      body: params
+    });
 
-  if (error) throw error;
-  return data;
+    if (error) {
+      // Normalize FunctionsHttpError into a plain Error with message and status
+      const message = error.message || JSON.stringify(error);
+      const status = (error as any).status || (error as any).statusCode || null;
+      const detail = (error as any).hint || (error as any).details || null;
+      const err = new Error(status ? `${message} (status ${status})` : message);
+      (err as any).detail = detail;
+      throw err;
+    }
+
+    return data;
+  } catch (err: any) {
+    // If it's a FunctionsHttpError thrown by the SDK (non-2xx), normalize it
+    if (err && typeof err === 'object') {
+      const msg = err.message || JSON.stringify(err);
+      const normalized = new Error(msg);
+      (normalized as any).original = err;
+      throw normalized;
+    }
+    throw err;
+  }
 }
 
 /**
@@ -438,7 +471,7 @@ export async function callPlaylistManager(params: {
 export async function initializePlayerPlaylist(playerId: string) {
   const { data, error } = await supabase.rpc('initialize_player_playlist', {
     p_player_id: playerId
-  } as any);
+  });
 
   if (error) throw error;
   return data?.[0] || null;
@@ -452,7 +485,7 @@ export async function loadPlaylist(playerId: string, playlistId: string, startIn
     p_player_id: playerId,
     p_playlist_id: playlistId,
     p_start_index: startIndex
-  } as any);
+  });
 
   if (error) throw error;
   return data?.[0] || null;
@@ -464,7 +497,7 @@ export async function loadPlaylist(playerId: string, playlistId: string, startIn
 export async function getDefaultPlaylist(playerId: string) {
   const { data, error } = await supabase.rpc('get_default_playlist', {
     p_player_id: playerId
-  } as any);
+  });
 
   if (error) throw error;
   return data?.[0] || null;

@@ -4,8 +4,9 @@
 import { corsHeaders } from '../_shared/cors.ts';
 
 interface YouTubeRequest {
-  url: string;
-  type?: 'auto' | 'video' | 'playlist';
+  url?: string;
+  query?: string; // free-text search query
+  type?: 'auto' | 'video' | 'playlist' | 'search';
 }
 
 interface YouTubeVideo {
@@ -79,7 +80,58 @@ Deno.serve(async (req) => {
     const maxRetries = API_KEYS.length; // Try all keys if needed
 
     const body: YouTubeRequest = await req.json();
-    const { url, type = 'auto' } = body;
+    const { url, type = 'auto', query } = body;
+
+    // If a free-text search query is provided, prefer yt-dlp based search
+    if (type === 'search' || (query && !url)) {
+      // Try to run yt-dlp locally to perform a search and return results.
+      // This requires yt-dlp binary to be present in the function runtime environment.
+      try {
+        const searchQuery = (query || '').trim();
+        if (!searchQuery) {
+          return new Response(JSON.stringify({ videos: [], count: 0 }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+        // Use yt-dlp's "ytsearch" extractor to return a small number of matches
+        // --dump-json prints one JSON object per entry to stdout
+        const cmd = ['yt-dlp', '--no-warnings', '--dump-json', `ytsearch10:${searchQuery}`];
+        const p = Deno.run({ cmd, stdout: 'piped', stderr: 'piped' });
+        const [rawOut, rawErr] = await Promise.all([p.output(), p.stderrOutput()]);
+        const status = await p.status();
+        const outStr = new TextDecoder().decode(rawOut);
+        const errStr = new TextDecoder().decode(rawErr);
+
+        if (!status.success) {
+          console.error('yt-dlp search failed:', errStr);
+          // Fall back to YouTube Data API below if configured
+        } else {
+          // yt-dlp prints one JSON object per line for --dump-json
+          const lines = outStr.split(/\r?\n/).filter(Boolean);
+          for (const line of lines) {
+            try {
+              const item = JSON.parse(line);
+              // Normalize to YouTubeVideo shape
+              const vid: YouTubeVideo = {
+                id: item.id || item.video_id || '',
+                title: item.title || '',
+                artist: item.uploader || item.channel || null || '',
+                duration: typeof item.duration === 'number' ? item.duration : 0,
+                thumbnail: item.thumbnail || '',
+                url: item.webpage_url || (item.id ? `https://www.youtube.com/watch?v=${item.id}` : ''),
+              };
+              videos.push(vid);
+            } catch (e) {
+              console.warn('failed to parse yt-dlp line', e);
+            }
+          }
+
+          return new Response(JSON.stringify({ videos, count: videos.length }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+      } catch (e) {
+        console.warn('yt-dlp not available or failed to run:', (e as Error).message);
+        // Continue to API key based path below as a fallback
+      }
+    }
 
     if (!url) {
       return new Response(

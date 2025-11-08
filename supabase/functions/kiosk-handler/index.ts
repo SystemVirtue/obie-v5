@@ -93,7 +93,7 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Search media items (simple text search - can be enhanced)
+      // Search media items (DB first)
       const { data: results, error: searchError } = await supabase
         .from('media_items')
         .select('*')
@@ -102,13 +102,64 @@ Deno.serve(async (req) => {
 
       if (searchError) throw searchError;
 
-      // TODO: Integrate yt-dlp for external search
-      // For now, just return local database results
+      // If we found DB results, return them immediately
+      if (results && results.length > 0) {
+        return new Response(
+          JSON.stringify({ results }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
-      return new Response(
-        JSON.stringify({ results: results || [] }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      // No local results — try external search using the youtube-scraper function which
+      // may use yt-dlp (if available) or fall back to YouTube Data API.
+      try {
+        const scraperUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`;
+        const scrapeResp = await fetch(scraperUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            // Use service role so scraper has access to server-side env keys if needed
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          },
+          body: JSON.stringify({ query, type: 'search' }),
+        });
+
+        if (!scrapeResp.ok) {
+          const err = await scrapeResp.json().catch(() => ({ error: 'scraper_failed' }));
+          console.warn('youtube-scraper failed:', err);
+          return new Response(
+            JSON.stringify({ results: [] }),
+            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+
+        const { videos } = await scrapeResp.json();
+
+        // Map into our media_item-like shape (lightweight) so the kiosk UI can display
+        const mapped = (videos || []).map((v: any) => ({
+          id: null,
+          source_id: v.id,
+          source_type: 'youtube',
+          title: v.title,
+          artist: v.artist || null,
+          url: v.url,
+          duration: v.duration || null,
+          thumbnail: v.thumbnail || null,
+          fetched_at: new Date().toISOString(),
+          metadata: {},
+        }));
+
+        return new Response(
+          JSON.stringify({ results: mapped }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      } catch (e) {
+        console.warn('External search failed:', (e as Error).message);
+        return new Response(
+          JSON.stringify({ results: [] }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
     }
 
     // Handle credit increment

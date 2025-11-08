@@ -327,8 +327,37 @@ function App() {
   }, [ytApiReady]);
 
   // Initialize player with default playlist
+  useEffect(() => {
+    const initPlayer = async () => {
+      if (hasInitialized.current) return;
+      hasInitialized.current = true;
+
+      try {
+        console.log('[Player] Initializing player with default playlist...');
+        setInitStatus('loading_playlist');
+        
+        const result = await initializePlayerPlaylist(PLAYER_ID) as any;
+        
+        if (result?.success) {
+          console.log('[Player] Playlist loaded:', {
+            playlist_name: result.playlist_name,
+            loaded_count: result.loaded_count
+          });
+          setInitStatus('ready');
+        } else {
+          console.warn('[Player] No playlist available');
+          setInitStatus('no_playlist');
+        }
+      } catch (error) {
+        console.error('[Player] Failed to initialize playlist:', error);
+        setInitStatus('error');
+      }
+    };
+
+    initPlayer();
+  }, []);
+
   // Subscribe to player_status updates from Supabase
-  // This runs FIRST to get current state before initializing
   useEffect(() => {
     console.log('[Player] Subscribing to player status...');
     const prevStateRef = { current: status?.state };
@@ -337,43 +366,6 @@ function App() {
       console.log('[Player] Status update:', newStatus);
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
-      
-      // On first status load, check if we need to initialize playlist
-      if (!hasInitialized.current) {
-        hasInitialized.current = true;
-        
-        if (!newStatus.current_media_id) {
-          // No current media, load default playlist
-          console.log('[Player] No current media, initializing default playlist...');
-          setInitStatus('loading_playlist');
-          
-          try {
-            const result = await initializePlayerPlaylist(PLAYER_ID) as any;
-            
-            if (result?.success) {
-              console.log('[Player] Playlist loaded:', {
-                playlist_name: result.playlist_name,
-                loaded_count: result.loaded_count
-              });
-              setInitStatus('ready');
-            } else {
-              console.warn('[Player] No playlist available');
-              setInitStatus('no_playlist');
-            }
-          } catch (error) {
-            console.error('[Player] Failed to initialize playlist:', error);
-            setInitStatus('error');
-          }
-        } else {
-          // Resume from existing state
-          console.log('[Player] Resuming from existing state:', {
-            current_media_id: newStatus.current_media_id,
-            state: newStatus.state,
-            now_playing_index: newStatus.now_playing_index
-          });
-          setInitStatus('ready');
-        }
-      }
       
       // Handle state transitions with fades
       if (playerRef.current && prevState !== newState) {

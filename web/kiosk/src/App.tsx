@@ -5,10 +5,14 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   subscribeToKioskSession,
   subscribeToPlayerSettings,
+  subscribeToQueue,
+  subscribeToPlayerStatus,
   callKioskHandler,
   type KioskSession,
   type PlayerSettings,
   type MediaItem,
+  type QueueItem,
+  type PlayerStatus,
 } from '@shared/supabase-client';
 import { Search, Coins, Music, Clock } from 'lucide-react';
 
@@ -21,6 +25,9 @@ function App() {
   const [searchResults, setSearchResults] = useState<MediaItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [requestStatus, setRequestStatus] = useState<string | null>(null);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
 
   // Initialize session
   useEffect(() => {
@@ -50,6 +57,18 @@ function App() {
   // Subscribe to player settings
   useEffect(() => {
     const sub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
+    return () => sub.unsubscribe();
+  }, []);
+
+  // Subscribe to player status (now playing)
+  useEffect(() => {
+    const sub = subscribeToPlayerStatus(PLAYER_ID, (s) => setPlayerStatus(s));
+    return () => sub.unsubscribe();
+  }, []);
+
+  // Subscribe to queue for marquee / upcoming list
+  useEffect(() => {
+    const sub = subscribeToQueue(PLAYER_ID, (items) => setQueue(items));
     return () => sub.unsubscribe();
   }, []);
 
@@ -139,147 +158,96 @@ function App() {
 
   if (!session || !settings) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-900 to-blue-900 flex items-center justify-center">
+      <div className="min-h-screen bg-black flex items-center justify-center">
         <div className="text-center">
-          <div className="inline-block w-16 h-16 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-          <div className="text-2xl text-white">Initializing...</div>
+          <div className="inline-block w-16 h-16 border-4 border-yellow-400 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <div className="text-2xl text-yellow-400">Initializing...</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
-      {/* Header */}
-      <header className="bg-black bg-opacity-50 backdrop-blur-sm px-8 py-6 border-b border-white border-opacity-20">
-        <div className="max-w-6xl mx-auto flex justify-between items-center">
-          <div>
-            <h1 className="text-4xl font-bold text-white mb-1">
-              {settings.branding.name || 'Obie Jukebox'}
-            </h1>
-            <p className="text-gray-300">Search and request your favorite songs</p>
-          </div>
+    <div className="min-h-screen bg-black text-white relative overflow-hidden">
+      {/* Top-left Now Playing pill */}
+      <div className="absolute top-6 left-6">
+        <div className="px-4 py-2 rounded-md border-2 border-yellow-400 text-sm font-semibold text-yellow-400 bg-black/40">
+          Now Playing: {playerStatus?.current_media?.title ? `${playerStatus.current_media.title}${playerStatus.current_media.artist ? ' - ' + playerStatus.current_media.artist : ''}` : 'Nothing playing'}
+        </div>
+      </div>
 
-          {/* Credits Display */}
-          <div className="bg-white bg-opacity-10 backdrop-blur-lg rounded-2xl px-8 py-4 border border-white border-opacity-20">
-            <div className="flex items-center gap-3">
-              <Coins size={32} className="text-yellow-400" />
-              <div>
-                <div className="text-sm text-gray-300">Credits</div>
-                <div className="text-4xl font-bold text-white">{session.credits}</div>
+      {/* Top-right credits pill */}
+      <div className="absolute top-6 right-6">
+        <div className="flex items-center gap-3 bg-yellow-400 text-black px-4 py-2 rounded-md font-bold">
+          <div className="text-xs uppercase">Credits</div>
+          <div className="text-2xl">{session.credits}</div>
+        </div>
+      </div>
+
+      {/* Center big search button */}
+      <main className="min-h-screen flex items-center justify-center">
+        <div className="text-center">
+          <button
+            onClick={() => { setShowSearch(true); const el = document.getElementById('kiosk-search-input'); if (el) (el as HTMLInputElement).focus(); }}
+            className="inline-flex items-center gap-4 border-2 border-yellow-400 text-yellow-400 px-10 py-6 rounded-lg text-2xl font-bold hover:bg-yellow-400/10 transition"
+          >
+            <span className="text-2xl">♫</span>
+            Search for Music
+            <span className="text-2xl">♫</span>
+          </button>
+
+          {/* Reveal search bar when requested */}
+          {showSearch && (
+            <div className="mt-8 px-6">
+              <div className="relative w-[720px] mx-auto">
+                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
+                <input
+                  id="kiosk-search-input"
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search for songs, artists, or albums..."
+                  className="w-full bg-transparent text-white text-xl pl-12 pr-6 py-4 rounded-md border border-yellow-400/30 focus:outline-none"
+                />
               </div>
             </div>
-            {!settings.freeplay && (
-              <div className="text-xs text-gray-400 mt-2">
-                {settings.coin_per_song} credit{settings.coin_per_song > 1 ? 's' : ''} per song
-              </div>
-            )}
-            {settings.freeplay && (
-              <div className="text-xs text-green-400 mt-2 font-semibold">FREE PLAY MODE</div>
-            )}
-          </div>
+          )}
         </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-8 py-8">
-        {/* Search Bar */}
-        <div className="mb-8">
-          <div className="relative">
-            <Search className="absolute left-6 top-1/2 transform -translate-y-1/2 text-gray-400" size={24} />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search for songs, artists, or albums..."
-              className="w-full bg-white bg-opacity-10 backdrop-blur-lg text-white text-2xl pl-16 pr-6 py-6 rounded-2xl border border-white border-opacity-20 focus:outline-none focus:border-opacity-40 placeholder-gray-400"
-              autoFocus
-            />
-          </div>
-        </div>
-
-        {/* Status Message */}
-        {requestStatus && (
-          <div className="mb-6 bg-white bg-opacity-20 backdrop-blur-lg rounded-xl px-6 py-4 text-center text-white text-xl font-semibold border border-white border-opacity-20">
-            {requestStatus}
-          </div>
-        )}
-
-        {/* Search Results */}
-        {isSearching ? (
-          <div className="text-center py-12">
-            <div className="inline-block w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mb-4"></div>
-            <div className="text-xl text-white">Searching...</div>
-          </div>
-        ) : searchResults.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {searchResults.map((item) => (
-              <button
-                key={item.id}
-                onClick={() => handleRequest(item)}
-                className="bg-white bg-opacity-10 backdrop-blur-lg rounded-2xl p-6 border border-white border-opacity-20 hover:bg-opacity-20 hover:border-opacity-40 transition-all transform hover:scale-105 text-left"
-              >
-                {item.thumbnail && (
-                  <img
-                    src={item.thumbnail}
-                    alt={item.title}
-                    className="w-full h-48 object-cover rounded-lg mb-4"
-                  />
-                )}
-                <div className="flex items-start gap-3 mb-3">
-                  <Music size={20} className="text-purple-400 mt-1 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-bold text-white mb-1 truncate">{item.title}</h3>
-                    {item.artist && (
-                      <p className="text-sm text-gray-300 truncate">{item.artist}</p>
-                    )}
-                  </div>
-                </div>
-                {item.duration && (
-                  <div className="flex items-center gap-2 text-sm text-gray-400">
-                    <Clock size={16} />
-                    <span>
-                      {Math.floor(item.duration / 60)}:{String(item.duration % 60).padStart(2, '0')}
-                    </span>
-                  </div>
-                )}
-                <div className="mt-4 bg-purple-600 text-white rounded-lg py-2 text-center font-semibold">
-                  Request Song
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : searchQuery.length >= 2 ? (
-          <div className="text-center py-12">
-            <Music size={64} className="mx-auto text-gray-500 mb-4" />
-            <div className="text-xl text-gray-300">No results found</div>
-            <div className="text-sm text-gray-500 mt-2">Try a different search term</div>
-          </div>
-        ) : (
-          <div className="text-center py-12">
-            <Search size={64} className="mx-auto text-gray-500 mb-4" />
-            <div className="text-2xl text-white mb-2">Start searching...</div>
-            <div className="text-gray-400">Type at least 2 characters to search</div>
-          </div>
-        )}
       </main>
 
-      {/* Footer - Coin Insert (Dev Only) */}
+      {/* Bottom marquee of upcoming songs */}
+      <div className="absolute bottom-6 left-0 right-0">
+        <div className="mx-auto max-w-full overflow-hidden">
+          <div className="marquee">
+            <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm">
+              {queue.length > 0 ? (
+                queue.map((q) => (
+                  <div key={q.id} className="px-6">{(q.media_item as any)?.title || 'Untitled'}</div>
+                ))
+              ) : (
+                <div className="px-6">Coming Up: No items</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Insert coin dev button (kept) */}
       {!settings.freeplay && (
-        <div className="fixed bottom-8 right-8">
+        <div className="fixed bottom-24 right-8">
           <button
             onClick={handleCoinInsert}
-            className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-8 py-4 rounded-full shadow-2xl transform hover:scale-110 transition-all flex items-center gap-3"
+            className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-6 py-3 rounded-full shadow-lg transition-all flex items-center gap-3"
           >
-            <Coins size={24} />
-            <span>Insert Coin (Dev)</span>
+            <Coins size={18} />
+            <span>Insert Coin</span>
           </button>
         </div>
       )}
 
-      {/* Watermark */}
-      <div className="fixed bottom-4 left-4 text-xs text-gray-500">
-        Powered by Obie Jukebox v2 | Session: {session.session_id.slice(0, 8)}
+      {/* Watermark small */}
+      <div className="fixed bottom-2 left-4 text-xs text-gray-500">
+        Powered by Obie Jukebox v2
       </div>
     </div>
   );
