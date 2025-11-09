@@ -32,8 +32,8 @@ Deno.serve(async (req) => {
     
     console.log('Action:', action);
 
-    // Handle session initialization
-    if (action === 'init') {
+  // Handle session initialization
+  if (action === 'init') {
       console.log('Creating new kiosk session');
       
       // Get the default player (first player in the system)
@@ -75,6 +75,29 @@ Deno.serve(async (req) => {
         JSON.stringify({ session }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
+    }
+
+    // Handle free-text search forwarded to youtube-scraper (server-side)
+    if (action === 'search') {
+      const query = body.query || '';
+      try {
+        // Forward search to youtube-scraper using service role key so yt-dlp or API can be used server-side
+        const scraperResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          },
+          body: JSON.stringify({ query, type: 'search' }),
+        });
+
+        const payload = await scraperResp.text();
+        // Pass through status and body
+        return new Response(payload, { status: scraperResp.status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (err) {
+        console.error('Kiosk handler search error:', err);
+        return new Response(JSON.stringify({ error: (err as Error).message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      }
     }
 
     return new Response(

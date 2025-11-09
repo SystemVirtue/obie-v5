@@ -8,6 +8,7 @@ import {
   subscribeToQueue,
   subscribeToPlayerStatus,
   callKioskHandler,
+  getTotalCredits,
   type KioskSession,
   type PlayerSettings,
   type QueueItem,
@@ -51,8 +52,29 @@ function App() {
   useEffect(() => {
     if (!session) return;
 
-    const sub = subscribeToKioskSession(session.session_id, setSession);
-    return () => sub.unsubscribe();
+    const sub = subscribeToKioskSession(session.session_id, (s) => {
+      setSession(s);
+    });
+
+    // Also poll total credits to reflect admin-wide balance changes in the kiosk UI
+    let cancelled = false;
+    const fetchTotal = async () => {
+      try {
+        const total = await getTotalCredits(PLAYER_ID);
+        if (!cancelled) setSession(prev => prev ? { ...prev, credits: total } : prev);
+      } catch (err) {
+        console.error('Failed to fetch total credits:', err);
+      }
+    };
+
+    fetchTotal();
+    const interval = setInterval(fetchTotal, 4000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      sub.unsubscribe();
+    };
   }, [session?.session_id]);
 
   // Subscribe to player settings
