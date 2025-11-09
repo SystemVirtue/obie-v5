@@ -20,8 +20,12 @@ Deno.serve(async (req) => {
   }
 
   try {
-    console.log('Kiosk handler called');
-    
+    // Initialize Supabase client with service role key
+    const supabase = createClient(
+      Deno.env.get('SUPABASE_URL') ?? '',
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+    );
+
     // Parse request body
     const body: KioskRequest = await req.json();
     const { action } = body;
@@ -30,18 +34,45 @@ Deno.serve(async (req) => {
 
     // Handle session initialization
     if (action === 'init') {
-      console.log('Init action - returning test response');
+      console.log('Creating new kiosk session');
       
-      // Test response without database operations
+      // Get the default player (first player in the system)
+      const { data: player, error: playerError } = await supabase
+        .from('players')
+        .select('id')
+        .limit(1)
+        .single();
+
+      if (playerError || !player) {
+        console.error('No player found:', playerError);
+        return new Response(
+          JSON.stringify({ error: 'No player configured' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Create new session
+      const { data: session, error: sessionError } = await supabase
+        .from('kiosk_sessions')
+        .insert({
+          player_id: player.id,
+          credits: 0,
+        })
+        .select()
+        .single();
+
+      if (sessionError || !session) {
+        console.error('Failed to create session:', sessionError);
+        return new Response(
+          JSON.stringify({ error: 'Failed to create session' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      console.log('Created session:', session.session_id);
+      
       return new Response(
-        JSON.stringify({ 
-          session: {
-            session_id: 'test-session-id',
-            player_id: '00000000-0000-0000-0000-000000000001',
-            credits: 0,
-            created_at: new Date().toISOString()
-          }
-        }),
+        JSON.stringify({ session }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
