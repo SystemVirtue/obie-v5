@@ -20,10 +20,10 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Create Supabase client (anon access for kiosk)
+    // Create Supabase client with service role key to bypass RLS
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_ANON_KEY') ?? ''
+      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
     );
 
     // Parse request body
@@ -40,13 +40,15 @@ Deno.serve(async (req) => {
       }
 
       // Get or create kiosk session
-      const { data: existingSession } = await supabase
+      const { data: existingSession, error: selectError } = await supabase
         .from('kiosk_sessions')
         .select('*')
         .eq('player_id', player_id)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle();
+
+      if (selectError) throw selectError;
 
       if (existingSession && (new Date().getTime() - new Date(existingSession.last_active).getTime()) < 3600000) {
         // Reuse session if < 1 hour old
@@ -57,18 +59,27 @@ Deno.serve(async (req) => {
       }
 
       // Create new session
-      const { data: newSession, error: sessionError } = await supabase
+      const { error: sessionError } = await supabase
         .from('kiosk_sessions')
         .insert({
           player_id,
           credits: 0,
-          ip_address: req.headers.get('x-forwarded-for') || 'unknown',
+          ip_address: req.headers.get('x-forwarded-for') || null,
           user_agent: req.headers.get('user-agent') || 'unknown'
-        })
-        .select()
-        .single();
+        });
 
       if (sessionError) throw sessionError;
+
+      // Get the newly created session
+      const { data: newSession, error: selectError } = await supabase
+        .from('kiosk_sessions')
+        .select('*')
+        .eq('player_id', player_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (selectError) throw selectError;
 
       return new Response(
         JSON.stringify({ session: newSession }),
@@ -205,7 +216,7 @@ Deno.serve(async (req) => {
         .from('player_settings')
         .select('freeplay, coin_per_song')
         .eq('player_id', session.player_id)
-        .single();
+        .maybeSingle();
 
       // Check credits or freeplay
       if (!settings?.freeplay && session.credits < (settings?.coin_per_song || 1)) {
