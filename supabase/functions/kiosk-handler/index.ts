@@ -101,10 +101,10 @@ Deno.serve(async (req)=>{
     }
     // Handle atomic request enqueue: deduct credits (unless freeplay) and enqueue as priority
     if (action === 'request') {
-      const { session_id, media_item_id } = body;
-      if (!session_id || !media_item_id) {
+      const { session_id, url, player_id } = body;
+      if (!session_id || (!url && !media_item_id)) {
         return new Response(JSON.stringify({
-          error: 'session_id and media_item_id are required for request action'
+          error: 'session_id and either url or media_item_id are required for request action'
         }), {
           status: 400,
           headers: {
@@ -113,11 +113,122 @@ Deno.serve(async (req)=>{
           }
         });
       }
+
+      let mediaItemId = media_item_id;
+
+      // If URL provided, scrape it first to get/create media item
+      if (url && !mediaItemId) {
+        try {
+          console.log('Scraping URL for kiosk request:', url);
+          const scraperResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+            },
+            body: JSON.stringify({ url, type: 'auto' }),
+          });
+
+          if (!scraperResp.ok) {
+            const errorText = await scraperResp.text();
+            console.error('Scraper failed:', errorText);
+            return new Response(JSON.stringify({
+              error: 'Failed to scrape video URL'
+            }), {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json'
+              }
+            });
+          }
+
+          const { videos } = await scraperResp.json();
+          if (!videos || videos.length === 0) {
+            return new Response(JSON.stringify({
+              error: 'No videos found at the provided URL'
+            }), {
+              status: 400,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json'
+              }
+            });
+          }
+
+          // Use the first video
+          const video = videos[0];
+
+          // Check if media item already exists
+          const { data: existingItem } = await supabase
+            .from('media_items')
+            .select('id')
+            .eq('url', video.url)
+            .single();
+
+          if (existingItem) {
+            mediaItemId = existingItem.id;
+          } else {
+            // Create new media item
+            const { data: newItem, error: insertError } = await supabase
+              .from('media_items')
+              .insert({
+                title: video.title,
+                artist: video.artist,
+                url: video.url,
+                duration: video.duration,
+                thumbnail: video.thumbnail,
+                thumbnail_url: video.thumbnailUrl,
+              })
+              .select('id')
+              .single();
+
+            if (insertError || !newItem) {
+              console.error('Failed to create media item:', insertError);
+              return new Response(JSON.stringify({
+                error: 'Failed to create media item'
+              }), {
+                status: 500,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json'
+                }
+              });
+            }
+
+            mediaItemId = newItem.id;
+          }
+        } catch (scrapeError) {
+          console.error('Scraping error:', scrapeError);
+          return new Response(JSON.stringify({
+            error: 'Failed to process video URL'
+          }), {
+            status: 500,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+      }
+
+      if (!mediaItemId) {
+        return new Response(JSON.stringify({
+          error: 'No media item ID available'
+        }), {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
       try {
         // Call DB RPC which performs an atomic debit-and-enqueue
         const { data: queueId, error: rpcError } = await supabase.rpc('kiosk_request_enqueue', {
           p_session_id: session_id,
-          p_media_item_id: media_item_id
+          p_media_item_id: mediaItemId
         });
         if (rpcError) {
           console.error('kiosk_request_enqueue error:', rpcError);

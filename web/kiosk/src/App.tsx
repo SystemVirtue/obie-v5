@@ -276,7 +276,7 @@ function App() {
 
           {/* Confirmation Dialog */}
           {showConfirm && selectedResult && (
-            <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60">
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
               <div className="bg-yellow-50 text-black rounded-lg p-6 w-[520px]">
                 <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
                 <div className="text-sm text-gray-700 mb-4">Confirm adding this song to your playlist for playback.</div>
