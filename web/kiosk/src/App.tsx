@@ -93,35 +93,13 @@ function App() {
     // Subscribe to queue for marquee / upcoming list
     useEffect(() => {
       const sub = subscribeToQueue(PLAYER_ID, (items) => {
-        // items are ordered: priority (type desc) then normal by position asc
-        const priorityItems = items.filter(i => i.type === 'priority');
-        const normalItems = items.filter(i => i.type === 'normal');
-
-        // Determine current playing media id from playerStatus
+        // Filter out currently playing item
         const currentMediaId = playerStatus?.current_media_id || playerStatus?.current_media?.id || null;
-
-        // Find index of current media within the normalItems list
-        let currentIndexInNormal = -1;
-        if (currentMediaId) {
-          currentIndexInNormal = normalItems.findIndex(n => n.media_item_id === currentMediaId);
-        }
-
-        // If not found, fall back to now_playing_index if available
-        if (currentIndexInNormal === -1 && typeof playerStatus?.now_playing_index === 'number') {
-          // now_playing_index refers to overall queue index; compute an approximate offset into normalItems
-          // We'll use min(now_playing_index, normalItems.length - 1)
-          const idx = playerStatus!.now_playing_index;
-          currentIndexInNormal = Math.min(Math.max(0, idx - priorityItems.length), normalItems.length - 1);
-        }
-
-        const start = Math.max(0, currentIndexInNormal);
-        const upcomingNormalItems = normalItems.slice(start, start + 4);
-
-        const marqueeItems = [...priorityItems, ...upcomingNormalItems];
-        setQueue(marqueeItems);
+        const upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
+        setQueue(upcomingItems);
       });
       return () => sub.unsubscribe();
-    }, [playerStatus?.now_playing_index]);
+    }, [playerStatus?.current_media_id, playerStatus?.current_media?.id]);
 
     // Debounced search
     useEffect(() => {
