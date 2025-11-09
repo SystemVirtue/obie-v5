@@ -418,29 +418,31 @@ export async function callKioskHandler(params: {
   amount?: number;
 }) {
   try {
-    const { data, error } = await supabase.functions.invoke('kiosk-handler', {
-      body: params
+    // Call Edge Function directly to bypass authentication requirements for public kiosk
+    const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify(params),
     });
 
-    if (error) {
-      // Normalize FunctionsHttpError into a plain Error with message and status
-      const message = error.message || JSON.stringify(error);
-      const status = (error as any).status || (error as any).statusCode || null;
-      const detail = (error as any).hint || (error as any).details || null;
-      const err = new Error(status ? `${message} (status ${status})` : message);
-      (err as any).detail = detail;
-      throw err;
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        errorMessage = errorText || errorMessage;
+      }
+      throw new Error(errorMessage);
     }
 
+    const data = await response.json();
     return data;
   } catch (err: any) {
-    // If it's a FunctionsHttpError thrown by the SDK (non-2xx), normalize it
-    if (err && typeof err === 'object') {
-      const msg = err.message || JSON.stringify(err);
-      const normalized = new Error(msg);
-      (normalized as any).original = err;
-      throw normalized;
-    }
     throw err;
   }
 }
