@@ -673,6 +673,7 @@ function App() {
       playerVars: {
         autoplay: 0,        // Don't autoplay on first load (browser policy)
         controls: 0,        // Hide controls to prevent accidental clicks
+        disablekb: 1,       // Disable keyboard controls
         modestbranding: 1,  // Hide YouTube logo
         rel: 0,             // Don't show related videos
         iv_load_policy: 3,  // Hide annotations
@@ -706,7 +707,18 @@ function App() {
         ref={playerDivRef}
         id="player"
         className="w-full h-full"
-        onClick={(e) => e.preventDefault()} // Prevent YouTube's default click-to-toggle behavior
+      />
+
+      {/* Click Prevention Overlay - Covers entire player to prevent any interactions */}
+      <div 
+        className="absolute inset-0 w-full h-full cursor-default"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          console.log('[Player] Click blocked - play/pause only available from admin');
+          return false;
+        }}
+        style={{ pointerEvents: 'auto' }}
       />
 
       {/* Obie Logo Overlay */}
