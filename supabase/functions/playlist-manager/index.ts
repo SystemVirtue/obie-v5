@@ -1,3 +1,44 @@
+// Helper: Sync queue to playlist order if playlist is active
+async function syncQueueIfActive(supabase: any, player_id: string, playlist_id: string) {
+  // Check if this playlist is the active one for the player
+  const { data: player } = await supabase
+    .from('players')
+    .select('active_playlist_id')
+    .eq('id', player_id)
+    .maybeSingle();
+  if (!player || player.active_playlist_id !== playlist_id) return;
+
+  // Get playlist items in order
+  const { data: items } = await supabase
+    .from('playlist_items')
+    .select('media_item_id')
+    .eq('playlist_id', playlist_id)
+    .order('position', { ascending: true });
+  if (!items || items.length === 0) return;
+
+  // Find all queue items for this player/type that match the playlist order
+  const { data: queueItems } = await supabase
+    .from('queue')
+    .select('id,media_item_id')
+    .eq('player_id', player_id)
+    .eq('type', 'normal')
+    .is('played_at', null);
+  if (!queueItems) return;
+
+  // Build ordered list of queue IDs matching playlist order
+  const queueIdOrder = items
+    .map((pl: any) => queueItems.find((q: any) => q.media_item_id === pl.media_item_id))
+    .filter(Boolean)
+    .map((q: any) => q.id);
+  if (queueIdOrder.length === 0) return;
+
+  // Call queue_reorder to update the queue order
+  await supabase.rpc('queue_reorder_wrapper', {
+    p_player_id: player_id,
+    p_queue_ids: queueIdOrder,
+    p_type: 'normal',
+  });
+}
 // Playlist Manager Edge Function
 // Handles playlist CRUD operations and media scraping
 
@@ -157,6 +198,8 @@ Deno.serve(async (req) => {
           { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
+      // Sync queue if this is the active playlist
+      if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
       return new Response(
         JSON.stringify({ item }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -196,6 +239,9 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Sync queue if this is the active playlist
+      if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
+
       return new Response(
         JSON.stringify({ success: true }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -219,6 +265,9 @@ Deno.serve(async (req) => {
           .eq('id', item_ids[i])
           .eq('playlist_id', playlist_id);
       }
+
+      // Sync queue if this is the active playlist
+      if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
 
       return new Response(
         JSON.stringify({ success: true }),
@@ -325,6 +374,9 @@ Deno.serve(async (req) => {
         await supabase
           .from('playlist_items')
           .insert(playlistItems);
+
+        // Sync queue if this is the active playlist
+        if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
       }
 
       return new Response(
@@ -366,6 +418,9 @@ Deno.serve(async (req) => {
         .update({ active_playlist_id: playlist_id })
         .eq('id', player_id);
       if (playerUpdateError) throw playerUpdateError;
+
+      // Sync queue if this is the active playlist (it always is after set_active)
+      await syncQueueIfActive(supabase, player_id, playlist_id);
 
       return new Response(
         JSON.stringify({ success: true }),

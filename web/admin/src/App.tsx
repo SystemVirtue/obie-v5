@@ -6,6 +6,7 @@ import {
   supabase,
   subscribeToQueue,
   subscribeToPlayerStatus,
+  subscribeToPlayerSettings,
   callQueueManager,
   callPlayerControl,
   getPlaylists,
@@ -15,6 +16,7 @@ import {
   type SystemLog,
   type Playlist,
   type PlaylistItem,
+  type PlayerSettings,
   callPlaylistManager,
   signIn,
   signOut,
@@ -552,19 +554,20 @@ function QueueView() {
       {/* Normal Queue (Drag & Drop) */}
       <div className="bg-gray-800 rounded-lg p-6">
         <h2 className="text-xl font-bold mb-4">Queue ({normalQueue.length})</h2>
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={normalQueue.map((item) => item.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
-              {normalQueue.map((item) => (
-                <SortableQueueItem key={item.id} item={item} onRemove={handleRemove} />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
-
-        {normalQueue.length === 0 && (
-          <div className="text-center text-gray-400 py-8">Queue is empty</div>
-        )}
+        <div style={{ maxHeight: 400, overflowY: 'auto', border: '2px solid #444', borderRadius: 8, background: '#222', padding: 8 }}>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={normalQueue.map((item) => item.id)} strategy={verticalListSortingStrategy}>
+              <div className="space-y-2">
+                {normalQueue.map((item) => (
+                  <SortableQueueItem key={item.id} item={item} onRemove={handleRemove} />
+                ))}
+              </div>
+            </SortableContext>
+          </DndContext>
+          {normalQueue.length === 0 && (
+            <div className="text-center text-gray-400 py-8">Queue is empty</div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -805,11 +808,117 @@ function PlaylistsView() {
 // =============================================================================
 
 function Settings() {
-  // Placeholder: implement as needed
+  const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    const sub = subscribeToPlayerSettings(PLAYER_ID, (s) => {
+      setSettings(s);
+      setLoading(false);
+    });
+    return () => sub.unsubscribe();
+  }, []);
+
+  const handleChange = (field: keyof PlayerSettings, value: any) => {
+    setSettings((prev) => prev ? { ...prev, [field]: value } : prev);
+  };
+
+  const handleSave = async () => {
+    setError(null);
+    setLoading(true);
+    if (!settings) return;
+    const { error } = await supabase
+      .from('player_settings')
+      // @ts-ignore
+      .update([{
+        shuffle: settings.shuffle,
+        loop: settings.loop,
+        volume: settings.volume,
+        freeplay: settings.freeplay,
+        karaoke_mode: settings.karaoke_mode,
+      }])
+      .eq('player_id', PLAYER_ID);
+    setLoading(false);
+    if (error) setError(error.message);
+  };
+
+  if (loading) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 bg-gray-800 rounded-lg text-gray-400">Loading settings...</div>
+    );
+  }
+
+  if (!settings) {
+    return (
+      <div className="max-w-3xl mx-auto p-6 bg-gray-800 rounded-lg text-red-400">Unable to load settings.</div>
+    );
+  }
+
   return (
     <div className="max-w-3xl mx-auto p-6 bg-gray-800 rounded-lg">
-      <h2 className="text-2xl font-bold mb-4">Settings</h2>
-      <div className="text-gray-400">Settings functionality not implemented.</div>
+      <h2 className="text-2xl font-bold mb-4">Player Settings</h2>
+      {error && <div className="text-red-400 mb-2">{error}</div>}
+      <div className="space-y-6">
+        <div className="flex items-center gap-4">
+          <label className="font-semibold w-32">Shuffle</label>
+          <input
+            type="checkbox"
+            checked={!!settings.shuffle}
+            onChange={e => handleChange('shuffle', e.target.checked)}
+            className="w-5 h-5"
+          />
+        </div>
+        <div className="flex items-center gap-4">
+          <label className="font-semibold w-32">Repeat (Loop)</label>
+          <input
+            type="checkbox"
+            checked={!!settings.loop}
+            onChange={e => handleChange('loop', e.target.checked)}
+            className="w-5 h-5"
+          />
+        </div>
+        <div className="flex items-center gap-4">
+          <label className="font-semibold w-32">Volume</label>
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={settings.volume ?? 50}
+            onChange={e => handleChange('volume', Number(e.target.value))}
+            className="w-64"
+          />
+          <span className="ml-2">{settings.volume ?? 50}</span>
+        </div>
+        <div className="flex items-center gap-4">
+          <label className="font-semibold w-32">Freeplay</label>
+          <input
+            type="checkbox"
+            checked={!!settings.freeplay}
+            onChange={e => handleChange('freeplay', e.target.checked)}
+            className="w-5 h-5"
+          />
+        </div>
+        {'karaoke_mode' in settings && (
+          <div className="flex items-center gap-4">
+            <label className="font-semibold w-32">Karaoke Mode</label>
+            <input
+              type="checkbox"
+              checked={!!settings.karaoke_mode}
+              onChange={e => handleChange('karaoke_mode', e.target.checked)}
+              className="w-5 h-5"
+            />
+          </div>
+        )}
+        <button
+          onClick={handleSave}
+          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-semibold transition"
+          disabled={loading}
+        >
+          Save Settings
+        </button>
+      </div>
     </div>
   );
 }
