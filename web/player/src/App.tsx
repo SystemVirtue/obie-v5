@@ -37,6 +37,7 @@ function App() {
   const currentMediaIdRef = useRef<string | null>(null);
   const fadeIntervalRef = useRef<number | null>(null);
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
+  const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
@@ -226,6 +227,13 @@ function App() {
         
         setCurrentMedia(nextMedia);
         
+        // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
+        recentlyLoadedRef.current = true;
+        // Clear the flag after 5 seconds
+        setTimeout(() => {
+          recentlyLoadedRef.current = false;
+        }, 5000);
+        
         // For normal end: restore opacity immediately
         if (!isSkip && playerDivRef.current) {
           playerDivRef.current.style.opacity = '1';
@@ -279,6 +287,18 @@ function App() {
       // PAUSED
       console.log('[Player] Video PAUSED');
       reportStatus('paused');
+      
+      // If video was recently loaded and paused unexpectedly, attempt to auto-play
+      if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+        console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
+        try {
+          playerRef.current.playVideo();
+          // Clear the flag since we're attempting to play
+          recentlyLoadedRef.current = false;
+        } catch (error) {
+          console.error('[Player] Error auto-playing video:', error);
+        }
+      }
     } else if (event.data === 0) {
       // ENDED - trigger queue progression
       console.log('[Player] Video ENDED - calling queue_next');
@@ -524,6 +544,13 @@ function App() {
           artist: newStatus.current_media?.artist
         });
         setCurrentMedia(newStatus.current_media || null);
+        
+        // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
+        recentlyLoadedRef.current = true;
+        // Clear the flag after 5 seconds
+        setTimeout(() => {
+          recentlyLoadedRef.current = false;
+        }, 5000);
       } else {
         console.log('[Player] Same media in status update, not updating state');
       }
