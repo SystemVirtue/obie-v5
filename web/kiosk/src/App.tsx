@@ -110,7 +110,7 @@ function App() {
           currentIndexInNormal = Math.min(Math.max(0, idx - priorityItems.length), normalItems.length - 1);
         }
 
-        const start = Math.max(0, currentIndexInNormal + 0);
+        const start = Math.max(0, currentIndexInNormal + 1);
         const upcomingNormalItems = normalItems.slice(start, start + 3);
 
         const marqueeItems = [...priorityItems, ...upcomingNormalItems];
@@ -275,7 +275,7 @@ function App() {
                       <img src={v.thumbnail} alt={v.title} className="w-full h-32 object-cover" />
                       <div className="p-3">
                         <div className="font-semibold text-sm text-white truncate">{v.title}</div>
-                        <div className="text-xs text-gray-300">{v.artist}</div>
+                        <div className="text-xs text-gray-300">{v.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
                         <div className="text-xs text-gray-400 mt-2">{Math.floor((v.duration || 0) / 60)}:{String((v.duration || 0) % 60).padStart(2,'0')}</div>
                       </div>
                     </div>
@@ -296,7 +296,7 @@ function App() {
                     queue.map((q, index) => (
                       <div key={q.id} className="px-6 flex items-center gap-2">
                         {q.type === 'priority' && <span className="text-red-400">★</span>}
-                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-400">{(q.media_item as any)?.artist || 'Unknown'}</span></span>
+                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-400">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
                         {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4">•</span>}
                       </div>
                     ))
@@ -318,7 +318,7 @@ function App() {
                   <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
                   <div>
                     <div className="font-semibold">{selectedResult.title}</div>
-                    <div className="text-sm text-gray-700">{selectedResult.artist}</div>
+                    <div className="text-sm text-gray-700">{selectedResult.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
                     <div className="text-sm text-gray-700 mt-2">Cost: 1 Credit</div>
                   </div>
                 </div>
