@@ -20,220 +20,27 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Create Supabase client with service role key to bypass RLS
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
-    );
-
+    console.log('Kiosk handler called');
+    
     // Parse request body
     const body: KioskRequest = await req.json();
-    const { session_id, player_id, action, query, media_item_id, amount = 1 } = body;
+    const { action } = body;
+    
+    console.log('Action:', action);
 
     // Handle session initialization
     if (action === 'init') {
-      console.log('Kiosk init: Starting session initialization for player_id:', player_id);
+      console.log('Init action - returning test response');
       
-      if (!player_id) {
-        console.log('Kiosk init: Missing player_id');
-        return new Response(
-          JSON.stringify({ error: 'player_id is required for init' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      console.log('Kiosk init: Creating new session');
-      // Always create new session for simplicity
-      const { data: newSession, error: sessionError } = await supabase
-        .from('kiosk_sessions')
-        .insert({
-          player_id,
-          credits: 0,
-          user_agent: req.headers.get('user-agent') || 'unknown'
-        })
-        .select()
-        .single();
-
-      if (sessionError) {
-        console.log('Kiosk init: Error creating session:', sessionError);
-        throw sessionError;
-      }
-
-      console.log('Kiosk init: Session created successfully:', newSession.session_id);
+      // Test response without database operations
       return new Response(
-        JSON.stringify({ session: newSession }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // All other actions require session_id
-    if (!session_id) {
-      return new Response(
-        JSON.stringify({ error: 'session_id is required' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Handle search
-    if (action === 'search') {
-      if (!query || query.trim().length === 0) {
-        return new Response(
-          JSON.stringify({ results: [] }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Search media items (DB first)
-      const { data: results, error: searchError } = await supabase
-        .from('media_items')
-        .select('*')
-        .or(`title.ilike.%${query}%,artist.ilike.%${query}%`)
-        .limit(20);
-
-      if (searchError) throw searchError;
-
-      // If we found DB results, return them immediately
-      if (results && results.length > 0) {
-        return new Response(
-          JSON.stringify({ results }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // No local results — try external search using the youtube-scraper function which
-      // may use yt-dlp (if available) or fall back to YouTube Data API.
-      try {
-        const scraperUrl = `${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`;
-        const scrapeResp = await fetch(scraperUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            // Use service role so scraper has access to server-side env keys if needed
-            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
-          },
-          body: JSON.stringify({ query, type: 'search' }),
-        });
-
-        if (!scrapeResp.ok) {
-          const err = await scrapeResp.json().catch(() => ({ error: 'scraper_failed' }));
-          console.warn('youtube-scraper failed:', err);
-          return new Response(
-            JSON.stringify({ results: [] }),
-            { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-
-        const { videos } = await scrapeResp.json();
-
-        // Map into our media_item-like shape (lightweight) so the kiosk UI can display
-        const mapped = (videos || []).map((v: any) => ({
-          id: null,
-          source_id: v.id,
-          source_type: 'youtube',
-          title: v.title,
-          artist: v.artist || null,
-          url: v.url,
-          duration: v.duration || null,
-          thumbnail: v.thumbnail || null,
-          fetched_at: new Date().toISOString(),
-          metadata: {},
-        }));
-
-        return new Response(
-          JSON.stringify({ results: mapped }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      } catch (e) {
-        console.warn('External search failed:', (e as Error).message);
-        return new Response(
-          JSON.stringify({ results: [] }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-
-    // Handle credit increment
-    if (action === 'credit') {
-      const { data: newCredits, error: creditError } = await supabase
-        .rpc('kiosk_increment_credit', {
-          p_session_id: session_id,
-          p_amount: amount
-        });
-
-      if (creditError) throw creditError;
-
-      return new Response(
-        JSON.stringify({ credits: newCredits }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Handle song request
-    if (action === 'request') {
-      if (!media_item_id) {
-        return new Response(
-          JSON.stringify({ error: 'media_item_id is required for request' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Get session and player settings
-      const { data: session, error: sessionError } = await supabase
-        .from('kiosk_sessions')
-        .select('*, player:players!inner(*)')
-        .eq('session_id', session_id)
-        .single();
-
-      if (sessionError || !session) {
-        return new Response(
-          JSON.stringify({ error: 'Session not found' }),
-          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      const { data: settings } = await supabase
-        .from('player_settings')
-        .select('freeplay, coin_per_song')
-        .eq('player_id', session.player_id)
-        .maybeSingle();
-
-      // Check credits or freeplay
-      if (!settings?.freeplay && session.credits < (settings?.coin_per_song || 1)) {
-        return new Response(
-          JSON.stringify({ error: 'Insufficient credits' }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Add to priority queue
-      const { data: queueId, error: queueError } = await supabase
-        .rpc('queue_add', {
-          p_player_id: session.player_id,
-          p_media_item_id: media_item_id,
-          p_type: 'priority',
-          p_requested_by: session_id
-        });
-
-      if (queueError) throw queueError;
-
-      // Deduct credits (if not freeplay)
-      let newCredits = session.credits;
-      if (!settings?.freeplay) {
-        const { data: credits, error: deductError } = await supabase
-          .rpc('kiosk_decrement_credit', {
-            p_session_id: session_id,
-            p_amount: settings?.coin_per_song || 1
-          });
-
-        if (deductError) throw deductError;
-        newCredits = credits;
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          queue_id: queueId,
-          credits: newCredits
+        JSON.stringify({ 
+          session: {
+            session_id: 'test-session-id',
+            player_id: '00000000-0000-0000-0000-000000000001',
+            credits: 0,
+            created_at: new Date().toISOString()
+          }
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
