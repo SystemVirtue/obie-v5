@@ -214,13 +214,13 @@ function App() {
     
     // Render UI (simplified, balanced JSX)
     return (
-      <div className="min-h-screen bg-[#071025] text-white">
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-pink-900 text-white">
         <main className="mx-auto max-w-5xl p-6">
           {/* Header / Search display */}
           <div className="flex items-center justify-between mb-6">
-            <div className="text-2xl font-bold">Obie Kiosk</div>
+            <div className="text-2xl font-bold text-yellow-400">Obie Kiosk</div>
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-300">Credits: {session?.credits ?? 0}</div>
+              <div className="text-sm text-gray-300">{settings?.freeplay ? 'Free Play' : `Credits: ${session?.credits ?? 0}`}</div>
               <button onClick={() => setShowSearch(s => !s)} className="px-3 py-2 bg-gray-800 rounded">{showSearch ? 'Close' : 'Search'}</button>
             </div>
           </div>
