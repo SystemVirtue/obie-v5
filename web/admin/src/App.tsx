@@ -24,6 +24,8 @@ import {
   getCurrentUser,
   subscribeToAuth,
   type AuthUser,
+  getTotalCredits,
+  updateAllCredits,
 } from '@shared/supabase-client';
 import {
   DndContext,
@@ -696,11 +698,45 @@ function PlaylistDetailsView({
 
 function SettingsView() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [totalCredits, setTotalCredits] = useState<number>(0);
 
   useEffect(() => {
     const sub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
+    
+    // Fetch initial total credits
+    getTotalCredits(PLAYER_ID).then(setTotalCredits).catch(console.error);
+    
     return () => sub.unsubscribe();
   }, []);
+
+  // Subscribe to kiosk session changes to update total credits
+  useEffect(() => {
+    const fetchCredits = () => getTotalCredits(PLAYER_ID).then(setTotalCredits).catch(console.error);
+    
+    // Fetch credits periodically (since we can't easily subscribe to all sessions)
+    const interval = setInterval(fetchCredits, 5000); // Update every 5 seconds
+    fetchCredits(); // Initial fetch
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleCreditAction = async (action: 'clear' | 'add1' | 'add3') => {
+    try {
+      if (action === 'clear') {
+        await updateAllCredits(PLAYER_ID, 'clear');
+      } else if (action === 'add1') {
+        await updateAllCredits(PLAYER_ID, 'add', 1);
+      } else if (action === 'add3') {
+        await updateAllCredits(PLAYER_ID, 'add', 3);
+      }
+      
+      // Refresh total credits
+      const newTotal = await getTotalCredits(PLAYER_ID);
+      setTotalCredits(newTotal);
+    } catch (error) {
+      console.error('Failed to update credits:', error);
+    }
+  };
 
   const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
     try {
@@ -789,6 +825,33 @@ function SettingsView() {
                 className="w-5 h-5"
               />
             </label>
+            {/* Credit Balance Management */}
+            <div className="border-t border-gray-600 pt-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="font-medium">Credit Balance</span>
+                <span className="text-2xl font-bold text-yellow-400">{totalCredits || 0}</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleCreditAction('clear')}
+                  className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition"
+                >
+                  Clear Credits
+                </button>
+                <button
+                  onClick={() => handleCreditAction('add1')}
+                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition"
+                >
+                  +1
+                </button>
+                <button
+                  onClick={() => handleCreditAction('add3')}
+                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition"
+                >
+                  +3
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 

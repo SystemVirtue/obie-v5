@@ -64,9 +64,20 @@ function App() {
 
   // Subscribe to queue for marquee / upcoming list
   useEffect(() => {
-    const sub = subscribeToQueue(PLAYER_ID, (items) => setQueue(items));
+    const sub = subscribeToQueue(PLAYER_ID, (items) => {
+      // Filter for marquee: priority items + next 3 normal items after current playing position
+      const priorityItems = items.filter(item => item.type === 'priority');
+      const normalItems = items.filter(item => item.type === 'normal');
+      
+      // Get next 3 normal items (starting from current playing index + 1)
+      const currentIndex = playerStatus?.now_playing_index || 0;
+      const upcomingNormalItems = normalItems.slice(currentIndex + 1, currentIndex + 4);
+      
+      const marqueeItems = [...priorityItems, ...upcomingNormalItems];
+      setQueue(marqueeItems);
+    });
     return () => sub.unsubscribe();
-  }, []);
+  }, [playerStatus?.now_playing_index]);
 
   // Debounced search
   useEffect(() => {
@@ -117,10 +128,16 @@ function App() {
 
       {/* Top-right credits pill */}
       <div className="absolute top-6 right-6">
-        <div className="flex items-center gap-3 bg-yellow-400 text-black px-4 py-2 rounded-md font-bold">
-          <div className="text-xs uppercase">Credits</div>
-          <div className="text-2xl">{session.credits}</div>
-        </div>
+        {settings.freeplay ? (
+          <div className="flex items-center gap-3 bg-green-400 text-black px-4 py-2 rounded-md font-bold">
+            <div className="text-xs uppercase">Free Play</div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 bg-yellow-400 text-black px-4 py-2 rounded-md font-bold">
+            <div className="text-xs uppercase">Credits</div>
+            <div className="text-2xl">{session.credits}</div>
+          </div>
+        )}
       </div>
 
       {/* Center big search button */}
@@ -155,13 +172,17 @@ function App() {
       </main>
 
       {/* Bottom marquee of upcoming songs */}
-      <div className="absolute bottom-6 left-0 right-0">
+      <div className="fixed bottom-0 left-0 right-0 bg-black/80 border-t border-yellow-400/30 py-3">
         <div className="mx-auto max-w-full overflow-hidden">
           <div className="marquee">
             <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm">
               {queue.length > 0 ? (
-                queue.map((q) => (
-                  <div key={q.id} className="px-6">{(q.media_item as any)?.title || 'Untitled'}</div>
+                queue.map((q, index) => (
+                  <div key={q.id} className="px-6 flex items-center gap-2">
+                    {q.type === 'priority' && <span className="text-red-400">★</span>}
+                    <span>{(q.media_item as any)?.title || 'Untitled'}</span>
+                    {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4">•</span>}
+                  </div>
                 ))
               ) : (
                 <div className="px-6">Coming Up: No items</div>

@@ -569,30 +569,48 @@ export async function getQueue(playerId: string): Promise<QueueItem[]> {
 }
 
 /**
- * Get system logs
+ * Get total credits across all kiosk sessions for a player
  */
-export async function getSystemLogs(
-  playerId: string,
-  options?: { severity?: string; limit?: number }
-): Promise<SystemLog[]> {
-  let query = supabase
-    .from('system_logs')
-    .select('*')
-    .eq('player_id', playerId)
-    .order('timestamp', { ascending: false });
-
-  if (options?.severity) {
-    query = query.eq('severity', options.severity);
-  }
-
-  if (options?.limit) {
-    query = query.limit(options.limit);
-  }
-
-  const { data, error } = await query;
+export async function getTotalCredits(playerId: string): Promise<number> {
+  const { data, error } = await supabase
+    .from('kiosk_sessions')
+    .select('credits')
+    .eq('player_id', playerId);
 
   if (error) throw error;
-  return data || [];
+  return (data as { credits: number }[])?.reduce((sum, session) => sum + session.credits, 0) || 0;
+}
+
+/**
+ * Update credits across all kiosk sessions for a player
+ */
+export async function updateAllCredits(playerId: string, action: 'clear' | 'add', amount?: number): Promise<void> {
+  if (action === 'clear') {
+    const { error } = await (supabase as any)
+      .from('kiosk_sessions')
+      .update({ credits: 0 })
+      .eq('player_id', playerId);
+
+    if (error) throw error;
+  } else if (action === 'add' && amount) {
+    // Add credits to all sessions (distribute evenly)
+    const { data: sessions, error: fetchError } = await (supabase as any)
+      .from('kiosk_sessions')
+      .select('session_id, credits')
+      .eq('player_id', playerId);
+
+    if (fetchError) throw fetchError;
+
+    if (sessions && sessions.length > 0) {
+      // For simplicity, add all credits to the first session
+      const { error } = await (supabase as any)
+        .from('kiosk_sessions')
+        .update({ credits: sessions[0].credits + amount })
+        .eq('session_id', sessions[0].session_id);
+
+      if (error) throw error;
+    }
+  }
 }
 
 // =============================================================================
