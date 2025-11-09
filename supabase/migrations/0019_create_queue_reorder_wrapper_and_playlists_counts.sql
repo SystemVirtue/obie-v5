@@ -14,6 +14,11 @@ BEGIN
   -- queue_reorder or add overloads, keep this wrapper pointing to the
   -- desired implementation.
   PERFORM queue_reorder(p_player_id => p_player_id, p_queue_ids => p_queue_ids, p_type => p_type);
+
+  -- After reordering, reset now_playing_index to -1 so the first song in the reordered queue plays next
+  UPDATE player_status
+  SET now_playing_index = -1
+  WHERE player_id = p_player_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
