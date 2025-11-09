@@ -697,7 +697,7 @@ function App() {
       <img
         src="/Obie_neon_no_BG.png"
         alt="Obie Logo"
-        className="absolute top-4 right-4 w-[8vw] h-auto pointer-events-none z-10"
+        className="absolute bottom-[100px] right-[20px] w-[8vw] h-auto pointer-events-none z-10"
         style={{ maxWidth: '120px', minWidth: '60px' }}
       />
 

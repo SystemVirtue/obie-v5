@@ -53,14 +53,11 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
         alt={video.title}
         className="w-full h-32 object-cover"
       />
-      <div className="p-3">
+      <div className="p-3 text-center">
         <h3 className="font-semibold text-white text-sm mb-1 line-clamp-2">
           {video.title}
         </h3>
-        <p className="text-slate-400 text-xs">{video.channelTitle}</p>
-        {video.duration && (
-          <p className="text-slate-300 text-xs mt-1">{video.duration}</p>
-        )}
+        <p className="text-slate-400 text-xs">{video.artist || video.channelTitle}</p>
       </div>
     </div>
   );

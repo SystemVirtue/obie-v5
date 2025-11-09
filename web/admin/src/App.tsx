@@ -529,7 +529,7 @@ function QueueView() {
       {/* Priority Queue */}
       {priorityQueue.length > 0 && (
         <div className="bg-gray-800 rounded-lg p-6 mb-6">
-          <h2 className="text-xl font-bold mb-4 text-yellow-400">Priority Queue ({priorityQueue.length})</h2>
+          <h2 className="text-xl font-bold mb-4 text-yellow-400">Priority Queue / Requests ({priorityQueue.length})</h2>
           <div className="space-y-2">
             {priorityQueue.map((item) => (
               <div key={item.id} className="bg-gray-700 rounded-lg p-4 flex items-center gap-4">
