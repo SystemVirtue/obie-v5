@@ -46,14 +46,15 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
 interface PlaylistRequest {
-  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape';
+  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue';
   player_id?: string;
   playlist_id?: string;
   name?: string;
   description?: string;
   media_item_id?: string;
   item_ids?: string[];
-  url?: string; // for scraping
+  url?: string;
+  current_index?: number;
 }
 
 Deno.serve(async (req) => {
@@ -77,7 +78,7 @@ Deno.serve(async (req) => {
 
     // Parse request body
     const body: PlaylistRequest = await req.json();
-    const { action, player_id, playlist_id, name, description, media_item_id, item_ids, url } = body;
+    const { action, player_id, playlist_id, name, description, media_item_id, item_ids, url, current_index } = body;
 
     // Handle playlist creation
     if (action === 'create') {
@@ -419,11 +420,75 @@ Deno.serve(async (req) => {
         .eq('id', player_id);
       if (playerUpdateError) throw playerUpdateError;
 
+      // If current_index is provided, update player_status
+      if (current_index !== undefined) {
+        const { error: statusError } = await supabase
+          .from('player_status')
+          .update({ now_playing_index: current_index })
+          .eq('player_id', player_id);
+        if (statusError) throw statusError;
+      }
+
       // Sync queue if this is the active playlist (it always is after set_active)
       await syncQueueIfActive(supabase, player_id, playlist_id);
 
       return new Response(
         JSON.stringify({ success: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Handle clearing the queue
+    if (action === 'clear_queue') {
+      if (!player_id) {
+        return new Response(
+          JSON.stringify({ error: 'player_id is required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      const { error: clearError } = await supabase
+        .rpc('queue_clear', { p_player_id: player_id });
+      if (clearError) throw clearError;
+
+      return new Response(
+        JSON.stringify({ success: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Handle importing playlist into queue
+    if (action === 'import_queue') {
+      if (!player_id || !playlist_id) {
+        return new Response(
+          JSON.stringify({ error: 'player_id and playlist_id are required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Use load_playlist RPC to import the playlist into queue
+      const { data: loaded, error: importError } = await supabase
+        .rpc('load_playlist', {
+          p_player_id: player_id,
+          p_playlist_id: playlist_id,
+          p_start_index: 0
+        });
+      if (importError) throw importError;
+
+      // Reset now_playing_index to -1 and clear current media (Now Playing position)
+      const { error: indexError } = await supabase
+        .from('player_status')
+        .update({ 
+          now_playing_index: -1,
+          current_media_id: null,
+          state: 'idle',
+          progress: 0
+        })
+        .eq('player_id', player_id);
+      if (indexError) throw indexError;
+
+      return new Response(
+        JSON.stringify({ loaded_count: loaded?.[0]?.loaded_count || 0 }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

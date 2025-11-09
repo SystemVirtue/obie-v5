@@ -454,7 +454,7 @@ export async function callKioskHandler(params: {
  * Call playlist-manager Edge Function
  */
 export async function callPlaylistManager(params: {
-  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active';
+  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue';
   player_id?: string;
   playlist_id?: string;
   name?: string;
@@ -462,6 +462,7 @@ export async function callPlaylistManager(params: {
   media_item_id?: string;
   item_ids?: string[];
   url?: string;
+  current_index?: number;
 }) {
   const { data, error } = await supabase.functions.invoke('playlist-manager', {
     body: params

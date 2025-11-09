@@ -660,8 +660,27 @@ function PlaylistsView() {
     const playlist = playlists.find(p => p.id === playlistId);
     if (!playlist) return;
     try {
-      // Use the correct action for setting active playlist
-    await callPlaylistManager({ action: 'set_active', player_id: PLAYER_ID, playlist_id: playlist.id });
+      // 1. Set active playlist and reset current_index to -1 (Now Playing position)
+      await callPlaylistManager({
+        action: 'set_active',
+        player_id: PLAYER_ID,
+        playlist_id: playlist.id,
+        current_index: -1,
+      });
+
+      // 2. Clear the current queue
+      await callPlaylistManager({
+        action: 'clear_queue',
+        player_id: PLAYER_ID,
+      });
+
+      // 3. Import the selected playlist into the queue
+      await callPlaylistManager({
+        action: 'import_queue',
+        player_id: PLAYER_ID,
+        playlist_id: playlist.id,
+      });
+
       await loadPlaylists();
     } catch (err) {
       console.error('Failed to set active playlist:', err);
@@ -811,6 +830,9 @@ function Settings() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [credits, setCredits] = useState<number | null>(null);
+  const [creditsLoading, setCreditsLoading] = useState(false);
+  const [creditsError, setCreditsError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -818,11 +840,58 @@ function Settings() {
       setSettings(s);
       setLoading(false);
     });
+    // Fetch credits on mount
+    fetchCredits();
     return () => sub.unsubscribe();
+    // eslint-disable-next-line
   }, []);
+
+  const fetchCredits = async () => {
+    setCreditsLoading(true);
+    setCreditsError(null);
+    try {
+      // Dynamically import to avoid circular dep if any
+      const { getTotalCredits } = await import('@shared/supabase-client');
+      const total = await getTotalCredits(PLAYER_ID);
+      setCredits(total);
+    } catch (err: any) {
+      setCreditsError(err.message || 'Failed to fetch credits');
+    } finally {
+      setCreditsLoading(false);
+    }
+  };
 
   const handleChange = (field: keyof PlayerSettings, value: any) => {
     setSettings((prev) => prev ? { ...prev, [field]: value } : prev);
+  };
+
+  // Admin credit controls
+  const handleAddCredits = async (amount: number) => {
+    setCreditsLoading(true);
+    setCreditsError(null);
+    try {
+      const { updateAllCredits } = await import('@shared/supabase-client');
+      await updateAllCredits(PLAYER_ID, 'add', amount);
+      await fetchCredits();
+    } catch (err: any) {
+      setCreditsError(err.message || 'Failed to add credits');
+    } finally {
+      setCreditsLoading(false);
+    }
+  };
+
+  const handleClearCredits = async () => {
+    setCreditsLoading(true);
+    setCreditsError(null);
+    try {
+      const { updateAllCredits } = await import('@shared/supabase-client');
+      await updateAllCredits(PLAYER_ID, 'clear');
+      await fetchCredits();
+    } catch (err: any) {
+      setCreditsError(err.message || 'Failed to clear credits');
+    } finally {
+      setCreditsLoading(false);
+    }
   };
 
   const handleSave = async () => {
@@ -861,6 +930,7 @@ function Settings() {
       <h2 className="text-2xl font-bold mb-4">Player Settings</h2>
       {error && <div className="text-red-400 mb-2">{error}</div>}
       <div className="space-y-6">
+        {/* Player settings */}
         <div className="flex items-center gap-4">
           <label className="font-semibold w-32">Shuffle</label>
           <input
@@ -918,6 +988,38 @@ function Settings() {
         >
           Save Settings
         </button>
+
+        {/* Admin Credits Controls */}
+        <div className="mt-10 p-6 bg-gray-900 rounded-lg">
+          <h3 className="text-xl font-bold mb-4">Kiosk Credits</h3>
+          {creditsError && <div className="text-red-400 mb-2">{creditsError}</div>}
+          <div className="flex items-center gap-6 mb-4">
+            <div className="text-lg font-semibold">
+              Balance: {creditsLoading ? <span className="text-gray-400">Loading...</span> : <span className="text-green-400">{credits ?? 0}</span>}
+            </div>
+            <button
+              onClick={() => handleAddCredits(1)}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded transition text-white font-semibold"
+              disabled={creditsLoading}
+            >
+              +1
+            </button>
+            <button
+              onClick={() => handleAddCredits(3)}
+              className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded transition text-white font-semibold"
+              disabled={creditsLoading}
+            >
+              +3
+            </button>
+            <button
+              onClick={handleClearCredits}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded transition text-white font-semibold"
+              disabled={creditsLoading}
+            >
+              Clear
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
