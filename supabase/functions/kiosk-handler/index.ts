@@ -159,11 +159,16 @@ Deno.serve(async (req)=>{
           // Use the first video
           const video = videos[0];
 
+          // Extract video ID from URL for source_id
+          const videoIdMatch = video.url.match(/[?&]v=([^#\&\?]*)/);
+          const videoId = videoIdMatch ? videoIdMatch[1] : video.url.split('/').pop();
+          const sourceId = `youtube:${videoId}`;
+
           // Check if media item already exists
           const { data: existingItem } = await supabase
             .from('media_items')
             .select('id')
-            .eq('url', video.url)
+            .eq('source_id', sourceId)
             .single();
 
           if (existingItem) {
@@ -173,12 +178,13 @@ Deno.serve(async (req)=>{
             const { data: newItem, error: insertError } = await supabase
               .from('media_items')
               .insert({
+                source_id: sourceId,
+                source_type: 'youtube',
                 title: video.title,
                 artist: video.artist,
                 url: video.url,
                 duration: video.duration,
                 thumbnail: video.thumbnail,
-                thumbnail_url: video.thumbnailUrl,
               })
               .select('id')
               .single();
