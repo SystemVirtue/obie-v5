@@ -101,7 +101,7 @@ Deno.serve(async (req)=>{
     }
     // Handle atomic request enqueue: deduct credits (unless freeplay) and enqueue as priority
     if (action === 'request') {
-      const { session_id, url, player_id } = body;
+      const { session_id, url, player_id, media_item_id } = body;
       if (!session_id || (!url && !media_item_id)) {
         return new Response(JSON.stringify({
           error: 'session_id and either url or media_item_id are required for request action'
