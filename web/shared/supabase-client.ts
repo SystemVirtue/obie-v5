@@ -404,7 +404,11 @@ export async function callPlayerControl(params: {
     body: params
   });
 
-  if (error) throw error;
+  if (error) {
+    // Normalize error to a real Error so callers receive a message string
+    throw new Error(error.message || JSON.stringify(error));
+  }
+
   return data;
 }
 
