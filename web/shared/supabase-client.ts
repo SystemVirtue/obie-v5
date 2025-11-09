@@ -400,6 +400,7 @@ export async function callPlayerControl(params: {
   progress?: number;
   action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session';
   session_id?: string;
+  stored_player_id?: string;
 }) {
   const { data, error } = await supabase.functions.invoke('player-control', {
     body: params

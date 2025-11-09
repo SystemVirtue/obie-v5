@@ -376,18 +376,33 @@ function App() {
 
         // Register this player instance as a potential priority player
         const sessionId = crypto.randomUUID();
-        console.log('[Player] Registering session:', sessionId);
+        
+        // Check if this player was previously priority
+        const storedPlayerId = localStorage.getItem('obie_priority_player_id');
+        
+        console.log('[Player] Registering session:', sessionId, 'stored_player_id:', storedPlayerId);
         
         const sessionResult = await callPlayerControl({
           player_id: PLAYER_ID,
           action: 'register_session',
           session_id: sessionId,
+          stored_player_id: storedPlayerId || undefined,
         });
 
         // Store whether this player is a slave (not priority)
         setIsSlavePlayer(!sessionResult.is_priority);
         
-        console.log('[Player] Session registered successfully, is_slave:', !sessionResult.is_priority);
+        // If this player became priority, store its ID in localStorage
+        if (sessionResult.is_priority) {
+          localStorage.setItem('obie_priority_player_id', PLAYER_ID);
+          console.log('[Player] Priority player ID stored in localStorage');
+        } else if (storedPlayerId === PLAYER_ID) {
+          // This player was previously priority but is no longer - clear localStorage
+          localStorage.removeItem('obie_priority_player_id');
+          console.log('[Player] Priority player ID removed from localStorage');
+        }
+        
+        console.log('[Player] Session registered successfully, is_slave:', !sessionResult.is_priority, 'restored:', sessionResult.restored || false);
       } catch (error) {
         console.error('[Player] Failed to initialize:', error);
       }
