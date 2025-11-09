@@ -107,9 +107,13 @@ Deno.serve(async (req)=>{
         }
       });
     }
-    // Extract video or playlist ID from URL
-    const videoId = extractVideoId(url);
-    const playlistId = extractPlaylistId(url);
+    // Extract video or playlist ID from URL (only for non-search requests)
+    let videoId = null;
+    let playlistId = null;
+    if (type !== 'search') {
+      videoId = extractVideoId(url);
+      playlistId = extractPlaylistId(url);
+    }
     // Retry with different keys if quota exceeded
     for(let attempt = 0; attempt < maxRetries; attempt++){
       try {
