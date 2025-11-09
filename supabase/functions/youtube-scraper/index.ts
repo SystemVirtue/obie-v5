@@ -84,10 +84,21 @@ Deno.serve(async (req)=>{
     let lastError = null;
     const maxRetries = API_KEYS.length; // Try all keys if needed
     const body = await req.json();
-    const { url, type = 'auto' } = body;
-    if (!url) {
+    const { url, query, type = 'auto' } = body;
+    if (type !== 'search' && !url) {
       return new Response(JSON.stringify({
         error: 'url is required'
+      }), {
+        status: 400,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+    if (type === 'search' && !query) {
+      return new Response(JSON.stringify({
+        error: 'query is required for search'
       }), {
         status: 400,
         headers: {
@@ -104,7 +115,9 @@ Deno.serve(async (req)=>{
       try {
         const apiKey = getNextApiKey();
         // Determine what to fetch
-        if (type === 'auto' && playlistId || type === 'playlist') {
+        if (type === 'search') {
+          videos = await fetchSearch(query, apiKey);
+        } else if (type === 'auto' && playlistId || type === 'playlist') {
           if (!playlistId) {
             return new Response(JSON.stringify({
               error: 'Invalid playlist URL'
@@ -228,6 +241,39 @@ async function fetchVideo(videoId, apiKey) {
   }
   const item = data.items[0];
   return parseVideoItem(item);
+}
+// Fetch search results
+async function fetchSearch(query, apiKey) {
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=10&key=${apiKey}`;
+  const response = await fetch(url);
+  // Handle quota exceeded - mark key as failed and throw
+  if (response.status === 403) {
+    const errorData = await response.json();
+    if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
+      markKeyAsFailed(apiKey);
+      throw new Error('Quota exceeded - key marked as failed');
+    }
+  }
+  if (!response.ok) {
+    throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
+  }
+  const data = await response.json();
+  const videos = data.items.map(item => {
+    const snippet = item.snippet;
+    // Extract artist from title (common format: "Artist - Title")
+    const titleParts = snippet.title.split(' - ');
+    const artist = titleParts.length > 1 ? titleParts[0].trim() : snippet.channelTitle;
+    const title = titleParts.length > 1 ? titleParts.slice(1).join(' - ').trim() : snippet.title;
+    return {
+      id: item.id.videoId,
+      title,
+      artist,
+      duration: 0, // Duration not available in search results
+      thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
+      url: `https://www.youtube.com/watch?v=${item.id.videoId}`
+    };
+  });
+  return videos;
 }
 // Fetch playlist metadata (all videos)
 async function fetchPlaylist(playlistId, apiKey) {
