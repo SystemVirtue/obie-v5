@@ -274,6 +274,7 @@ async function fetchSearch(query, apiKey) {
       artist,
       duration: 0, // Duration not available in search results
       thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
+      thumbnailUrl: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
       url: `https://www.youtube.com/watch?v=${item.id.videoId}`
     };
   });

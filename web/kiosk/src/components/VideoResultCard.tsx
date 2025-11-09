@@ -16,7 +16,10 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
     // Compact list view for iframe interface
     return (
       <div
-        onClick={() => onClick(video)}
+        onClick={() => {
+          console.log('VideoResultCard list view clicked:', video);
+          onClick(video);
+        }}
         className="bg-slate-700/60 rounded-lg p-3 cursor-pointer hover:bg-slate-600/60 transition-colors border border-slate-600 hover:border-amber-500"
       >
         <div className="flex gap-3">
@@ -42,7 +45,10 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
   // Grid view for standard search interface
   return (
     <div
-      onClick={() => onClick(video)}
+      onClick={() => {
+        console.log('VideoResultCard grid view clicked:', video);
+        onClick(video);
+      }}
       className="bg-slate-800/80 backdrop-blur rounded-lg overflow-hidden cursor-pointer hover:bg-slate-700/80 transition-all border border-slate-600 hover:border-amber-500 transform hover:scale-105"
       style={{
         filter: "drop-shadow(-5px -5px 10px rgba(0,0,0,0.6))",
