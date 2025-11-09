@@ -110,8 +110,8 @@ function App() {
           currentIndexInNormal = Math.min(Math.max(0, idx - priorityItems.length), normalItems.length - 1);
         }
 
-        const start = Math.max(0, currentIndexInNormal + 1);
-        const upcomingNormalItems = normalItems.slice(start, start + 4);
+        const start = Math.max(0, currentIndexInNormal + 0);
+        const upcomingNormalItems = normalItems.slice(start, start + 3);
 
         const marqueeItems = [...priorityItems, ...upcomingNormalItems];
         setQueue(marqueeItems);
