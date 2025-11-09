@@ -78,6 +78,7 @@ export interface PlayerSettings {
   shuffle: boolean;
   volume: number;
   freeplay: boolean;
+  karaoke_mode?: boolean;
   coin_per_song: number;
   branding: {
     name: string;
@@ -416,6 +417,7 @@ export async function callKioskHandler(params: {
   query?: string;
   media_item_id?: string;
   amount?: number;
+  url?: string;
 }) {
   try {
     // Call Edge Function directly to bypass authentication requirements for public kiosk
@@ -594,25 +596,27 @@ export async function updateAllCredits(playerId: string, action: 'clear' | 'add'
 
     if (error) throw error;
   } else if (action === 'add' && amount) {
-    // Add credits to every active kiosk session for this player.
-    // Fetch sessions and update each one (keeps logic simple and explicit).
+    // Add credits to the most-recently-active kiosk session for this player.
+    // Admin +1/+3 buttons are expected to increment the visible total by a small amount,
+    // so updating a single recent session prevents accidentally adding N times (one per session).
     const { data: sessions, error: fetchError } = await (supabase as any)
       .from('kiosk_sessions')
       .select('session_id, credits')
-      .eq('player_id', playerId);
+      .eq('player_id', playerId)
+      .order('last_active', { ascending: false })
+      .limit(1);
 
     if (fetchError) throw fetchError;
 
     if (sessions && sessions.length > 0) {
-      for (const s of sessions) {
-        const newCredits = (s.credits || 0) + amount;
-        const { error } = await (supabase as any)
-          .from('kiosk_sessions')
-          .update({ credits: newCredits })
-          .eq('session_id', s.session_id);
+      const s = sessions[0];
+      const newCredits = (s.credits || 0) + amount;
+      const { error } = await (supabase as any)
+        .from('kiosk_sessions')
+        .update({ credits: newCredits })
+        .eq('session_id', s.session_id);
 
-        if (error) throw error;
-      }
+      if (error) throw error;
     } else {
       // If there are no sessions, nothing to update
       return;

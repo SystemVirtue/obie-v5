@@ -770,6 +770,15 @@ function SettingsView() {
                 className="w-5 h-5"
               />
             </label>
+              <label className="flex items-center justify-between">
+                <span className="font-semibold">KARAOKE MODE: Show Lyrics overlaid on PLAYER</span>
+                <input
+                  type="checkbox"
+                  checked={!!settings.karaoke_mode}
+                  onChange={(e) => handleUpdate('karaoke_mode', e.target.checked)}
+                  className="w-5 h-5"
+                />
+              </label>
             <label className="flex items-center justify-between">
               <span>Shuffle</span>
               <input

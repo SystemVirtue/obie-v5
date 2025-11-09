@@ -5,11 +5,13 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   supabase,
   subscribeToPlayerStatus,
+  subscribeToPlayerSettings,
   callPlayerControl,
   callQueueManager,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
+  type PlayerSettings,
 } from '@shared/supabase-client';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
@@ -25,7 +27,7 @@ declare global {
 function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
-  const [initStatus, setInitStatus] = useState<string>('initializing');
+  const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
   const playerRef = useRef<any>(null);
@@ -34,6 +36,10 @@ function App() {
   const currentMediaIdRef = useRef<string | null>(null);
   const fadeIntervalRef = useRef<number | null>(null);
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
+  // Karaoke / lyrics refs
+  const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
+  const lyricsRafRef = useRef<number | null>(null);
+  const overlayRef = useRef<HTMLDivElement | null>(null);
 
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
@@ -334,7 +340,6 @@ function App() {
 
       try {
         console.log('[Player] Initializing player with default playlist...');
-        setInitStatus('loading_playlist');
         
         const result = await initializePlayerPlaylist(PLAYER_ID) as any;
         
@@ -343,14 +348,11 @@ function App() {
             playlist_name: result.playlist_name,
             loaded_count: result.loaded_count
           });
-          setInitStatus('ready');
         } else {
           console.warn('[Player] No playlist available');
-          setInitStatus('no_playlist');
         }
       } catch (error) {
         console.error('[Player] Failed to initialize playlist:', error);
-        setInitStatus('error');
       }
     };
 
@@ -416,6 +418,144 @@ function App() {
       subscription.unsubscribe();
     };
   }, [fadeIn, fadeOut, reportEndedAndNext]);
+
+  // Subscribe to player settings (to watch karaoke_mode)
+  useEffect(() => {
+    const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
+    return () => settingsSub.unsubscribe();
+  }, []);
+
+  // Fetch lyrics for a video/title using lrclib API (best-effort)
+  async function fetchLyricsForMedia(title: string | undefined, artist?: string) {
+    try {
+      const track = encodeURIComponent(title || '');
+      const artistName = encodeURIComponent(artist || '');
+      const url = `https://lrclib.net/api/get?artist_name=${artistName}&track_name=${track}`;
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      const data = await res.json();
+
+      // data may contain syncedLyrics (array) or plainLyrics (string)
+      if (Array.isArray(data?.syncedLyrics) && data.syncedLyrics.length > 0) {
+        // normalize entries to have startTimeMs, endTimeMs, words
+        return data.syncedLyrics.map((s: any) => ({ startTimeMs: s.startTimeMs, endTimeMs: s.endTimeMs, words: s.words }));
+      }
+      if (data?.plainLyrics) {
+        return [{ words: data.plainLyrics }];
+      }
+    } catch (err) {
+      console.warn('[Karaoke] fetchLyrics failed', err);
+    }
+    return null;
+  }
+
+  // Sync lyrics to player time
+  const syncLyrics = useCallback(() => {
+    try {
+      if (!overlayRef.current || !playerRef.current || !lyricsDataRef.current) {
+        lyricsRafRef.current = requestAnimationFrame(syncLyrics);
+        return;
+      }
+
+      const player = playerRef.current;
+      const timeMs = (player.getCurrentTime ? player.getCurrentTime() : 0) * 1000;
+      const data = lyricsDataRef.current;
+
+      // If it's unsynced (single entry with plain text), just display whole
+      if (data.length === 1 && !data[0].startTimeMs) {
+        overlayRef.current.innerHTML = `<div class="lyric-line">${escapeHtml(data[0].words)}</div>`;
+      } else {
+        const found = data.find((l) => (timeMs >= (l.startTimeMs || 0) && timeMs < (l.endTimeMs || Infinity)));
+        if (found) {
+          overlayRef.current.innerHTML = `<div class="lyric-line">${escapeHtml(found.words)}</div>`;
+        }
+      }
+
+    } catch (err) {
+      console.warn('[Karaoke] sync error', err);
+    }
+    lyricsRafRef.current = requestAnimationFrame(syncLyrics);
+  }, []);
+
+  function stopLyricsSync() {
+    if (lyricsRafRef.current) {
+      cancelAnimationFrame(lyricsRafRef.current);
+      lyricsRafRef.current = null;
+    }
+    if (overlayRef.current) {
+      overlayRef.current.style.display = 'none';
+      overlayRef.current.innerHTML = '';
+    }
+    lyricsDataRef.current = null;
+  }
+
+  // Escape HTML content to avoid XSS when inserting lyrics
+  function escapeHtml(s: string) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string));
+  }
+
+  // Start lyrics when karaoke mode enabled and media available
+  useEffect(() => {
+    const karaokeOn = !!settings?.karaoke_mode;
+    if (!karaokeOn) {
+      stopLyricsSync();
+      return;
+    }
+
+    // Ensure overlay element exists
+    if (!overlayRef.current) {
+      const el = document.createElement('div');
+      el.id = 'lyrics-overlay';
+      el.style.position = 'absolute';
+      el.style.left = '0';
+      el.style.right = '0';
+      el.style.bottom = '8%';
+      el.style.textAlign = 'center';
+      el.style.pointerEvents = 'none';
+      el.style.zIndex = '60';
+      el.style.display = 'none';
+      el.className = 'text-white text-2xl drop-shadow-lg';
+      // basic lyric-line style
+      const style = document.createElement('style');
+      style.innerHTML = `.lyric-line{background:rgba(0,0,0,0.5);display:inline-block;padding:8px 16px;border-radius:8px;}`;
+      document.head.appendChild(style);
+      overlayRef.current = el;
+      // append into the root player container
+      const container = document.querySelector('#root') || document.body;
+      container.appendChild(el);
+    }
+
+    if (!currentMedia) return; // wait until media available
+
+    // If we already have lyrics for this media id, reuse
+    if (lyricsDataRef.current && currentMediaIdRef.current === currentMedia.id) {
+      if (overlayRef.current) overlayRef.current.style.display = 'block';
+      if (!lyricsRafRef.current) lyricsRafRef.current = requestAnimationFrame(syncLyrics);
+      return;
+    }
+
+    // Fetch lyrics and start syncing
+    (async () => {
+      try {
+        if (!currentMedia) return;
+  const lyrics = await fetchLyricsForMedia(currentMedia.title, currentMedia.artist as any);
+        if (!lyrics) {
+          console.warn('[Karaoke] No lyrics found for', currentMedia.title);
+          return;
+        }
+        lyricsDataRef.current = lyrics;
+        currentMediaIdRef.current = currentMedia.id;
+        if (overlayRef.current) overlayRef.current.style.display = 'block';
+        if (!lyricsRafRef.current) lyricsRafRef.current = requestAnimationFrame(syncLyrics);
+      } catch (err) {
+        console.warn('[Karaoke] Failed to start lyrics', err);
+      }
+    })();
+
+    return () => {
+      // leave overlay shown if karaoke still on for other media; stop when karaoke disabled
+    };
+  }, [settings?.karaoke_mode, currentMedia, syncLyrics]);
 
   // Create or update YouTube player when media changes
   useEffect(() => {
@@ -495,7 +635,7 @@ function App() {
       videoId: youtubeId,
       playerVars: {
         autoplay: 0,        // Don't autoplay on first load (browser policy)
-        controls: 1,        // Show controls
+        controls: 0,        // Hide controls to prevent accidental clicks
         modestbranding: 1,  // Hide YouTube logo
         rel: 0,             // Don't show related videos
         iv_load_policy: 3,  // Hide annotations
@@ -529,9 +669,11 @@ function App() {
         ref={playerDivRef}
         id="player"
         className="w-full h-full"
+        onClick={(e) => e.preventDefault()} // Prevent YouTube's default click-to-toggle behavior
       />
 
-      {/* Status Overlay (for debugging) */}
+      {/* Status Overlay (for debugging) - HIDDEN */}
+      {/* 
       <div className="absolute top-4 right-4 bg-black bg-opacity-75 text-white p-4 rounded-lg text-sm font-mono max-w-md" style={{ zIndex: 20 }}>
         <div className="mb-2">
           <span className="text-gray-400">Init:</span>{' '}
@@ -560,6 +702,7 @@ function App() {
           </div>
         )}
       </div>
+      */}
 
       {/* Idle State */}
       {status?.state === 'idle' && !currentMedia && (
