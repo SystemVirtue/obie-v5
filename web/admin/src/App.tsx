@@ -828,6 +828,7 @@ function PlaylistsView() {
 
 function Settings() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [originalSettings, setOriginalSettings] = useState<PlayerSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
@@ -838,6 +839,7 @@ function Settings() {
     setLoading(true);
     const sub = subscribeToPlayerSettings(PLAYER_ID, (s) => {
       setSettings(s);
+      setOriginalSettings(s); // Store original settings for comparison
       setLoading(false);
     });
     // Fetch credits on mount
@@ -863,6 +865,11 @@ function Settings() {
 
   const handleChange = (field: keyof PlayerSettings, value: any) => {
     setSettings((prev) => prev ? { ...prev, [field]: value } : prev);
+  };
+
+  const hasSettingsChanged = () => {
+    if (!settings || !originalSettings) return false;
+    return JSON.stringify(settings) !== JSON.stringify(originalSettings);
   };
 
   // Admin credit controls
@@ -927,7 +934,12 @@ function Settings() {
       }])
       .eq('player_id', PLAYER_ID);
     setLoading(false);
-    if (error) setError(error.message);
+    if (error) {
+      setError(error.message);
+    } else {
+      // Update original settings to match current settings after successful save
+      setOriginalSettings(settings);
+    }
   };
 
   if (loading) {
@@ -949,7 +961,7 @@ function Settings() {
       <div className="space-y-6">
         {/* Player settings */}
         <div className="flex items-center gap-4">
-          <label className="font-semibold w-32">Shuffle</label>
+          <label className="font-semibold w-32">Shuffle on Load</label>
           <input
             type="checkbox"
             checked={!!settings.shuffle}
@@ -998,13 +1010,15 @@ function Settings() {
             />
           </div>
         )}
-        <button
-          onClick={handleSave}
-          className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-semibold transition"
-          disabled={loading}
-        >
-          Save Settings
-        </button>
+        {hasSettingsChanged() && (
+          <button
+            onClick={handleSave}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 rounded-lg text-white font-semibold transition"
+            disabled={loading}
+          >
+            Update Settings
+          </button>
+        )}
 
         {/* Priority Player Reset */}
         <div className="mt-6">

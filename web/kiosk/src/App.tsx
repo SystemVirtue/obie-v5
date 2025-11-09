@@ -18,6 +18,7 @@ import {
 import { Coins } from 'lucide-react';
 import { SearchInterface } from './components/SearchInterface';
 import { SearchResult } from '../../shared/types';
+import { BackgroundPlaylist, DEFAULT_BACKGROUND_ASSETS } from './components/BackgroundPlaylist';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
@@ -209,14 +210,21 @@ function App() {
     
     // Render UI (simplified, balanced JSX)
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-pink-900 text-white">
-        <main className="mx-auto max-w-5xl p-6">
+      <div className="min-h-screen bg-black text-white relative">
+        {/* Background Playlist */}
+        <BackgroundPlaylist
+          assets={DEFAULT_BACKGROUND_ASSETS}
+          fillScreen={true}
+          fadeDuration={1}
+        />
+
+        <main className="mx-auto max-w-5xl p-6 relative z-10">
           {/* Header / Search display */}
           <div className="flex items-center justify-between mb-6">
-            <div className="text-2xl font-bold text-yellow-400">Obie Kiosk</div>
+            <div className="text-2xl font-bold text-yellow-400 drop-shadow-lg">Obie Kiosk</div>
             <div className="flex items-center gap-4">
-              <div className="text-sm text-gray-300">{settings?.freeplay ? 'Free Play' : `Credits: ${session?.credits ?? 0}`}</div>
-              <button onClick={() => setShowSearchModal(true)} className="px-3 py-2 bg-gray-800 rounded">Search</button>
+              <div className="text-sm text-white drop-shadow-lg bg-black/50 px-3 py-1 rounded">{settings?.freeplay ? 'Free Play' : `Credits: ${session?.credits ?? 0}`}</div>
+              <button onClick={() => setShowSearchModal(true)} className="px-3 py-2 bg-black/70 hover:bg-black/80 text-white rounded drop-shadow-lg border border-yellow-400/50">Search</button>
             </div>
           </div>
 
@@ -265,20 +273,20 @@ function App() {
           />
 
           {/* Bottom marquee of upcoming songs */}
-          <div className="fixed bottom-0 left-0 right-0 bg-black/80 border-t border-yellow-400/30 py-3">
+          <div className="fixed bottom-0 left-0 right-0 bg-black/90 border-t border-yellow-400/50 py-3 backdrop-blur-sm">
             <div className="mx-auto max-w-full overflow-hidden">
               <div className="marquee">
-                <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm">
+                <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm drop-shadow-lg">
                   {queue.length > 0 ? (
                     queue.map((q, index) => (
                       <div key={q.id} className="px-6 flex items-center gap-2">
-                        {q.type === 'priority' && <span className="text-red-400">★</span>}
-                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-400">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
-                        {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4">•</span>}
+                        {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
+                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
+                        {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
                       </div>
                     ))
                   ) : (
-                    <div className="px-6">Coming Up: No items</div>
+                    <div className="px-6 drop-shadow-lg">Coming Up: No items</div>
                   )}
                 </div>
               </div>
@@ -309,10 +317,10 @@ function App() {
 
           {/* Insert coin dev button (kept) */}
           {!settings?.freeplay && (
-            <div className="fixed bottom-24 right-8">
+            <div className="fixed bottom-24 right-8 z-20">
               <button
                 onClick={handleCoinInsert}
-                className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-6 py-3 rounded-full shadow-lg transition-all flex items-center gap-3"
+                className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-6 py-3 rounded-full shadow-lg transition-all flex items-center gap-3 drop-shadow-lg border-2 border-yellow-400"
               >
                 <Coins size={18} />
                 <span>Insert Coin</span>
@@ -321,7 +329,7 @@ function App() {
           )}
 
           {/* Watermark small */}
-          <div className="fixed bottom-2 left-4 text-xs text-gray-500">
+          <div className="fixed bottom-2 left-4 text-xs text-white/70 drop-shadow-lg z-20 bg-black/30 px-2 py-1 rounded">
             Powered by Obie Jukebox v2
           </div>
         </main>

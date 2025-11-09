@@ -248,7 +248,7 @@ async function fetchVideo(videoId, apiKey) {
 }
 // Fetch search results
 async function fetchSearch(query, apiKey) {
-  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=10&key=${apiKey}`;
+  const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=10&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
   if (response.status === 403) {

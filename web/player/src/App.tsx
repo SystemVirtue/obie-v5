@@ -411,6 +411,54 @@ function App() {
     initPlayer();
   }, []);
 
+  // Shuffle on load logic - runs after playlist initialization and when settings are available
+  useEffect(() => {
+    const shuffleOnLoad = async () => {
+      if (!settings?.shuffle || !hasInitialized.current) return;
+      
+      // Only shuffle if this is the priority player (to avoid conflicts)
+      if (isSlavePlayer) return;
+      
+      try {
+        console.log('[Player] Shuffle on load enabled, shuffling queue...');
+        
+        // Get current queue to shuffle
+        const { data: queueItems } = await supabase
+          .from('queue')
+          .select('id')
+          .eq('player_id', PLAYER_ID)
+          .eq('type', 'normal')
+          .is('played_at', null)
+          .order('position', { ascending: true });
+        
+        if (!queueItems || queueItems.length <= 1) {
+          console.log('[Player] Not enough items to shuffle');
+          return;
+        }
+        
+        // Create shuffled order
+        const shuffledIds = [...queueItems]
+          .map((item: any) => item.id)
+          .sort(() => Math.random() - 0.5);
+        
+        console.log('[Player] Shuffling queue with', shuffledIds.length, 'items');
+        
+        // Reorder the queue
+        await callQueueManager({
+          action: 'reorder',
+          player_id: PLAYER_ID,
+          queue_ids: shuffledIds,
+        });
+        
+        console.log('[Player] Queue shuffled successfully on load');
+      } catch (error) {
+        console.error('[Player] Failed to shuffle on load:', error);
+      }
+    };
+    
+    shuffleOnLoad();
+  }, [settings?.shuffle, isSlavePlayer]); // Only run when shuffle setting changes or slave status changes
+
   // Subscribe to player_status updates from Supabase
   useEffect(() => {
     console.log('[Player] Subscribing to player status...');

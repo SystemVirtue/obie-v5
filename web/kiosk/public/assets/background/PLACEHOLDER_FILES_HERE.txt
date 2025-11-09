@@ -1,0 +1,8 @@
+# Place your background assets here:
+
+Required files:
+- Obie_NEON1.png
+- Obie_Shield_Crest_Animation.mp4
+- Obie - Carla v1.mp4
+- Obie_NEON2.png
+- Obie_Shield_Crest_Animation2.mp4
