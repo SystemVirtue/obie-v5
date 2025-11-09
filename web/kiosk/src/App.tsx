@@ -111,7 +111,7 @@ function App() {
         }
 
         const start = Math.max(0, currentIndexInNormal + 1);
-        const upcomingNormalItems = normalItems.slice(start, start + 3);
+        const upcomingNormalItems = normalItems.slice(start, start + 4);
 
         const marqueeItems = [...priorityItems, ...upcomingNormalItems];
         setQueue(marqueeItems);
@@ -296,7 +296,7 @@ function App() {
                     queue.map((q, index) => (
                       <div key={q.id} className="px-6 flex items-center gap-2">
                         {q.type === 'priority' && <span className="text-red-400">★</span>}
-                        <span>{(q.media_item as any)?.title || 'Untitled'}</span>
+                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-400">{(q.media_item as any)?.artist || 'Unknown'}</span></span>
                         {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4">•</span>}
                       </div>
                     ))
