@@ -219,13 +219,34 @@ function App() {
         />
 
         <main className="mx-auto max-w-5xl p-6 relative z-10">
-          {/* Header / Search display */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="text-2xl font-bold text-yellow-400 drop-shadow-lg">Obie Kiosk</div>
-            <div className="flex items-center gap-4">
-              <div className="text-sm text-white drop-shadow-lg bg-black/50 px-3 py-1 rounded">{settings?.freeplay ? 'Free Play' : `Credits: ${session?.credits ?? 0}`}</div>
-              <button onClick={() => setShowSearchModal(true)} className="px-3 py-2 bg-black/70 hover:bg-black/80 text-white rounded drop-shadow-lg border border-yellow-400/50">Search</button>
+          {/* Credits Display - Top Right */}
+          <div className="fixed top-4 right-4 z-20">
+            <div className="bg-black/60 border-2 border-yellow-400 rounded-lg p-3 shadow-lg">
+              <div className="flex items-center gap-2">
+                <Coins className="text-yellow-300 h-6 w-6" />
+                <div className="flex flex-col">
+                  <p className="text-white text-sm font-bold">
+                    {settings?.freeplay ? 'FREE PLAY' : 'CREDITS'}
+                  </p>
+                  {!settings?.freeplay && (
+                    <p className="text-yellow-300 text-lg font-bold">
+                      {session?.credits ?? 0}
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
+          </div>
+
+          {/* Search Button - Lower Middle */}
+          <div className="fixed bottom-24 left-1/2 transform -translate-x-1/2 z-20">
+            <button
+              onClick={() => setShowSearchModal(true)}
+              className="w-80 h-16 text-xl font-bold bg-black/60 text-white shadow-lg border-4 border-yellow-400 rounded-lg transform hover:scale-105 transition-all duration-200"
+              style={{ filter: "drop-shadow(-5px -5px 10px rgba(0,0,0,0.8))" }}
+            >
+              🎵 SEARCH FOR MUSIC 🎵
+            </button>
           </div>
 
           {/* Search Modal */}
@@ -315,9 +336,9 @@ function App() {
             </div>
           )}
 
-          {/* Insert coin dev button (kept) */}
+          {/* Insert coin dev button (moved to avoid conflict with search button) */}
           {!settings?.freeplay && (
-            <div className="fixed bottom-24 right-8 z-20">
+            <div className="fixed bottom-4 right-4 z-20">
               <button
                 onClick={handleCoinInsert}
                 className="bg-yellow-500 hover:bg-yellow-600 text-black font-bold px-6 py-3 rounded-full shadow-lg transition-all flex items-center gap-3 drop-shadow-lg border-2 border-yellow-400"

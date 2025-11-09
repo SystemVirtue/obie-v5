@@ -788,13 +788,26 @@ function App() {
         className="w-full h-full"
       />
 
-      {/* Click Prevention Overlay - Covers entire player to prevent any interactions */}
-      <div 
+      {/* Click Prevention Overlay - Allows play when paused, blocks pause when playing */}
+      <div
         className="absolute inset-0 w-full h-full cursor-default"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
-          console.log('[Player] Click blocked - play/pause only available from admin');
+
+          // Allow clicking to PLAY when video is paused
+          if (status?.state === 'paused' && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+            console.log('[Player] User clicked to PLAY paused video');
+            try {
+              playerRef.current.playVideo();
+            } catch (error) {
+              console.error('[Player] Error playing video:', error);
+            }
+            return false;
+          }
+
+          // Block all other clicks (including pause when playing)
+          console.log('[Player] Click blocked - can only play when paused');
           return false;
         }}
         style={{ pointerEvents: 'auto' }}

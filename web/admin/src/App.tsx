@@ -247,6 +247,7 @@ function QueueView() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -257,13 +258,19 @@ function QueueView() {
 
   useEffect(() => {
     const queueSub = subscribeToQueue(PLAYER_ID, setQueue);
-    const statusSub = subscribeToPlayerStatus(PLAYER_ID, setStatus);
+    const statusSub = subscribeToPlayerStatus(PLAYER_ID, (newStatus) => {
+      setStatus(newStatus);
+      // Reset skipping state when player starts playing or loading (indicates skip is complete)
+      if (isSkipping && (newStatus.state === 'playing' || newStatus.state === 'loading')) {
+        setIsSkipping(false);
+      }
+    });
 
     return () => {
       queueSub.unsubscribe();
       statusSub.unsubscribe();
     };
-  }, []);
+  }, [isSkipping]);
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -448,6 +455,9 @@ function QueueView() {
   };
 
   const handleSkip = async () => {
+    if (isSkipping) return; // Prevent multiple skip calls
+
+    setIsSkipping(true);
     try {
       // Update player state to trigger skip in player
       await callPlayerControl({
@@ -457,6 +467,9 @@ function QueueView() {
       });
     } catch (error) {
       console.error('Failed to skip:', error);
+    } finally {
+      // Reset skipping state after a short delay to allow UI update
+      setTimeout(() => setIsSkipping(false), 2000);
     }
   };
 
@@ -495,10 +508,15 @@ function QueueView() {
           </button>
           <button
             onClick={handleSkip}
-            className="flex items-center gap-2 px-6 py-3 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
+            disabled={isSkipping}
+            className={`flex items-center gap-2 px-6 py-3 rounded-lg transition ${
+              isSkipping
+                ? 'bg-gray-500 cursor-not-allowed opacity-50'
+                : 'bg-gray-700 hover:bg-gray-600'
+            }`}
           >
             <SkipForward size={20} />
-            Skip
+            {isSkipping ? 'Skipping...' : 'Skip'}
           </button>
           <button
             onClick={handleShuffle}
@@ -513,7 +531,9 @@ function QueueView() {
         {/* Now Playing */}
         {status?.current_media && (
           <div className="bg-gray-700 rounded-lg p-4">
-            <div className="text-sm text-gray-400 mb-1">Now Playing</div>
+            <div className={`text-sm mb-1 ${status?.state === 'paused' ? 'text-yellow-400 font-bold' : 'text-gray-400'}`}>
+              {status?.state === 'paused' ? 'Now Playing - VIDEO PLAYER IS PAUSED' : 'Now Playing'}
+            </div>
             <div className="font-semibold">{(status.current_media as any).title || 'Unknown Title'}</div>
             <div className="text-sm text-gray-400">{(status.current_media as any).artist || 'Unknown Artist'}</div>
             <div className="mt-2 bg-gray-600 rounded-full h-2">
