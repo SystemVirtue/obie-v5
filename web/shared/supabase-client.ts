@@ -117,7 +117,7 @@ export interface Database {
       media_items: { Row: MediaItem };
       queue: { Row: QueueItem };
       player_status: { Row: PlayerStatus };
-      player_settings: { Row: PlayerSettings };
+      player_settings: { Row: PlayerSettings; Update: Partial<PlayerSettings> };
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
     };
@@ -591,4 +591,72 @@ export async function getSystemLogs(
 
   if (error) throw error;
   return data || [];
+}
+
+// =============================================================================
+// AUTHENTICATION HELPERS
+// =============================================================================
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role?: string;
+}
+
+/**
+ * Sign in with email and password
+ */
+export async function signIn(email: string, password: string) {
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
+
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Sign out
+ */
+export async function signOut() {
+  const { error } = await supabase.auth.signOut();
+  if (error) throw error;
+}
+
+/**
+ * Get current user
+ */
+export async function getCurrentUser(): Promise<AuthUser | null> {
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  if (!user) return null;
+
+  return {
+    id: user.id,
+    email: user.email || '',
+    role: user.user_metadata?.role || user.app_metadata?.role,
+  };
+}
+
+/**
+ * Subscribe to auth state changes
+ */
+export function subscribeToAuth(callback: (user: AuthUser | null) => void): { unsubscribe: () => void } {
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    if (session?.user) {
+      const user: AuthUser = {
+        id: session.user.id,
+        email: session.user.email || '',
+        role: session.user.user_metadata?.role || session.user.app_metadata?.role,
+      };
+      callback(user);
+    } else {
+      callback(null);
+    }
+  });
+
+  return {
+    unsubscribe: () => subscription.unsubscribe(),
+  };
 }

@@ -17,7 +17,13 @@ import {
   type PlayerSettings,
   type SystemLog,
   type Playlist,
+  type PlaylistItem,
   callPlaylistManager,
+  signIn,
+  signOut,
+  getCurrentUser,
+  subscribeToAuth,
+  type AuthUser,
 } from '@shared/supabase-client';
 import {
   DndContext,
@@ -41,7 +47,6 @@ import {
   Pause,
   SkipForward,
   Shuffle,
-  Repeat,
   Trash2,
   Plus,
   List,
@@ -52,13 +57,134 @@ import {
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
+// =============================================================================
+// LOGIN FORM
+// =============================================================================
+
+function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+
+    try {
+      const result = await signIn(email, password);
+      if (result.user) {
+        onSignIn({
+          id: result.user.id,
+          email: result.user.email || '',
+          role: result.user.user_metadata?.role || result.user.app_metadata?.role,
+        });
+      }
+    } catch (err: any) {
+      setError(err.message || 'Failed to sign in');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+      <div className="bg-gray-800 rounded-lg p-8 w-full max-w-md">
+        <h1 className="text-3xl font-bold text-center mb-8">Obie Admin</h1>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div>
+            <label className="block text-sm font-medium mb-2">Email</label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full bg-gray-700 px-4 py-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Password</label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full bg-gray-700 px-4 py-3 rounded focus:outline-none focus:ring-2 focus:ring-blue-600"
+              required
+            />
+          </div>
+          {error && (
+            <div className="text-red-400 text-sm">{error}</div>
+          )}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 px-4 py-3 rounded font-medium transition"
+          >
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// MAIN APP
+// =============================================================================
+
 function App() {
   const [activeTab, setActiveTab] = useState<'queue' | 'playlists' | 'settings' | 'logs'>('queue');
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    // Check initial auth state
+    getCurrentUser().then(setUser).finally(() => setLoading(false));
+
+    // Subscribe to auth changes
+    const authSub = subscribeToAuth(setUser);
+    return () => authSub.unsubscribe();
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      await signOut();
+    } catch (error) {
+      console.error('Failed to sign out:', error);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <div className="text-2xl text-white">Loading...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <LoginForm onSignIn={setUser} />;
+  }
 
   return (
     <div className="min-h-screen bg-gray-900 text-white">
       <header className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-        <h1 className="text-2xl font-bold">Obie Admin Console</h1>
+        <div className="flex justify-between items-center">
+          <h1 className="text-2xl font-bold">Obie Admin Console</h1>
+          <div className="flex items-center gap-4">
+            <span className="text-sm text-gray-400">{user.email}</span>
+            <button
+              onClick={handleSignOut}
+              className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded transition"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
       </header>
 
       <div className="flex">
@@ -121,7 +247,6 @@ function App() {
 function QueueView() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
-  const [settings, setSettings] = useState<PlayerSettings | null>(null);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -133,12 +258,10 @@ function QueueView() {
   useEffect(() => {
     const queueSub = subscribeToQueue(PLAYER_ID, setQueue);
     const statusSub = subscribeToPlayerStatus(PLAYER_ID, setStatus);
-    const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
 
     return () => {
       queueSub.unsubscribe();
       statusSub.unsubscribe();
-      settingsSub.unsubscribe();
     };
   }, []);
 
@@ -409,10 +532,17 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
+  const [playlistItems, setPlaylistItems] = useState<PlaylistItem[]>([]);
 
   useEffect(() => {
     loadPlaylists();
   }, []);
+
+  useEffect(() => {
+    if (selectedPlaylist) {
+      loadPlaylistItems(selectedPlaylist);
+    }
+  }, [selectedPlaylist]);
 
   const loadPlaylists = async () => {
     try {
@@ -420,6 +550,15 @@ function PlaylistsView() {
       setPlaylists(data);
     } catch (error) {
       console.error('Failed to load playlists:', error);
+    }
+  };
+
+  const loadPlaylistItems = async (playlistId: string) => {
+    try {
+      const data = await getPlaylistItems(playlistId);
+      setPlaylistItems(data);
+    } catch (error) {
+      console.error('Failed to load playlist items:', error);
     }
   };
 
@@ -438,6 +577,18 @@ function PlaylistsView() {
       console.error('Failed to create playlist:', error);
     }
   };
+
+  if (selectedPlaylist) {
+    const playlist = playlists.find(p => p.id === selectedPlaylist);
+    return (
+      <PlaylistDetailsView
+        playlist={playlist}
+        playlistItems={playlistItems}
+        onBack={() => setSelectedPlaylist(null)}
+        onRefresh={() => loadPlaylistItems(selectedPlaylist)}
+      />
+    );
+  }
 
   return (
     <div>
@@ -480,6 +631,66 @@ function PlaylistsView() {
 }
 
 // =============================================================================
+// PLAYLIST DETAILS VIEW
+// =============================================================================
+
+function PlaylistDetailsView({
+  playlist,
+  playlistItems,
+  onBack,
+  onRefresh: _onRefresh
+}: {
+  playlist: Playlist | undefined;
+  playlistItems: PlaylistItem[];
+  onBack: () => void;
+  onRefresh: () => void;
+}) {
+  if (!playlist) return null;
+
+  return (
+    <div>
+      <div className="flex items-center gap-4 mb-6">
+        <button
+          onClick={onBack}
+          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded transition"
+        >
+          ← Back
+        </button>
+        <div>
+          <h2 className="text-2xl font-bold">{playlist.name}</h2>
+          {playlist.description && (
+            <p className="text-sm text-gray-400">{playlist.description}</p>
+          )}
+        </div>
+      </div>
+
+      <div className="bg-gray-800 rounded-lg p-6">
+        <h3 className="text-lg font-semibold mb-4">Songs ({playlistItems.length})</h3>
+        <div className="space-y-2">
+          {playlistItems.map((item, index) => (
+            <div key={item.id} className="bg-gray-700 rounded-lg p-4 flex items-center gap-4">
+              <div className="text-sm text-gray-400 w-8">{index + 1}</div>
+              <div className="flex-1">
+                <div className="font-semibold">{(item as any).media_item?.title || 'Unknown'}</div>
+                <div className="text-sm text-gray-400">{(item as any).media_item?.artist || 'Unknown Artist'}</div>
+              </div>
+              <div className="text-sm text-gray-400">
+                {Math.floor(((item as any).media_item?.duration || 0) / 60)}:
+                {String(((item as any).media_item?.duration || 0) % 60).padStart(2, '0')}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {playlistItems.length === 0 && (
+          <div className="text-center text-gray-400 py-8">No songs in this playlist</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
 // SETTINGS VIEW
 // =============================================================================
 
@@ -493,9 +704,10 @@ function SettingsView() {
 
   const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
     try {
-      await supabase
+      const updateData = { [field]: value };
+      await (supabase as any)
         .from('player_settings')
-        .update({ [field]: value })
+        .update(updateData)
         .eq('player_id', PLAYER_ID);
     } catch (error) {
       console.error('Failed to update settings:', error);
