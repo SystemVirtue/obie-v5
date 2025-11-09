@@ -96,7 +96,18 @@ function App() {
         // Filter out currently playing item
         const currentMediaId = playerStatus?.current_media_id || playerStatus?.current_media?.id || null;
         const upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
-        setQueue(upcomingItems);
+        
+        // Separate priority and normal items
+        const priorityItems = upcomingItems.filter(item => item.type === 'priority');
+        const normalItems = upcomingItems.filter(item => item.type === 'normal');
+        
+        // Limit normal items to max 4 for marquee display
+        const limitedNormalItems = normalItems.slice(0, 4);
+        
+        // Combine for display: all priority + up to 4 normal
+        const displayItems = [...priorityItems, ...limitedNormalItems];
+        
+        setQueue(displayItems);
       });
       return () => sub.unsubscribe();
     }, [playerStatus?.current_media_id, playerStatus?.current_media?.id]);
