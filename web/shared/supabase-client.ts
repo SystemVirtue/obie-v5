@@ -398,7 +398,8 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session';
+  session_id?: string;
 }) {
   const { data, error } = await supabase.functions.invoke('player-control', {
     body: params

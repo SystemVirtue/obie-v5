@@ -28,6 +28,7 @@ function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [isSlavePlayer, setIsSlavePlayer] = useState(false); // Track if this is a slave player
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
   const playerRef = useRef<any>(null);
@@ -372,8 +373,23 @@ function App() {
         } else {
           console.warn('[Player] No playlist available');
         }
+
+        // Register this player instance as a potential priority player
+        const sessionId = crypto.randomUUID();
+        console.log('[Player] Registering session:', sessionId);
+        
+        const sessionResult = await callPlayerControl({
+          player_id: PLAYER_ID,
+          action: 'register_session',
+          session_id: sessionId,
+        });
+
+        // Store whether this player is a slave (not priority)
+        setIsSlavePlayer(!sessionResult.is_priority);
+        
+        console.log('[Player] Session registered successfully, is_slave:', !sessionResult.is_priority);
       } catch (error) {
-        console.error('[Player] Failed to initialize playlist:', error);
+        console.error('[Player] Failed to initialize:', error);
       }
     };
 
@@ -697,8 +713,8 @@ function App() {
       <img
         src="/Obie_neon_no_BG.png"
         alt="Obie Logo"
-        className="absolute bottom-[100px] right-[20px] w-[8vw] h-auto pointer-events-none z-10"
-        style={{ maxWidth: '120px', minWidth: '60px' }}
+        className="absolute bottom-[40px] left-[20px] w-[8vw] h-auto pointer-events-none z-10"
+        style={{ maxWidth: '160px', minWidth: '60px' }}
       />
 
       {/* Status Overlay (for debugging) - HIDDEN */}
@@ -762,6 +778,15 @@ function App() {
           <div className="text-center">
             <div className="text-4xl font-bold text-white mb-4">⚠️ Playback Error</div>
             <div className="text-lg text-gray-200">Check logs for details</div>
+          </div>
+        </div>
+      )}
+
+      {/* Slave Player Debug Overlay */}
+      {isSlavePlayer && (
+        <div className="absolute bottom-0 left-0 right-0 flex justify-center items-end pb-4 pointer-events-none">
+          <div className="text-5xl font-bold text-white opacity-50" style={{ fontFamily: 'Arial, sans-serif' }}>
+            SLAVE
           </div>
         </div>
       )}
