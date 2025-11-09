@@ -398,7 +398,7 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority';
   session_id?: string;
   stored_player_id?: string;
 }) {

@@ -894,6 +894,23 @@ function Settings() {
     }
   };
 
+  const handleResetPriorityPlayer = async () => {
+    setCreditsLoading(true);
+    setCreditsError(null);
+    try {
+      const { callPlayerControl } = await import('@shared/supabase-client');
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'reset_priority'
+      });
+      setCreditsError(null); // Clear any previous errors
+    } catch (err: any) {
+      setCreditsError(err.message || 'Failed to reset priority player');
+    } finally {
+      setCreditsLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     setError(null);
     setLoading(true);
@@ -988,6 +1005,20 @@ function Settings() {
         >
           Save Settings
         </button>
+
+        {/* Priority Player Reset */}
+        <div className="mt-6">
+          <button
+            onClick={handleResetPriorityPlayer}
+            className="px-6 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg text-white font-semibold transition"
+            disabled={loading}
+          >
+            Reset Priority Player
+          </button>
+          <p className="text-sm text-gray-400 mt-2">
+            Clears the current priority player designation. The next player instance to initialize will become priority.
+          </p>
+        </div>
 
         {/* Admin Credits Controls */}
         <div className="mt-10 p-6 bg-gray-900 rounded-lg">

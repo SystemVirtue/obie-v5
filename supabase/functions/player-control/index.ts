@@ -143,6 +143,27 @@ Deno.serve(async (req)=>{
         });
       }
     }
+    // Handle reset priority player
+    if (action === 'reset_priority') {
+      const { error: resetError } = await supabase
+        .from('players')
+        .update({ priority_player_id: null })
+        .eq('id', player_id);
+
+      if (resetError) throw resetError;
+
+      console.log(`[player-control] Priority player reset for player ${player_id}`);
+      return new Response(JSON.stringify({
+        success: true,
+        message: 'Priority player reset'
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
 
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
