@@ -45,7 +45,6 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   }, [searchResults]);
 
   const handleVideoSelect = (video: SearchResult) => {
-    console.log('SearchInterface handleVideoSelect called with:', video);
     // Bypass credit check for /index page (DJ/admin interface)
     if (!bypassCreditCheck && mode === "PAID" && credits === 0) {
       onInsufficientCredits?.();

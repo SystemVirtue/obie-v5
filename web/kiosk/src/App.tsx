@@ -172,7 +172,6 @@ function App() {
     };
 
     const handleSelectResult = (item: any) => {
-      console.log('handleSelectResult called with:', item);
       setSelectedResult(item);
       setShowConfirm(true);
     };
