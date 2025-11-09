@@ -150,8 +150,14 @@ function App() {
     return match ? match[1] : null;
   };
 
-  // Report playback events to server
+  // Report playback events to server (disabled for slave players)
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
+    // Slave players do not send status updates to server
+    if (isSlavePlayer) {
+      console.log('[Slave Player] Skipping status report:', { state, progress });
+      return;
+    }
+
     console.log('[Player] Reporting status:', { state, progress });
     try {
       await callPlayerControl({
@@ -163,10 +169,16 @@ function App() {
     } catch (error) {
       console.error('[Player] Failed to report status:', error);
     }
-  }, []);
+  }, [isSlavePlayer]);
 
-  // Report video ended and trigger queue_next
+  // Report video ended and trigger queue_next (disabled for slave players)
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
+    // Slave players do not trigger queue operations
+    if (isSlavePlayer) {
+      console.log('[Slave Player] Skipping ended/next report');
+      return;
+    }
+
     console.log(isSkip ? '[Player] Video SKIPPED - triggering queue_next' : '[Player] Video ENDED - triggering queue_next');
     
     // Fade out if this is a skip
@@ -298,30 +310,34 @@ function App() {
       // Remove from queue
       if (unavailableMediaId) {
         try {
-          // Find queue item with this media_item_id
-          const { data: queueItem, error: queueError } = await supabase
-            .from('queue')
-            .select('id')
-            .eq('media_item_id', unavailableMediaId)
-            .eq('player_id', PLAYER_ID)
-            .maybeSingle();
-          
-          if (!queueError && queueItem) {
-            // Remove from queue
-            await callQueueManager({
-              player_id: PLAYER_ID,
-              action: 'remove',
-              queue_id: (queueItem as { id: string }).id,
-            });
+          // Find queue item with this media_item_id (disabled for slave players)
+          if (!isSlavePlayer) {
+            const { data: queueItem, error: queueError } = await supabase
+              .from('queue')
+              .select('id')
+              .eq('media_item_id', unavailableMediaId)
+              .eq('player_id', PLAYER_ID)
+              .maybeSingle();
+            
+            if (!queueError && queueItem) {
+              // Remove from queue
+              await callQueueManager({
+                player_id: PLAYER_ID,
+                action: 'remove',
+                queue_id: (queueItem as { id: string }).id,
+              });
+            }
           }
           
-          // Delete from playlist_items if it exists
-          await supabase
-            .from('playlist_items')
-            .delete()
-            .eq('media_item_id', unavailableMediaId);
-          
-          console.log('[Player] Removed unavailable video from queue and playlists');
+          // Delete from playlist_items if it exists (disabled for slave players)
+          if (!isSlavePlayer) {
+            await supabase
+              .from('playlist_items')
+              .delete()
+              .eq('media_item_id', unavailableMediaId);
+            
+            console.log('[Player] Removed unavailable video from queue and playlists');
+          }
         } catch (error) {
           console.error('[Player] Failed to remove unavailable video:', error);
         }
