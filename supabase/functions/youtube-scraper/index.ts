@@ -131,6 +131,54 @@ Deno.serve(async (req) => {
         console.warn('yt-dlp not available or failed to run:', (e as Error).message);
         // Continue to API key based path below as a fallback
       }
+      // If yt-dlp wasn't available or failed, fall back to YouTube Data API search
+      try {
+        const searchQuery = (query || '').trim();
+        if (!searchQuery) {
+          return new Response(JSON.stringify({ videos: [], count: 0 }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+        }
+
+        // Use API-based search as a fallback (returns video IDs, then fetch details)
+        for (let attemptKey = 0; attemptKey < maxRetries; attemptKey++) {
+          const apiKey = getNextApiKey();
+          try {
+            const searchUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=10&q=${encodeURIComponent(searchQuery)}&key=${apiKey}`;
+            const searchResp = await fetch(searchUrl);
+
+            if (searchResp.status === 403) {
+              const err = await searchResp.json().catch(() => ({}));
+              if (err?.error?.errors?.[0]?.reason === 'quotaExceeded') {
+                markKeyAsFailed(apiKey);
+                console.log('Search quota exceeded for key, trying next key');
+                continue;
+              }
+            }
+
+            if (!searchResp.ok) {
+              throw new Error(`YouTube search API error: ${searchResp.status} ${searchResp.statusText}`);
+            }
+
+            const searchData = await searchResp.json();
+            const videoIdsArr = (searchData.items || []).map((it: any) => it.id?.videoId).filter(Boolean);
+            if (videoIdsArr.length === 0) {
+              videos = [];
+              break;
+            }
+
+            const videoIds = videoIdsArr.join(',');
+            videos = await fetchVideosBatch(videoIds, apiKey);
+            break;
+          } catch (err) {
+            console.warn('YouTube search attempt failed, trying next key if available:', err);
+            continue;
+          }
+        }
+
+        return new Response(JSON.stringify({ videos, count: videos.length }), { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+      } catch (e) {
+        console.warn('YouTube Data API search fallback failed:', (e as Error).message);
+        // Continue to url-required path below which will return a helpful error
+      }
     }
 
     if (!url) {

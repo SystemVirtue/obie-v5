@@ -49,7 +49,13 @@ function App() {
         return;
       }
 
-      const startVolume = playerRef.current.getVolume();
+      const startVolume = ((): number => {
+        if (!playerRef.current) return 100;
+        if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
+        // HTMLMediaElement uses 0..1 volume
+        if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
+        return 100;
+      })();
       const startOpacity = 1;
       const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
@@ -68,7 +74,11 @@ function App() {
         const newOpacity = startOpacity * (1 - progress);
 
         if (playerRef.current) {
-          playerRef.current.setVolume(Math.max(0, newVolume));
+          if (typeof playerRef.current.setVolume === 'function') {
+            playerRef.current.setVolume(Math.max(0, newVolume));
+          } else if (typeof (playerRef.current as any).volume === 'number') {
+            (playerRef.current as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
+          }
         }
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.max(0, newOpacity));
@@ -112,7 +122,11 @@ function App() {
         const newOpacity = targetOpacity * progress;
 
         if (playerRef.current) {
-          playerRef.current.setVolume(Math.min(100, newVolume));
+          if (typeof playerRef.current.setVolume === 'function') {
+            playerRef.current.setVolume(Math.min(100, newVolume));
+          } else if (typeof (playerRef.current as any).volume === 'number') {
+            (playerRef.current as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
+          }
         }
         if (playerDivRef.current) {
           playerDivRef.current.style.opacity = String(Math.min(1, newOpacity));
@@ -237,9 +251,16 @@ function App() {
       reportStatus('playing');
       
       // If we're at volume 0 (after skip), fade in
-      if (playerRef.current && playerRef.current.getVolume() === 0) {
-        console.log('[Player] Auto-playing after skip - fading in...');
-        fadeIn();
+      if (playerRef.current) {
+        const currentVol = ((): number => {
+          if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
+          if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
+          return 100;
+        })();
+        if (currentVol === 0) {
+          console.log('[Player] Auto-playing after skip - fading in...');
+          fadeIn();
+        }
       }
     } else if (event.data === 2) {
       // PAUSED

@@ -106,8 +106,9 @@ Deno.serve(async (req) => {
             { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
+        // Call the unambiguous wrapper RPC to avoid overload ambiguity
         const { error: reorderError } = await supabase
-          .rpc('queue_reorder', {
+          .rpc('queue_reorder_wrapper', {
             p_player_id: player_id,
             p_queue_ids: queue_ids,
             p_type: type

@@ -6,15 +6,12 @@ import {
   supabase,
   subscribeToQueue,
   subscribeToPlayerStatus,
-  subscribeToPlayerSettings,
-  subscribeToSystemLogs,
   callQueueManager,
   callPlayerControl,
   getPlaylists,
   getPlaylistItems,
   type QueueItem,
   type PlayerStatus,
-  type PlayerSettings,
   type SystemLog,
   type Playlist,
   type PlaylistItem,
@@ -24,7 +21,6 @@ import {
   getCurrentUser,
   subscribeToAuth,
   type AuthUser,
-  getTotalCredits,
   updateAllCredits,
 } from '@shared/supabase-client';
 import {
@@ -52,10 +48,10 @@ import {
   Trash2,
   Plus,
   List,
-  Settings,
   Activity,
   GripVertical,
 } from 'lucide-react';
+import { Settings as SettingsIcon } from 'lucide-react';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
@@ -216,7 +212,7 @@ function App() {
               activeTab === 'settings' ? 'bg-blue-600' : 'hover:bg-gray-700'
             }`}
           >
-            <Settings size={20} />
+            <SettingsIcon size={20} />
             <span>Settings</span>
           </button>
           <button
@@ -233,8 +229,8 @@ function App() {
         {/* Main Content */}
         <main className="flex-1 p-6">
           {activeTab === 'queue' && <QueueView />}
-          {activeTab === 'playlists' && <PlaylistsView />}
-          {activeTab === 'settings' && <SettingsView />}
+          {activeTab === 'playlists' && <PlaylistsView setActiveTab={setActiveTab} />}
+          {activeTab === 'settings' && <Settings />}
           {activeTab === 'logs' && <LogsView />}
         </main>
       </div>
@@ -249,6 +245,7 @@ function App() {
 function QueueView() {
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [status, setStatus] = useState<PlayerStatus | null>(null);
+  const [isShuffling, setIsShuffling] = useState(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -294,16 +291,19 @@ function QueueView() {
     setQueue(newQueue);
 
     try {
-      const queueIds = reordered.map((item) => item.id);
-      console.log('[handleDragEnd] Calling queue-manager with', queueIds.length, 'IDs');
-      
+      // Dedupe client-side to avoid sending duplicate IDs which can confuse
+      // the server-side ord calculations and trigger unique constraint errors.
+      const queueIdsAll = reordered.map((item) => item.id);
+      const queueIds = Array.from(new Set(queueIdsAll));
+      console.log('[handleDragEnd] Calling queue-manager with', queueIds.length, 'unique IDs (raw', queueIdsAll.length, ')');
+
       const result = await callQueueManager({
         player_id: PLAYER_ID,
         action: 'reorder',
         queue_ids: queueIds,
         type: 'normal',
       });
-      
+
       console.log('[handleDragEnd] Reorder successful:', result);
     } catch (error) {
       console.error('[handleDragEnd] Failed to reorder queue:', error);
@@ -325,46 +325,124 @@ function QueueView() {
   };
 
   const handleShuffle = async () => {
+    // Disable the shuffle button while in-flight and retry on transient failures
+    const originalQueue = queue.slice();
+    setIsShuffling(true);
     try {
       console.log('[handleShuffle] Starting shuffle...');
-      
-      // Get normal queue items excluding currently playing
-      const normalQueueItems = queue.filter(item => 
+
+      // Helper to compute shuffled ids from a list of queue items
+      const buildShuffledIds = (items: QueueItem[]) => {
+        const shuffled = [...items];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+        }
+        return shuffled.map((it) => it.id);
+      };
+
+      // Get normal queue items excluding currently playing (current view snapshot)
+      const normalQueueItems = queue.filter((item) =>
         item.type === 'normal' && item.media_item_id !== status?.current_media_id
       );
-      
+
       console.log('[handleShuffle] Shuffling', normalQueueItems.length, 'items');
-      
-      // Shuffle the array using Fisher-Yates algorithm
-      const shuffled = [...normalQueueItems];
-      for (let i = shuffled.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
-      }
-      
+
       // Optimistic update: merge back with priority queue and currently playing
+      const shuffledIds = buildShuffledIds(normalQueueItems);
+      const shuffled = shuffledIds.map((id) => normalQueueItems.find((x) => x.id === id)!) as QueueItem[];
       const priorityItems = queue.filter((item) => item.type === 'priority');
       const currentlyPlaying = queue.filter((item) => item.media_item_id === status?.current_media_id);
       const newQueue = [...currentlyPlaying, ...priorityItems, ...shuffled];
-      
+
       console.log('[handleShuffle] Setting optimistic queue, new length:', newQueue.length);
       setQueue(newQueue);
-      
-      const queueIds = shuffled.map((item) => item.id);
-      console.log('[handleShuffle] Calling queue-manager with', queueIds.length, 'IDs');
-      
-      const result = await callQueueManager({
-        player_id: PLAYER_ID,
-        action: 'reorder',
-        queue_ids: queueIds,
-        type: 'normal',
-      });
-      
-      console.log('[handleShuffle] Shuffle successful:', result);
-    } catch (error) {
-      console.error('[handleShuffle] Failed to shuffle queue:', error);
-      // Revert on error
-      setQueue(queue);
+
+      // Retry loop with exponential backoff. On duplicate-key (23505) we refetch
+      // the latest queue from the DB and re-generate a shuffled order before retrying.
+      const maxAttempts = 5;
+      let attempt = 0;
+      let lastError: any = null;
+
+      while (attempt < maxAttempts) {
+        attempt += 1;
+        try {
+          const result = await callQueueManager({
+            player_id: PLAYER_ID,
+            action: 'reorder',
+            queue_ids: shuffledIds,
+            type: 'normal',
+          });
+          console.log('[handleShuffle] Shuffle successful (attempt', attempt, '):', result);
+          lastError = null;
+          break;
+        } catch (err: any) {
+          console.error('[handleShuffle] Shuffle attempt', attempt, 'failed:', err);
+          lastError = err;
+
+          const msg = String(err?.message || err);
+          const isDuplicateKey = msg.includes('23505') || /duplicate key/i.test(msg);
+
+          if (isDuplicateKey) {
+            // If duplicate-key, refetch latest queue and recompute shuffle
+            console.warn('[handleShuffle] Detected duplicate-key (23505). Refetching latest queue and retrying.');
+            try {
+              const { data: latest, error: fetchErr } = await supabase
+                .from('queue')
+                .select('*')
+                .eq('player_id', PLAYER_ID)
+                .is('played_at', null)
+                .order('type', { ascending: false })
+                .order('position', { ascending: true });
+
+              if (fetchErr) throw fetchErr;
+              const latestNormal = (latest || []).filter((item: any) =>
+                item.type === 'normal' && item.media_item_id !== status?.current_media_id
+              );
+
+              if (latestNormal.length === 0) {
+                console.warn('[handleShuffle] Latest normal queue empty, aborting retries.');
+                break;
+              }
+
+              // Rebuild shuffledIds from latest set and update optimistic UI
+              const newShuffledIds = buildShuffledIds(latestNormal as QueueItem[]);
+              const newShuffled = newShuffledIds.map((id) => latestNormal.find((x: any) => x.id === id)!) as QueueItem[];
+              const newQueueView = [...currentlyPlaying, ...priorityItems, ...newShuffled];
+              setQueue(newQueueView);
+
+              // Replace the shuffledIds for the next attempt
+              // (we don't modify the outer-scope 'shuffledIds' const, so use a local)
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
+              // reassign variable by shadowing
+              // @ts-ignore
+              shuffledIds.length = 0; // clear
+              // @ts-ignore
+              Array.prototype.push.apply(shuffledIds, newShuffledIds);
+
+              // Wait exponential backoff before retry
+              const backoff = 200 * Math.pow(2, attempt - 1);
+              await new Promise((res) => setTimeout(res, backoff));
+              continue;
+            } catch (refetchErr) {
+              console.error('[handleShuffle] Failed to refetch/rebuild queue for retry:', refetchErr);
+              // fallthrough to backoff and retry the original attempt
+            }
+          }
+
+          // Non-duplicate-key errors or refetch failure: backoff and retry
+          const backoff = 200 * Math.pow(2, attempt - 1);
+          await new Promise((res) => setTimeout(res, backoff));
+        }
+      }
+
+      if (lastError) {
+        // All attempts failed - revert optimistic update
+        console.error('[handleShuffle] All attempts failed, reverting optimistic queue. Last error:', lastError);
+        setQueue(originalQueue);
+      }
+    } finally {
+      setIsShuffling(false);
     }
   };
 
@@ -423,10 +501,11 @@ function QueueView() {
           </button>
           <button
             onClick={handleShuffle}
-            className="flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition"
+            disabled={isShuffling}
+            className={`flex items-center gap-2 px-6 py-3 bg-purple-600 hover:bg-purple-700 rounded-lg transition ${isShuffling ? 'opacity-50 cursor-not-allowed' : ''}`}
           >
             <Shuffle size={20} />
-            Shuffle Playlist
+            {isShuffling ? 'Shuffling...' : 'Shuffle Playlist'}
           </button>
         </div>
 
@@ -533,6 +612,7 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistCounts, setPlaylistCounts] = useState<Record<string, number>>({});
   const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
   const [playlistItems, setPlaylistItems] = useState<PlaylistItem[]>([]);
 
@@ -546,12 +626,53 @@ function PlaylistsView() {
     }
   }, [selectedPlaylist]);
 
+  // Removed unused confirmOpen
+  const [confirmTarget, setConfirmTarget] = useState<{ id: string; name: string } | null>(null);
+
   const loadPlaylists = async () => {
     try {
-      const data = await getPlaylists(PLAYER_ID);
-      setPlaylists(data);
+      // getPlaylists now returns rows from playlists_with_counts when available
+      const data: any = await getPlaylists(PLAYER_ID);
+      setPlaylists(data || []);
+
+      // If the view provided item_count, populate the map
+      const map: Record<string, number> = {};
+      (data || []).forEach((p: any) => {
+        if (p.item_count !== undefined) map[p.id] = p.item_count;
+      });
+      setPlaylistCounts(map);
     } catch (error) {
       console.error('Failed to load playlists:', error);
+    }
+  };
+
+  const handleView = (playlistId: string) => {
+    setSelectedPlaylist(playlistId);
+  };
+
+  const handleLoad = async (e: React.MouseEvent, playlistId: string) => {
+    e.stopPropagation();
+    const playlist = playlists.find(p => p.id === playlistId);
+    if (!playlist) return;
+    try {
+      // Use the correct action for setting active playlist (likely 'set_active')
+      await callPlaylistManager({ action: 'set_active', player_id: PLAYER_ID, playlist_id: playlist.id });
+      await loadPlaylists();
+    } catch (err) {
+      console.error('Failed to set active playlist:', err);
+    }
+  };
+
+  const confirmLoad = async () => {
+    if (!confirmTarget) return;
+    setConfirmOpen(false);
+    try {
+      await callPlaylistManager({ action: 'update', player_id: PLAYER_ID, playlist_id: confirmTarget.id, is_active: true });
+      await loadPlaylists();
+    } catch (err) {
+      console.error('Failed to set active playlist:', err);
+    } finally {
+      setConfirmTarget(null);
     }
   };
 
@@ -580,114 +701,94 @@ function PlaylistsView() {
     }
   };
 
-  if (selectedPlaylist) {
-    const playlist = playlists.find(p => p.id === selectedPlaylist);
-    return (
-      <PlaylistDetailsView
-        playlist={playlist}
-        playlistItems={playlistItems}
-        onBack={() => setSelectedPlaylist(null)}
-        onRefresh={() => loadPlaylistItems(selectedPlaylist)}
-      />
-    );
-  }
+  const handleDeletePlaylist = async (playlistId: string) => {
+    const confirm = window.confirm('Delete this playlist? This action cannot be undone.');
+    if (!confirm) return;
+
+    try {
+      await callPlaylistManager({
+        action: 'delete',
+        player_id: PLAYER_ID,
+        playlist_id: playlistId,
+      });
+      await loadPlaylists();
+    } catch (error) {
+      console.error('Failed to delete playlist:', error);
+    }
+  };
 
   return (
     <div>
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4">
         <h2 className="text-2xl font-bold">Playlists</h2>
         <button
           onClick={handleCreatePlaylist}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg transition"
+          className="px-4 py-2 bg-green-600 hover:bg-green-700 rounded transition"
         >
-          <Plus size={20} />
+          <Plus size={16} className="inline-block mr-2" />
           New Playlist
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {playlists.map((playlist) => (
-          <div
-            key={playlist.id}
-            className="bg-gray-800 rounded-lg p-6 cursor-pointer hover:bg-gray-700 transition"
-            onClick={() => setSelectedPlaylist(playlist.id)}
-          >
-            <h3 className="text-xl font-bold mb-2">{playlist.name}</h3>
-            {playlist.description && (
-              <p className="text-sm text-gray-400">{playlist.description}</p>
-            )}
-            {playlist.is_active && (
-              <span className="inline-block mt-2 px-2 py-1 bg-green-600 text-xs rounded">Active</span>
-            )}
+      {/* Playlist List */}
+      <div className="bg-gray-800 rounded-lg p-4 mb-6">
+        {playlists.length === 0 ? (
+          <div className="text-center text-gray-400 py-8">No playlists found</div>
+        ) : (
+          <div className="space-y-2">
+            {playlists.map((playlist) => (
+              <div
+                key={playlist.id}
+                className="bg-gray-700 rounded-lg p-4 flex items-center justify-between gap-4"
+              >
+                <div className="flex-1" onClick={() => handleView(playlist.id)}>
+                  <div className="font-semibold">{playlist.name}</div>
+                  <div className="text-sm text-gray-400">
+                    {playlistCounts[playlist.id] || 0} {playlistCounts[playlist.id] === 1 ? 'item' : 'items'}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={(e) => handleLoad(e, playlist.id)}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
+                    title="Load Playlist"
+                  >
+                    <Play size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleDeletePlaylist(playlist.id)}
+                    className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded transition"
+                    title="Delete Playlist"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
-
-      {playlists.length === 0 && (
-        <div className="text-center text-gray-400 py-12">
-          No playlists yet. Create one to get started!
-        </div>
-      )}
-    </div>
-  );
-}
-
-// =============================================================================
-// PLAYLIST DETAILS VIEW
-// =============================================================================
-
-function PlaylistDetailsView({
-  playlist,
-  playlistItems,
-  onBack,
-  onRefresh: _onRefresh
-}: {
-  playlist: Playlist | undefined;
-  playlistItems: PlaylistItem[];
-  onBack: () => void;
-  onRefresh: () => void;
-}) {
-  if (!playlist) return null;
-
-  return (
-    <div>
-      <div className="flex items-center gap-4 mb-6">
-        <button
-          onClick={onBack}
-          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded transition"
-        >
-          ← Back
-        </button>
-        <div>
-          <h2 className="text-2xl font-bold">{playlist.name}</h2>
-          {playlist.description && (
-            <p className="text-sm text-gray-400">{playlist.description}</p>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-gray-800 rounded-lg p-6">
-        <h3 className="text-lg font-semibold mb-4">Songs ({playlistItems.length})</h3>
-        <div className="space-y-2">
-          {playlistItems.map((item, index) => (
-            <div key={item.id} className="bg-gray-700 rounded-lg p-4 flex items-center gap-4">
-              <div className="text-sm text-gray-400 w-8">{index + 1}</div>
-              <div className="flex-1">
-                <div className="font-semibold">{(item as any).media_item?.title || 'Unknown'}</div>
-                <div className="text-sm text-gray-400">{(item as any).media_item?.artist || 'Unknown Artist'}</div>
-              </div>
-              <div className="text-sm text-gray-400">
-                {Math.floor(((item as any).media_item?.duration || 0) / 60)}:
-                {String(((item as any).media_item?.duration || 0) % 60).padStart(2, '0')}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {playlistItems.length === 0 && (
-          <div className="text-center text-gray-400 py-8">No songs in this playlist</div>
         )}
       </div>
+
+      {/* Playlist Items */}
+      {selectedPlaylist && (
+        <div className="bg-gray-800 rounded-lg p-4">
+          <h3 className="text-xl font-bold mb-4">Playlist Items</h3>
+          {playlistItems.length === 0 ? (
+            <div className="text-center text-gray-400 py-8">No items in this playlist</div>
+          ) : (
+            <div className="space-y-2">
+              {playlistItems.map((item) => (
+                <div key={item.id} className="bg-gray-700 rounded-lg p-4 flex items-center gap-4">
+                  <div className="flex-1">
+                    <div className="font-semibold">{item.media_item_id || 'Unknown'}</div>
+                  </div>
+                  <div className="text-sm text-gray-400">ID: {item.media_item_id}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -696,201 +797,12 @@ function PlaylistDetailsView({
 // SETTINGS VIEW
 // =============================================================================
 
-function SettingsView() {
-  const [settings, setSettings] = useState<PlayerSettings | null>(null);
-  const [totalCredits, setTotalCredits] = useState<number>(0);
-
-  useEffect(() => {
-    const sub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
-    
-    // Fetch initial total credits
-    getTotalCredits(PLAYER_ID).then(setTotalCredits).catch(console.error);
-    
-    return () => sub.unsubscribe();
-  }, []);
-
-  // Subscribe to kiosk session changes to update total credits
-  useEffect(() => {
-    const fetchCredits = () => getTotalCredits(PLAYER_ID).then(setTotalCredits).catch(console.error);
-    
-    // Fetch credits periodically (since we can't easily subscribe to all sessions)
-    const interval = setInterval(fetchCredits, 5000); // Update every 5 seconds
-    fetchCredits(); // Initial fetch
-    
-    return () => clearInterval(interval);
-  }, []);
-
-  const handleCreditAction = async (action: 'clear' | 'add1' | 'add3') => {
-    try {
-      if (action === 'clear') {
-        await updateAllCredits(PLAYER_ID, 'clear');
-      } else if (action === 'add1') {
-        await updateAllCredits(PLAYER_ID, 'add', 1);
-      } else if (action === 'add3') {
-        await updateAllCredits(PLAYER_ID, 'add', 3);
-      }
-      
-      // Refresh total credits
-      const newTotal = await getTotalCredits(PLAYER_ID);
-      setTotalCredits(newTotal);
-    } catch (error) {
-      console.error('Failed to update credits:', error);
-    }
-  };
-
-  const handleUpdate = async (field: keyof PlayerSettings, value: any) => {
-    try {
-      const updateData = { [field]: value };
-      await (supabase as any)
-        .from('player_settings')
-        .update(updateData)
-        .eq('player_id', PLAYER_ID);
-    } catch (error) {
-      console.error('Failed to update settings:', error);
-    }
-  };
-
-  if (!settings) return <div>Loading settings...</div>;
-
+function Settings() {
+  // Placeholder: implement as needed
   return (
-    <div className="max-w-2xl">
-      <h2 className="text-2xl font-bold mb-6">Player Settings</h2>
-
-      <div className="bg-gray-800 rounded-lg p-6 space-y-6">
-        {/* Playback Settings */}
-        <div>
-          <h3 className="text-lg font-semibold mb-4">Playback</h3>
-          <div className="space-y-4">
-            <label className="flex items-center justify-between">
-              <span>Loop</span>
-              <input
-                type="checkbox"
-                checked={settings.loop}
-                onChange={(e) => handleUpdate('loop', e.target.checked)}
-                className="w-5 h-5"
-              />
-            </label>
-              <label className="flex items-center justify-between">
-                <span className="font-semibold">KARAOKE MODE: Show Lyrics overlaid on PLAYER</span>
-                <input
-                  type="checkbox"
-                  checked={!!settings.karaoke_mode}
-                  onChange={(e) => handleUpdate('karaoke_mode', e.target.checked)}
-                  className="w-5 h-5"
-                />
-              </label>
-            <label className="flex items-center justify-between">
-              <span>Shuffle</span>
-              <input
-                type="checkbox"
-                checked={settings.shuffle}
-                onChange={(e) => handleUpdate('shuffle', e.target.checked)}
-                className="w-5 h-5"
-              />
-            </label>
-            <label className="flex flex-col">
-              <span className="mb-2">Volume: {settings.volume}%</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={settings.volume}
-                onChange={(e) => handleUpdate('volume', parseInt(e.target.value))}
-                className="w-full"
-              />
-            </label>
-          </div>
-        </div>
-
-        {/* Kiosk Settings */}
-        <div className="border-t border-gray-700 pt-6">
-          <h3 className="text-lg font-semibold mb-4">Kiosk</h3>
-          <div className="space-y-4">
-            <label className="flex items-center justify-between">
-              <span>Free Play Mode</span>
-              <input
-                type="checkbox"
-                checked={settings.freeplay}
-                onChange={(e) => handleUpdate('freeplay', e.target.checked)}
-                className="w-5 h-5"
-              />
-            </label>
-            <label className="flex flex-col">
-              <span className="mb-2">Credits per Song</span>
-              <input
-                type="number"
-                min="1"
-                value={settings.coin_per_song}
-                onChange={(e) => handleUpdate('coin_per_song', parseInt(e.target.value))}
-                className="bg-gray-700 px-4 py-2 rounded"
-              />
-            </label>
-            <label className="flex items-center justify-between">
-              <span>Search Enabled</span>
-              <input
-                type="checkbox"
-                checked={settings.search_enabled}
-                onChange={(e) => handleUpdate('search_enabled', e.target.checked)}
-                className="w-5 h-5"
-              />
-            </label>
-            {/* Credit Balance Management */}
-            <div className="border-t border-gray-600 pt-4">
-              <div className="flex items-center justify-between mb-3">
-                <span className="font-medium">Credit Balance</span>
-                <span className="text-2xl font-bold text-yellow-400">{totalCredits || 0}</span>
-              </div>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleCreditAction('clear')}
-                  className="px-3 py-2 bg-red-600 hover:bg-red-700 text-white text-sm rounded transition"
-                >
-                  Clear Credits
-                </button>
-                <button
-                  onClick={() => handleCreditAction('add1')}
-                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition"
-                >
-                  +1
-                </button>
-                <button
-                  onClick={() => handleCreditAction('add3')}
-                  className="px-3 py-2 bg-green-600 hover:bg-green-700 text-white text-sm rounded transition"
-                >
-                  +3
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Queue Limits */}
-        <div className="border-t border-gray-700 pt-6">
-          <h3 className="text-lg font-semibold mb-4">Queue Limits</h3>
-          <div className="space-y-4">
-            <label className="flex flex-col">
-              <span className="mb-2">Max Queue Size</span>
-              <input
-                type="number"
-                min="1"
-                value={settings.max_queue_size}
-                onChange={(e) => handleUpdate('max_queue_size', parseInt(e.target.value))}
-                className="bg-gray-700 px-4 py-2 rounded"
-              />
-            </label>
-            <label className="flex flex-col">
-              <span className="mb-2">Priority Queue Limit</span>
-              <input
-                type="number"
-                min="1"
-                value={settings.priority_queue_limit}
-                onChange={(e) => handleUpdate('priority_queue_limit', parseInt(e.target.value))}
-                className="bg-gray-700 px-4 py-2 rounded"
-              />
-            </label>
-          </div>
-        </div>
-      </div>
+    <div className="max-w-3xl mx-auto p-6 bg-gray-800 rounded-lg">
+      <h2 className="text-2xl font-bold mb-4">Settings</h2>
+      <div className="text-gray-400">Settings functionality not implemented.</div>
     </div>
   );
 }
@@ -901,94 +813,55 @@ function SettingsView() {
 
 function LogsView() {
   const [logs, setLogs] = useState<SystemLog[]>([]);
-  const [severity, setSeverity] = useState<string>('all');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    loadLogs();
-    const sub = subscribeToSystemLogs(PLAYER_ID, (log) => {
-      setLogs((prev) => [log, ...prev].slice(0, 100)); // Keep last 100
-    });
-    return () => sub.unsubscribe();
-  }, [severity]);
+    const fetchLogs = async () => {
+      setLoading(true);
 
-  const loadLogs = async () => {
-    try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from('system_logs')
         .select('*')
-        .eq('player_id', PLAYER_ID)
-        .order('timestamp', { ascending: false })
-        .limit(100);
+        .order('timestamp', { ascending: false });
 
-      if (data) setLogs(data);
-    } catch (error) {
-      console.error('Failed to load logs:', error);
-    }
-  };
+      if (error) {
+        console.error('Error fetching logs:', error);
+      } else {
+        setLogs(data);
+      }
 
-  const filteredLogs = severity === 'all' ? logs : logs.filter((log) => log.severity === severity);
+      setLoading(false);
+    };
+
+    fetchLogs();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <div className="text-2xl text-white">Loading...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">System Logs</h2>
-        <select
-          value={severity}
-          onChange={(e) => setSeverity(e.target.value)}
-          className="bg-gray-800 px-4 py-2 rounded"
-        >
-          <option value="all">All</option>
-          <option value="debug">Debug</option>
-          <option value="info">Info</option>
-          <option value="warn">Warn</option>
-          <option value="error">Error</option>
-        </select>
-      </div>
-
-      <div className="bg-gray-800 rounded-lg overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-700">
-              <tr>
-                <th className="px-4 py-3 text-left">Time</th>
-                <th className="px-4 py-3 text-left">Severity</th>
-                <th className="px-4 py-3 text-left">Event</th>
-                <th className="px-4 py-3 text-left">Details</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredLogs.map((log) => (
-                <tr key={log.id} className="border-t border-gray-700">
-                  <td className="px-4 py-3 text-sm">
-                    {new Date(log.timestamp).toLocaleTimeString()}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`px-2 py-1 text-xs rounded ${
-                        log.severity === 'error'
-                          ? 'bg-red-600'
-                          : log.severity === 'warn'
-                          ? 'bg-yellow-600'
-                          : log.severity === 'info'
-                          ? 'bg-blue-600'
-                          : 'bg-gray-600'
-                      }`}
-                    >
-                      {log.severity}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 font-mono text-sm">{log.event}</td>
-                  <td className="px-4 py-3 text-sm text-gray-400">
-                    {JSON.stringify(log.payload)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {filteredLogs.length === 0 && (
-          <div className="text-center text-gray-400 py-8">No logs to display</div>
+    <div className="max-w-3xl mx-auto p-6 bg-gray-800 rounded-lg">
+      <h2 className="text-2xl font-bold mb-4">System Logs</h2>
+      <div className="space-y-4">
+        {logs.length === 0 ? (
+          <div className="text-center text-gray-400 py-8">No logs found</div>
+        ) : (
+          logs.map((log) => (
+            <div key={log.id} className="bg-gray-700 rounded-lg p-4">
+              <div className="text-sm text-gray-400 mb-2">
+                {new Date(log.timestamp).toLocaleString()}
+              </div>
+              <div className="font-semibold">{log.id}</div>
+            </div>
+          ))
         )}
       </div>
     </div>

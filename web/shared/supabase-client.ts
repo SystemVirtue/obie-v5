@@ -361,7 +361,8 @@ export async function callQueueManager(params: {
   // optimized behavior used in the compiled app bundle.
   try {
     if (params.action === 'reorder' && Array.isArray(params.queue_ids) && params.queue_ids.length > 50) {
-      const { error } = await supabase.rpc('queue_reorder', {
+      // Call the unambiguous wrapper RPC to avoid overload resolution issues
+      const { error } = await supabase.rpc('queue_reorder_wrapper', {
         p_player_id: params.player_id,
         p_queue_ids: params.queue_ids,
         p_type: params.type || 'normal'
@@ -530,28 +531,80 @@ export async function getPlayer(playerId: string): Promise<Player | null> {
  * Get all playlists for a player
  */
 export async function getPlaylists(playerId: string): Promise<Playlist[]> {
+  // Prefer the aggregated view that includes item counts when available.
+  // Fallback to the raw playlists table if the view does not exist.
+  const viewSelect = '*, item_count';
   const { data, error } = await supabase
+    .from('playlists_with_counts')
+    .select(viewSelect)
+    .eq('player_id', playerId)
+    .order('created_at', { ascending: false });
+
+  if (!error && data) {
+    // Map view rows to Playlist shape while exposing item_count via casting below where needed
+    return (data as any).map((row: any) => ({
+      id: row.id,
+      player_id: row.player_id,
+      name: row.name,
+      description: row.description,
+      is_active: row.is_active,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
+      // item_count is available on the row if callers want it
+      item_count: row.item_count,
+    })) as any;
+  }
+
+  // Fallback: query playlists and return without counts
+  const { data: rawData, error: rawErr } = await supabase
     .from('playlists')
     .select('*')
     .eq('player_id', playerId)
     .order('created_at', { ascending: false });
 
-  if (error) throw error;
-  return data || [];
+  if (rawErr) throw rawErr;
+  return rawData || [];
 }
 
 /**
  * Get playlist items with media details
  */
 export async function getPlaylistItems(playlistId: string): Promise<(PlaylistItem & { media_item: MediaItem })[]> {
-  const { data, error } = await supabase
+  // Use a two-step fetch to avoid runtime PostgREST relationship cache issues
+  const { data: items, error: itemsError } = await supabase
     .from('playlist_items')
-    .select('*, media_item:media_items(*)')
+    .select('*')
     .eq('playlist_id', playlistId)
     .order('position', { ascending: true });
 
-  if (error) throw error;
-  return data as any || [];
+  if (itemsError) {
+    // If the error indicates a missing foreign key relationship, fall back to the two-step approach
+    console.error('[getPlaylistItems] Initial fetch failed, error:', itemsError);
+    throw itemsError;
+  }
+
+  const itemRows = (items || []) as PlaylistItem[];
+  const mediaIds = Array.from(new Set(itemRows.map((i) => i.media_item_id).filter(Boolean)));
+
+  if (mediaIds.length === 0) return itemRows as any;
+
+  const { data: mediaRows, error: mediaError } = await supabase
+    .from('media_items')
+    .select('*')
+    .in('id', mediaIds);
+
+  if (mediaError) {
+    console.error('[getPlaylistItems] Failed to fetch media_items:', mediaError);
+    throw mediaError;
+  }
+
+  const mediaMap = new Map<string, MediaItem>();
+  (mediaRows || []).forEach((m: any) => mediaMap.set(m.id, m));
+
+  return itemRows.map((it) => ({
+    ...it,
+    media_item: mediaMap.get(it.media_item_id) as any,
+  })) as any;
 }
 
 /**

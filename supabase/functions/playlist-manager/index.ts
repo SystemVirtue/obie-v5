@@ -331,6 +331,42 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Handle setting a playlist as active for a player (server-side)
+    if (action === 'set_active') {
+      if (!player_id || !playlist_id) {
+        return new Response(
+          JSON.stringify({ error: 'player_id and playlist_id are required' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Unset any existing active playlists for this player
+      const { error: unsetError } = await supabase
+        .from('playlists')
+        .update({ is_active: false })
+        .eq('player_id', player_id);
+      if (unsetError) throw unsetError;
+
+      // Set the requested playlist active
+      const { error: setError } = await supabase
+        .from('playlists')
+        .update({ is_active: true })
+        .eq('id', playlist_id);
+      if (setError) throw setError;
+
+      // Update player's active_playlist_id
+      const { error: playerUpdateError } = await supabase
+        .from('players')
+        .update({ active_playlist_id: playlist_id })
+        .eq('id', player_id);
+      if (playerUpdateError) throw playerUpdateError;
+
+      return new Response(
+        JSON.stringify({ success: true }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     return new Response(
       JSON.stringify({ error: `Unknown action: ${action}` }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
