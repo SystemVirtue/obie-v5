@@ -110,7 +110,7 @@ function App() {
           currentIndexInNormal = Math.min(Math.max(0, idx - priorityItems.length), normalItems.length - 1);
         }
 
-        const start = Math.max(0, currentIndexInNormal+2);
+        const start = Math.max(0, currentIndexInNormal);
         const upcomingNormalItems = normalItems.slice(start, start + 4);
 
         const marqueeItems = [...priorityItems, ...upcomingNormalItems];
