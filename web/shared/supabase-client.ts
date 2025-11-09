@@ -586,6 +586,7 @@ export async function getTotalCredits(playerId: string): Promise<number> {
  */
 export async function updateAllCredits(playerId: string, action: 'clear' | 'add', amount?: number): Promise<void> {
   if (action === 'clear') {
+    // Set credits to 0 for all sessions belonging to this player
     const { error } = await (supabase as any)
       .from('kiosk_sessions')
       .update({ credits: 0 })
@@ -593,7 +594,8 @@ export async function updateAllCredits(playerId: string, action: 'clear' | 'add'
 
     if (error) throw error;
   } else if (action === 'add' && amount) {
-    // Add credits to all sessions (distribute evenly)
+    // Add credits to every active kiosk session for this player.
+    // Fetch sessions and update each one (keeps logic simple and explicit).
     const { data: sessions, error: fetchError } = await (supabase as any)
       .from('kiosk_sessions')
       .select('session_id, credits')
@@ -602,13 +604,18 @@ export async function updateAllCredits(playerId: string, action: 'clear' | 'add'
     if (fetchError) throw fetchError;
 
     if (sessions && sessions.length > 0) {
-      // For simplicity, add all credits to the first session
-      const { error } = await (supabase as any)
-        .from('kiosk_sessions')
-        .update({ credits: sessions[0].credits + amount })
-        .eq('session_id', sessions[0].session_id);
+      for (const s of sessions) {
+        const newCredits = (s.credits || 0) + amount;
+        const { error } = await (supabase as any)
+          .from('kiosk_sessions')
+          .update({ credits: newCredits })
+          .eq('session_id', s.session_id);
 
-      if (error) throw error;
+        if (error) throw error;
+      }
+    } else {
+      // If there are no sessions, nothing to update
+      return;
     }
   }
 }
