@@ -32,55 +32,34 @@ Deno.serve(async (req) => {
 
     // Handle session initialization
     if (action === 'init') {
+      console.log('Kiosk init: Starting session initialization for player_id:', player_id);
+      
       if (!player_id) {
+        console.log('Kiosk init: Missing player_id');
         return new Response(
           JSON.stringify({ error: 'player_id is required for init' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
-      // Get or create kiosk session
-      const { data: existingSession, error: selectError } = await supabase
-        .from('kiosk_sessions')
-        .select('*')
-        .eq('player_id', player_id)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (selectError) throw selectError;
-
-      if (existingSession && (new Date().getTime() - new Date(existingSession.last_active).getTime()) < 3600000) {
-        // Reuse session if < 1 hour old
-        return new Response(
-          JSON.stringify({ session: existingSession }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-
-      // Create new session
-      const { error: sessionError } = await supabase
+      console.log('Kiosk init: Creating new session');
+      // Always create new session for simplicity
+      const { data: newSession, error: sessionError } = await supabase
         .from('kiosk_sessions')
         .insert({
           player_id,
           credits: 0,
-          ip_address: req.headers.get('x-forwarded-for') || null,
           user_agent: req.headers.get('user-agent') || 'unknown'
-        });
-
-      if (sessionError) throw sessionError;
-
-      // Get the newly created session
-      const { data: newSession, error: selectError } = await supabase
-        .from('kiosk_sessions')
-        .select('*')
-        .eq('player_id', player_id)
-        .order('created_at', { ascending: false })
-        .limit(1)
+        })
+        .select()
         .single();
 
-      if (selectError) throw selectError;
+      if (sessionError) {
+        console.log('Kiosk init: Error creating session:', sessionError);
+        throw sessionError;
+      }
 
+      console.log('Kiosk init: Session created successfully:', newSession.session_id);
       return new Response(
         JSON.stringify({ session: newSession }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
