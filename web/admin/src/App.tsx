@@ -21,7 +21,6 @@ import {
   getCurrentUser,
   subscribeToAuth,
   type AuthUser,
-  updateAllCredits,
 } from '@shared/supabase-client';
 import {
   DndContext,
@@ -229,7 +228,7 @@ function App() {
         {/* Main Content */}
         <main className="flex-1 p-6">
           {activeTab === 'queue' && <QueueView />}
-          {activeTab === 'playlists' && <PlaylistsView setActiveTab={setActiveTab} />}
+          {activeTab === 'playlists' && <PlaylistsView />}
           {activeTab === 'settings' && <Settings />}
           {activeTab === 'logs' && <LogsView />}
         </main>
@@ -627,7 +626,7 @@ function PlaylistsView() {
   }, [selectedPlaylist]);
 
   // Removed unused confirmOpen
-  const [confirmTarget, setConfirmTarget] = useState<{ id: string; name: string } | null>(null);
+  // Removed unused confirmTarget and setConfirmTarget
 
   const loadPlaylists = async () => {
     try {
@@ -655,26 +654,15 @@ function PlaylistsView() {
     const playlist = playlists.find(p => p.id === playlistId);
     if (!playlist) return;
     try {
-      // Use the correct action for setting active playlist (likely 'set_active')
-      await callPlaylistManager({ action: 'set_active', player_id: PLAYER_ID, playlist_id: playlist.id });
+      // Use the correct action for setting active playlist
+      await callPlaylistManager({ action: 'update', player_id: PLAYER_ID, playlist_id: playlist.id });
       await loadPlaylists();
     } catch (err) {
       console.error('Failed to set active playlist:', err);
     }
   };
 
-  const confirmLoad = async () => {
-    if (!confirmTarget) return;
-    setConfirmOpen(false);
-    try {
-      await callPlaylistManager({ action: 'update', player_id: PLAYER_ID, playlist_id: confirmTarget.id, is_active: true });
-      await loadPlaylists();
-    } catch (err) {
-      console.error('Failed to set active playlist:', err);
-    } finally {
-      setConfirmTarget(null);
-    }
-  };
+  // Removed unused confirmLoad and setConfirmOpen
 
   const loadPlaylistItems = async (playlistId: string) => {
     try {

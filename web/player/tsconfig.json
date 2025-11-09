@@ -15,12 +15,11 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
       "@shared/*": ["../shared/*"]
-    }
-  },
+    },
+   },
   "include": ["src", "../shared"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
