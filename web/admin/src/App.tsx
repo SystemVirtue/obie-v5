@@ -612,28 +612,31 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
 function PlaylistsView() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [playlistCounts, setPlaylistCounts] = useState<Record<string, number>>({});
-  const [selectedPlaylist, setSelectedPlaylist] = useState<string | null>(null);
+  // Removed unused selectedPlaylist state
   const [playlistItems, setPlaylistItems] = useState<PlaylistItem[]>([]);
+  const [activePlaylist, setActivePlaylist] = useState<Playlist | null>(null);
+  const [expandedPlaylist, setExpandedPlaylist] = useState<string | null>(null);
 
   useEffect(() => {
-    loadPlaylists();
+  loadPlaylists();
   }, []);
 
   useEffect(() => {
-    if (selectedPlaylist) {
-      loadPlaylistItems(selectedPlaylist);
+    if (expandedPlaylist) {
+      loadPlaylistItems(expandedPlaylist);
     }
-  }, [selectedPlaylist]);
+  }, [expandedPlaylist]);
 
   // Removed unused confirmOpen
   // Removed unused confirmTarget and setConfirmTarget
 
   const loadPlaylists = async () => {
     try {
-      // getPlaylists now returns rows from playlists_with_counts when available
       const data: any = await getPlaylists(PLAYER_ID);
       setPlaylists(data || []);
-
+      // Find active playlist
+      const active = (data || []).find((p: any) => p.is_active);
+      setActivePlaylist(active || null);
       // If the view provided item_count, populate the map
       const map: Record<string, number> = {};
       (data || []).forEach((p: any) => {
@@ -646,7 +649,7 @@ function PlaylistsView() {
   };
 
   const handleView = (playlistId: string) => {
-    setSelectedPlaylist(playlistId);
+  setExpandedPlaylist(expandedPlaylist === playlistId ? null : playlistId);
   };
 
   const handleLoad = async (e: React.MouseEvent, playlistId: string) => {
@@ -655,7 +658,7 @@ function PlaylistsView() {
     if (!playlist) return;
     try {
       // Use the correct action for setting active playlist
-      await callPlaylistManager({ action: 'update', player_id: PLAYER_ID, playlist_id: playlist.id });
+    await callPlaylistManager({ action: 'set_active', player_id: PLAYER_ID, playlist_id: playlist.id });
       await loadPlaylists();
     } catch (err) {
       console.error('Failed to set active playlist:', err);
@@ -718,65 +721,81 @@ function PlaylistsView() {
         </button>
       </div>
 
-      {/* Playlist List */}
+      {/* Active Playlist Label */}
+      {activePlaylist && (
+        <div className="mb-4 p-3 bg-gray-900 rounded text-gray-200 font-semibold">
+          Currently Active Playlist: <span className="text-blue-400">{activePlaylist.name}</span>
+        </div>
+      )}
+
+      {/* Playlist List (excluding active) */}
       <div className="bg-gray-800 rounded-lg p-4 mb-6">
-        {playlists.length === 0 ? (
+        {playlists.filter(p => !activePlaylist || p.id !== activePlaylist.id).length === 0 ? (
           <div className="text-center text-gray-400 py-8">No playlists found</div>
         ) : (
           <div className="space-y-2">
-            {playlists.map((playlist) => (
+            {playlists.filter(p => !activePlaylist || p.id !== activePlaylist.id).map((playlist) => (
               <div
                 key={playlist.id}
-                className="bg-gray-700 rounded-lg p-4 flex items-center justify-between gap-4"
+                className="bg-gray-700 rounded-lg p-4 flex flex-col gap-2"
               >
-                <div className="flex-1" onClick={() => handleView(playlist.id)}>
-                  <div className="font-semibold">{playlist.name}</div>
-                  <div className="text-sm text-gray-400">
-                    {playlistCounts[playlist.id] || 0} {playlistCounts[playlist.id] === 1 ? 'item' : 'items'}
+                <div className="flex items-center justify-between gap-4">
+                  <div className="flex-1">
+                    <div className="font-semibold">{playlist.name}</div>
+                    <div className="text-sm text-gray-400">
+                      {playlistCounts[playlist.id] || 0} {playlistCounts[playlist.id] === 1 ? 'item' : 'items'}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 items-center">
+                    <button
+                      onClick={() => handleView(playlist.id)}
+                      className={`px-3 py-2 bg-gray-600 hover:bg-gray-500 rounded transition text-white`}
+                      title={expandedPlaylist === playlist.id ? 'Hide' : 'View'}
+                    >
+                      {expandedPlaylist === playlist.id ? 'Hide' : 'View'}
+                    </button>
+                    <button
+                      onClick={(e) => handleLoad(e, playlist.id)}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
+                      title="Load Playlist"
+                    >
+                      <Play size={16} />
+                    </button>
+                    <button
+                      onClick={() => handleDeletePlaylist(playlist.id)}
+                      className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded transition"
+                      title="Delete Playlist"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={(e) => handleLoad(e, playlist.id)}
-                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded transition"
-                    title="Load Playlist"
-                  >
-                    <Play size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleDeletePlaylist(playlist.id)}
-                    className="px-3 py-2 bg-red-600 hover:bg-red-700 rounded transition"
-                    title="Delete Playlist"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
+                {/* Expandable playlist items */}
+                {expandedPlaylist === playlist.id && (
+                  <div className="mt-3 max-h-60 overflow-y-auto bg-gray-800 rounded p-3">
+                    {playlistItems.length === 0 ? (
+                      <div className="text-center text-gray-400 py-4">No items in this playlist</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {playlistItems.map((item) => (
+                          <div key={item.id} className="bg-gray-700 rounded-lg p-3 flex items-center gap-4">
+                            <div className="flex-1">
+                              <div className="font-semibold">
+                                {((item as any).media_item?.title || 'Unknown Title')}
+                                {((item as any).media_item?.artist ? ' | ' + (item as any).media_item.artist : '')}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
         )}
       </div>
-
-      {/* Playlist Items */}
-      {selectedPlaylist && (
-        <div className="bg-gray-800 rounded-lg p-4">
-          <h3 className="text-xl font-bold mb-4">Playlist Items</h3>
-          {playlistItems.length === 0 ? (
-            <div className="text-center text-gray-400 py-8">No items in this playlist</div>
-          ) : (
-            <div className="space-y-2">
-              {playlistItems.map((item) => (
-                <div key={item.id} className="bg-gray-700 rounded-lg p-4 flex items-center gap-4">
-                  <div className="flex-1">
-                    <div className="font-semibold">{item.media_item_id || 'Unknown'}</div>
-                  </div>
-                  <div className="text-sm text-gray-400">ID: {item.media_item_id}</div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

@@ -55,10 +55,14 @@ Deno.serve(async (req) => {
           description: description || null
         })
         .select()
-        .single();
-
+        .maybeSingle();
       if (createError) throw createError;
-
+      if (!playlist) {
+        return new Response(
+          JSON.stringify({ error: 'Playlist creation failed' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       return new Response(
         JSON.stringify({ playlist }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -83,10 +87,14 @@ Deno.serve(async (req) => {
         .update(updateData)
         .eq('id', playlist_id)
         .select()
-        .single();
-
+        .maybeSingle();
       if (updateError) throw updateError;
-
+      if (!playlist) {
+        return new Response(
+          JSON.stringify({ error: 'Playlist update failed' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       return new Response(
         JSON.stringify({ playlist }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -131,10 +139,8 @@ Deno.serve(async (req) => {
         .eq('playlist_id', playlist_id)
         .order('position', { ascending: false })
         .limit(1)
-        .single();
-
+        .maybeSingle();
       const nextPosition = (maxPos?.position ?? -1) + 1;
-
       const { data: item, error: addError } = await supabase
         .from('playlist_items')
         .insert({
@@ -143,10 +149,14 @@ Deno.serve(async (req) => {
           position: nextPosition
         })
         .select()
-        .single();
-
+        .maybeSingle();
       if (addError) throw addError;
-
+      if (!item) {
+        return new Response(
+          JSON.stringify({ error: 'Failed to add item to playlist' }),
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
       return new Response(
         JSON.stringify({ item }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -177,7 +187,7 @@ Deno.serve(async (req) => {
         .eq('playlist_id', playlist_id)
         .order('position', { ascending: true });
 
-      if (items) {
+      if (items && items.length > 0) {
         for (let i = 0; i < items.length; i++) {
           await supabase
             .from('playlist_items')
@@ -272,8 +282,7 @@ Deno.serve(async (req) => {
           .select('id')
           .eq('source_id', video.id)
           .eq('source_type', 'youtube')
-          .single();
-
+          .maybeSingle();
         if (existing) {
           // Update existing record
           const { data: updated } = await supabase
@@ -281,18 +290,16 @@ Deno.serve(async (req) => {
             .update(mediaData)
             .eq('id', existing.id)
             .select()
-            .single();
-          
-          mediaItems.push(updated);
+            .maybeSingle();
+          if (updated) mediaItems.push(updated);
         } else {
           // Insert new record
           const { data: inserted } = await supabase
             .from('media_items')
             .insert(mediaData)
             .select()
-            .single();
-          
-          mediaItems.push(inserted);
+            .maybeSingle();
+          if (inserted) mediaItems.push(inserted);
         }
       }
 
@@ -305,8 +312,7 @@ Deno.serve(async (req) => {
           .eq('playlist_id', playlist_id)
           .order('position', { ascending: false })
           .limit(1)
-          .single();
-
+          .maybeSingle();
         let position = (maxPos?.position || 0) + 1;
 
         // Batch insert playlist items

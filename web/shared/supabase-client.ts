@@ -454,7 +454,7 @@ export async function callKioskHandler(params: {
  * Call playlist-manager Edge Function
  */
 export async function callPlaylistManager(params: {
-  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape';
+  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active';
   player_id?: string;
   playlist_id?: string;
   name?: string;
@@ -569,7 +569,9 @@ export async function getPlaylists(playerId: string): Promise<Playlist[]> {
 /**
  * Get playlist items with media details
  */
-export async function getPlaylistItems(playlistId: string): Promise<(PlaylistItem & { media_item: MediaItem })[]> {
+export type PlaylistManagerAction = 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active';
+
+export async function getPlaylistItems(playlistId: string): Promise<(PlaylistItem & { media_item?: MediaItem })[]> {
   // Use a two-step fetch to avoid runtime PostgREST relationship cache issues
   const { data: items, error: itemsError } = await supabase
     .from('playlist_items')
