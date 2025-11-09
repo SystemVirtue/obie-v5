@@ -693,6 +693,14 @@ function App() {
         onClick={(e) => e.preventDefault()} // Prevent YouTube's default click-to-toggle behavior
       />
 
+      {/* Obie Logo Overlay */}
+      <img
+        src="/Obie_neon_no_BG.png"
+        alt="Obie Logo"
+        className="absolute top-4 right-4 w-[8vw] h-auto pointer-events-none z-10"
+        style={{ maxWidth: '120px', minWidth: '60px' }}
+      />
+
       {/* Status Overlay (for debugging) - HIDDEN */}
       {/* 
       <div className="absolute top-4 right-4 bg-black bg-opacity-75 text-white p-4 rounded-lg text-sm font-mono max-w-md" style={{ zIndex: 20 }}>

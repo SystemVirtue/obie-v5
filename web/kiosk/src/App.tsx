@@ -16,6 +16,8 @@ import {
   type PlayerStatus,
 } from '@shared/supabase-client';
 import { Coins } from 'lucide-react';
+import { SearchInterface } from './components/SearchInterface';
+import { SearchResult } from '../../shared/types';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
@@ -25,12 +27,14 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
-  const [showSearch, setShowSearch] = useState(false);
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [showResults, setShowResults] = useState(false);
-  const [selectedResult, setSelectedResult] = useState<any | null>(null);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showKeyboard, setShowKeyboard] = useState(true);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [includeKaraoke, setIncludeKaraoke] = useState(false);
 
     // Initialize session
     useEffect(() => {
@@ -156,11 +160,12 @@ function App() {
 
         const { videos } = await resp.json();
         setSearchResults(videos || []);
-        setShowResults(true);
+        setShowSearchResults(true);
+        setShowKeyboard(false);
       } catch (error) {
         console.error('Search failed:', error);
         setSearchResults([]);
-        setShowResults(false);
+        setShowSearchResults(false);
       } finally {
         setIsSearching(false);
       }
@@ -187,8 +192,9 @@ function App() {
 
         // Close modal and reset
         setShowConfirm(false);
-        setShowResults(false);
-        setShowSearch(false);
+        setShowSearchResults(false);
+        setShowKeyboard(true);
+        setShowSearchModal(false);
         setSearchQuery('');
       } catch (error) {
         console.error('Failed to add request:', error);
@@ -221,71 +227,53 @@ function App() {
             <div className="text-2xl font-bold text-yellow-400">Obie Kiosk</div>
             <div className="flex items-center gap-4">
               <div className="text-sm text-gray-300">{settings?.freeplay ? 'Free Play' : `Credits: ${session?.credits ?? 0}`}</div>
-              <button onClick={() => setShowSearch(s => !s)} className="px-3 py-2 bg-gray-800 rounded">{showSearch ? 'Close' : 'Search'}</button>
+              <button onClick={() => setShowSearchModal(true)} className="px-3 py-2 bg-gray-800 rounded">Search</button>
             </div>
           </div>
 
-          {/* Search area */}
-          <div>
-            <div className="bg-gray-900/60 p-6 rounded-lg">
-              <div className="mb-4">
-                <div className="flex items-center gap-3">
-                  <input className="flex-1 p-3 bg-gray-800 rounded" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} />
-                  <button onClick={() => performSearch(searchQuery)} className="px-4 py-2 bg-green-600 rounded">{isSearching ? 'SEARCHING...' : 'SEARCH'}</button>
-                </div>
-              </div>
-
-              {/* On-screen keyboard */}
-              <div className="grid grid-cols-10 gap-3 max-w-full">
-                {['1','2','3','4','5','6','7','8','9','0'].map(k => (
-                  <button key={k} onClick={() => setSearchQuery(s => s + k)} className="px-3 py-3 bg-gray-800 rounded shadow">{k}</button>
-                ))}
-              </div>
-              <div className="grid grid-cols-10 gap-3 mt-3">
-                {['Q','W','E','R','T','Y','U','I','O','P'].map(k => (
-                  <button key={k} onClick={() => setSearchQuery(s => s + k)} className="px-3 py-3 bg-gray-800 rounded shadow">{k}</button>
-                ))}
-              </div>
-              <div className="grid grid-cols-9 gap-3 mt-3 ml-12">
-                {['A','S','D','F','G','H','J','K','L'].map(k => (
-                  <button key={k} onClick={() => setSearchQuery(s => s + k)} className="px-3 py-3 bg-gray-800 rounded shadow">{k}</button>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-3 mt-3 ml-24">
-                {['Z','X','C','V','B','N','M'].map(k => (
-                  <button key={k} onClick={() => setSearchQuery(s => s + k)} className="px-3 py-3 bg-gray-800 rounded shadow">{k}</button>
-                ))}
-              </div>
-              <div className="flex items-center gap-3 mt-4 justify-center">
-                <button onClick={() => setSearchQuery(s => s + ' ')} className="px-6 py-3 bg-gray-700 rounded shadow">SPACE</button>
-                <button onClick={() => setSearchQuery('')} className="px-6 py-3 bg-red-600 rounded text-white">CLEAR</button>
-                <button onClick={() => performSearch(searchQuery)} disabled={isSearching} className="px-6 py-3 bg-green-600 rounded text-white">
-                  {isSearching ? 'SEARCHING...' : 'SEARCH'}
-                </button>
-              </div>
-            </div>
-
-            {/* Search Results Modal (inline panel) */}
-            {showResults && (
-              <div className="mt-6 bg-[#071025] p-4 rounded">
-                <div className="text-xl font-semibold text-yellow-400 mb-3">Search Results</div>
-                <div className="grid grid-cols-4 gap-4">
-                  {searchResults.length > 0 ? searchResults.map((v: any) => (
-                    <div key={v.id} onClick={() => handleSelectResult(v)} className="bg-gray-800 rounded overflow-hidden cursor-pointer hover:scale-105 transform transition">
-                      <img src={v.thumbnail} alt={v.title} className="w-full h-32 object-cover" />
-                      <div className="p-3">
-                        <div className="font-semibold text-sm text-white truncate">{v.title}</div>
-                        <div className="text-xs text-gray-300">{v.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
-                        <div className="text-xs text-gray-400 mt-2">{Math.floor((v.duration || 0) / 60)}:{String((v.duration || 0) % 60).padStart(2,'0')}</div>
-                      </div>
-                    </div>
-                  )) : (
-                    <div className="col-span-4 text-center text-gray-400">No results</div>
-                  )}
-                </div>
-              </div>
-            )}
-          </div>
+          {/* Search Modal */}
+          <SearchInterface
+            isOpen={showSearchModal}
+            onClose={() => {
+              setShowSearchModal(false);
+              setShowKeyboard(true);
+              setShowSearchResults(false);
+              setSearchQuery('');
+            }}
+            searchQuery={searchQuery}
+            onSearchQueryChange={setSearchQuery}
+            searchResults={searchResults}
+            isSearching={isSearching}
+            showKeyboard={showKeyboard}
+            showSearchResults={showSearchResults}
+            onKeyboardInput={(key) => {
+              if (key === 'CLEAR') {
+                setSearchQuery('');
+              } else if (key === 'SPACE') {
+                setSearchQuery(prev => prev + ' ');
+              } else if (key === 'BACKSPACE') {
+                setSearchQuery(prev => prev.slice(0, -1));
+              } else if (key === 'SEARCH') {
+                performSearch(searchQuery);
+              } else {
+                setSearchQuery(prev => prev + key);
+              }
+            }}
+            onVideoSelect={handleSelectResult}
+            onBackToSearch={() => {
+              setShowSearchResults(false);
+              setShowKeyboard(true);
+            }}
+            mode={settings?.freeplay ? "FREEPLAY" : "PAID"}
+            credits={session?.credits ?? 0}
+            onInsufficientCredits={() => {
+              // Handle insufficient credits - could show a message
+              console.log('Insufficient credits');
+            }}
+            includeKaraoke={includeKaraoke}
+            onIncludeKaraokeChange={setIncludeKaraoke}
+            bypassCreditCheck={settings?.freeplay}
+          />
 
           {/* Bottom marquee of upcoming songs */}
           <div className="fixed bottom-0 left-0 right-0 bg-black/80 border-t border-yellow-400/30 py-3">
