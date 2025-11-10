@@ -47,22 +47,26 @@ BEGIN
     updated_at = NOW()
   WHERE id = p_player_id;
   
-  -- If queue has items, set first as current
-  IF v_loaded_count > 0 THEN
+  -- If queue has items, set first as current (priority first, then normal)
+  IF v_loaded_count > 0 OR EXISTS (SELECT 1 FROM queue WHERE player_id = p_player_id AND type = 'priority' AND played_at IS NULL) THEN
     UPDATE player_status ps
     SET 
       current_media_id = (
         SELECT media_item_id 
         FROM queue 
         WHERE player_id = p_player_id 
-          AND type = 'normal' 
           AND played_at IS NULL 
-        ORDER BY position 
+        ORDER BY 
+          CASE WHEN type = 'priority' THEN 0 ELSE 1 END,
+          position ASC
         LIMIT 1
       ),
       state = 'loading',
       progress = 0,
-      now_playing_index = p_start_index,
+      now_playing_index = CASE 
+        WHEN EXISTS (SELECT 1 FROM queue WHERE player_id = p_player_id AND type = 'priority' AND played_at IS NULL) THEN now_playing_index
+        ELSE p_start_index
+      END,
       last_updated = NOW()
     WHERE ps.player_id = p_player_id;
   END IF;

@@ -248,6 +248,26 @@ Deno.serve(async (req)=>{
             }
           });
         }
+        // Log the successful kiosk request
+        const { data: mediaItem } = await supabase
+          .from('media_items')
+          .select('title, artist')
+          .eq('id', mediaItemId)
+          .single();
+
+        await supabase.from('system_logs').insert({
+          player_id,
+          event: 'kiosk_request',
+          severity: 'info',
+          payload: {
+            session_id,
+            media_item_id: mediaItemId,
+            queue_id: queueId,
+            title: mediaItem?.title || 'Unknown',
+            artist: mediaItem?.artist || 'Unknown'
+          }
+        });
+
         return new Response(JSON.stringify({
           queue_id: queueId
         }), {

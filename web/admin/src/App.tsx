@@ -56,7 +56,19 @@ import { Settings as SettingsIcon } from 'lucide-react';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001'; // Default player
 
-// =============================================================================
+// Helper function to log user actions
+  const logUserAction = async (action: string, details?: string) => {
+    try {
+      await (supabase as any).from('system_logs').insert({
+        player_id: PLAYER_ID,
+        event: 'user_action',
+        severity: 'info',
+        payload: { action, details, source: 'admin' }
+      });
+    } catch (error) {
+      console.error('Failed to log user action:', error);
+    }
+  };// =============================================================================
 // LOGIN FORM
 // =============================================================================
 
@@ -459,6 +471,9 @@ function QueueView() {
 
     setIsSkipping(true);
     try {
+      // Log the skip action
+      await logUserAction('skip', 'Manual skip from admin controls');
+      
       // Update player state to trigger skip in player
       await callPlayerControl({
         player_id: PLAYER_ID,
@@ -476,6 +491,10 @@ function QueueView() {
   const handlePlayPause = async () => {
     try {
       const newState = status?.state === 'playing' ? 'paused' : 'playing';
+      
+      // Log the play/pause action
+      await logUserAction(newState, `Manual ${newState} from admin controls`);
+      
       await callPlayerControl({
         player_id: PLAYER_ID,
         state: newState,
@@ -921,6 +940,75 @@ function Settings() {
     }
   };
 
+  const handleToggleCoinAcceptor = async () => {
+    if (!settings) return;
+    
+    const newEnabled = !settings.kiosk_coin_acceptor_enabled;
+    setLoading(true);
+    
+    try {
+      const { error } = await (supabase as any)
+        .from('player_settings')
+        .update({
+          kiosk_coin_acceptor_enabled: newEnabled,
+          // Reset connection status when disabling
+          ...(newEnabled ? {} : { 
+            kiosk_coin_acceptor_connected: false,
+            kiosk_coin_acceptor_device_id: null 
+          })
+        })
+        .eq('player_id', PLAYER_ID);
+      
+      if (error) throw error;
+      
+      // Update local settings
+      setSettings(prev => prev ? {
+        ...prev,
+        kiosk_coin_acceptor_enabled: newEnabled,
+        ...(newEnabled ? {} : { 
+          kiosk_coin_acceptor_connected: false,
+          kiosk_coin_acceptor_device_id: null 
+        })
+      } : null);
+      
+    } catch (err: any) {
+      console.error('Failed to toggle coin acceptor:', err);
+      // Could add error display here if needed
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleToggleVirtualCoinButton = async () => {
+    if (!settings) return;
+
+    const newValue = !settings.kiosk_show_virtual_coin_button;
+    setLoading(true);
+
+    try {
+      const { error } = await (supabase as any)
+        .from('player_settings')
+        .update({
+          kiosk_show_virtual_coin_button: newValue
+        })
+        .eq('player_id', PLAYER_ID);
+
+      if (error) throw error;
+
+      // Update local settings
+      setSettings(prev => prev ? {
+        ...prev,
+        kiosk_show_virtual_coin_button: newValue
+      } : null);
+
+    } catch (err: any) {
+      console.error('Failed to toggle virtual coin button:', err);
+      // Could add error display here if needed
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleResetPriorityPlayer = async () => {
     setCreditsLoading(true);
     setCreditsError(null);
@@ -1084,6 +1172,56 @@ function Settings() {
               Clear
             </button>
           </div>
+          
+          {/* Kiosk Coin Acceptor Control */}
+          <div className="mt-6 pt-6 border-t border-gray-700">
+            <button
+              onClick={handleToggleCoinAcceptor}
+              className={`px-6 py-3 rounded transition text-white font-semibold ${
+                settings?.kiosk_coin_acceptor_enabled
+                  ? settings.kiosk_coin_acceptor_connected
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-yellow-600 hover:bg-yellow-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+              disabled={loading}
+            >
+              {settings?.kiosk_coin_acceptor_enabled
+                ? settings.kiosk_coin_acceptor_connected
+                  ? 'Kiosk Coin Acceptor CONNECTED'
+                  : 'Connecting Kiosk Coin Acceptor...'
+                : 'Connect Kiosk Coin Acceptor'
+              }
+            </button>
+            {settings?.kiosk_coin_acceptor_device_id && (
+              <p className="text-sm text-gray-400 mt-2">
+                Device: {settings.kiosk_coin_acceptor_device_id}
+              </p>
+            )}
+          </div>
+
+          {/* Virtual Insert Coin Button Control */}
+          <div className="mt-6 pt-6 border-t border-gray-700">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-lg font-semibold mb-1">Display Virtual INSERT COIN Button</h4>
+                <p className="text-sm text-gray-400">
+                  Show/hide the "Insert Coin" button on the kiosk interface (bottom right)
+                </p>
+              </div>
+              <button
+                onClick={handleToggleVirtualCoinButton}
+                className={`px-4 py-2 rounded transition text-white font-semibold ${
+                  settings?.kiosk_show_virtual_coin_button
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-gray-600 hover:bg-gray-700'
+                }`}
+                disabled={loading}
+              >
+                {settings?.kiosk_show_virtual_coin_button ? 'ON' : 'OFF'}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1139,10 +1277,50 @@ function LogsView() {
         ) : (
           logs.map((log) => (
             <div key={log.id} className="bg-gray-700 rounded-lg p-4">
-              <div className="text-sm text-gray-400 mb-2">
-                {new Date(log.timestamp).toLocaleString()}
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-sm text-gray-400">
+                  {new Date(log.timestamp).toLocaleString()}
+                </div>
+                <div className={`text-xs px-2 py-1 rounded ${
+                  log.severity === 'error' ? 'bg-red-600 text-white' :
+                  log.severity === 'warn' ? 'bg-yellow-600 text-black' :
+                  log.severity === 'info' ? 'bg-blue-600 text-white' :
+                  'bg-gray-600 text-white'
+                }`}>
+                  {log.severity.toUpperCase()}
+                </div>
               </div>
-              <div className="font-semibold">{log.id}</div>
+              <div className="font-semibold text-white mb-1">{log.event}</div>
+              {log.player_id && (
+                <div className="text-sm text-gray-300 mb-1">Player: {log.player_id}</div>
+              )}
+              {log.payload && Object.keys(log.payload).length > 0 && (
+                <div className="text-sm text-gray-300">
+                  {log.event === 'playback_started' && log.payload.title && (
+                    <div>
+                      <span className="font-medium">Now Playing:</span> {log.payload.title}
+                      {log.payload.artist && <span> - {log.payload.artist}</span>}
+                    </div>
+                  )}
+                  {log.event === 'user_action' && log.payload.action && (
+                    <div>
+                      <span className="font-medium">Action:</span> {log.payload.action}
+                      {log.payload.details && <span> - {log.payload.details}</span>}
+                    </div>
+                  )}
+                  {log.event === 'kiosk_request' && log.payload.title && (
+                    <div>
+                      <span className="font-medium">Request:</span> {log.payload.title}
+                      {log.payload.artist && <span> - {log.payload.artist}</span>}
+                    </div>
+                  )}
+                  {Object.keys(log.payload).length > 0 && !['title', 'artist', 'action', 'details'].some(key => log.payload[key]) && (
+                    <div className="text-xs text-gray-400 mt-1">
+                      {JSON.stringify(log.payload, null, 2)}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))
         )}

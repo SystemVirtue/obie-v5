@@ -88,6 +88,10 @@ export interface PlayerSettings {
   search_enabled: boolean;
   max_queue_size: number;
   priority_queue_limit: number;
+  kiosk_coin_acceptor_enabled?: boolean;
+  kiosk_coin_acceptor_connected?: boolean;
+  kiosk_coin_acceptor_device_id?: string | null;
+  kiosk_show_virtual_coin_button?: boolean;
 }
 
 export interface KioskSession {
@@ -234,7 +238,7 @@ export function subscribeToQueue(
     console.log('[subscribeToQueue] Fetching queue from database...');
     supabase
       .from('queue')
-      .select('*, media_item:media_items(*)')
+      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
       .eq('player_id', playerId)
       .is('played_at', null)
       .order('type', { ascending: false })

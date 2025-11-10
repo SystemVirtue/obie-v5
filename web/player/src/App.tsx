@@ -783,6 +783,7 @@ function App() {
         modestbranding: 1,  // Hide YouTube logo
         rel: 0,             // Don't show related videos
         iv_load_policy: 3,  // Hide annotations
+        vq: 'auto',         // Set quality to auto (let YouTube choose best quality)
       },
       events: {
         onReady: onPlayerReady,

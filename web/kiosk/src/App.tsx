@@ -1,7 +1,7 @@
 // Obie Kiosk - Public Search & Request Interface
 // Server-driven credit system and priority queue
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   subscribeToKioskSession,
   subscribeToPlayerSettings,
@@ -10,6 +10,8 @@ import {
   subscribeToTable,
   callKioskHandler,
   getTotalCredits,
+  updateAllCredits,
+  supabase,
   type KioskSession,
   type PlayerSettings,
   type QueueItem,
@@ -36,6 +38,15 @@ function App() {
   const [showKeyboard, setShowKeyboard] = useState(true);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
+
+  // Coin acceptor connection state
+  // const [coinAcceptorConnected, setCoinAcceptorConnected] = useState(false);
+  // const [coinAcceptorDeviceId, setCoinAcceptorDeviceId] = useState<string | null>(null);
+  
+  // Serial connection refs
+  const serialPortRef = useRef<any>(null);
+  const serialReaderRef = useRef<any>(null);
+  const connectionCheckIntervalRef = useRef<number | null>(null);
 
     // Initialize session
     useEffect(() => {
@@ -84,6 +95,18 @@ function App() {
       const sub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
       return () => sub.unsubscribe();
     }, []);
+
+    // Coin acceptor connection management
+    useEffect(() => {
+      if (!settings?.kiosk_coin_acceptor_enabled) {
+        // Disconnect if currently connected
+        disconnectCoinAcceptor();
+        return;
+      }
+
+      // Attempt to connect to coin acceptor
+      connectToCoinAcceptor();
+    }, [settings?.kiosk_coin_acceptor_enabled]);
 
     // Subscribe to player status (now playing)
     useEffect(() => {
@@ -208,6 +231,133 @@ function App() {
       }
     };
     
+    // Coin acceptor connection functions
+    const connectToCoinAcceptor = async () => {
+      try {
+        // Check if Web Serial API is supported
+        if (!('serial' in navigator)) {
+          console.error('Web Serial API not supported');
+          return;
+        }
+
+        // Request a port
+        const port = await (navigator as any).serial.requestPort();
+        serialPortRef.current = port;
+
+        // Open the port
+        await port.open({ baudRate: 9600 });
+
+      console.log('Coin acceptor connected');
+      // setCoinAcceptorConnected(true);
+      // setCoinAcceptorDeviceId('usbserial-1420'); // Set the expected device ID      // Update database with connection status
+      await (supabase as any)
+        .from('player_settings')
+        .update({
+          kiosk_coin_acceptor_connected: true,
+          kiosk_coin_acceptor_device_id: 'usbserial-1420'
+        })
+        .eq('id', 1);        // Start reading from the port
+        const reader = port.readable?.getReader();
+        if (reader) {
+          serialReaderRef.current = reader;
+          readCoinAcceptorData(reader);
+        }
+
+        // Start connection monitoring
+        startConnectionMonitoring();
+
+      } catch (error) {
+      console.error('Failed to connect to coin acceptor:', error);
+      // setCoinAcceptorConnected(false);
+      // setCoinAcceptorDeviceId(null);
+      }
+    };
+
+    const disconnectCoinAcceptor = async () => {
+      try {
+        if (serialReaderRef.current) {
+          await serialReaderRef.current.cancel();
+          serialReaderRef.current.releaseLock();
+          serialReaderRef.current = null;
+        }
+
+        if (serialPortRef.current) {
+          await serialPortRef.current.close();
+          serialPortRef.current = null;
+        }
+
+      console.log('Coin acceptor disconnected');
+      // setCoinAcceptorConnected(false);
+      // setCoinAcceptorDeviceId(null);      // Update database with disconnection status
+      await (supabase as any)
+        .from('player_settings')
+        .update({
+          kiosk_coin_acceptor_connected: false,
+          kiosk_coin_acceptor_device_id: null
+        })
+        .eq('id', 1);        // Stop connection monitoring
+        stopConnectionMonitoring();
+
+      } catch (error) {
+        console.error('Failed to disconnect coin acceptor:', error);
+      }
+    };
+
+    const readCoinAcceptorData = async (reader: any) => {
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+
+          // Process coin detection data
+          // Assuming the coin acceptor sends data when coins are inserted
+          const data = new TextDecoder().decode(value);
+          console.log('Coin acceptor data:', data);
+
+          // For now, assume any data means a coin was inserted
+          // In a real implementation, you'd parse the specific protocol
+          if (data.trim()) {
+            // Add credit when coin is detected
+            await updateAllCredits(PLAYER_ID, 'add', 1);
+            console.log('Credit added for coin insertion');
+          }
+        }
+      } catch (error) {
+        console.error('Error reading coin acceptor data:', error);
+      }
+    };
+
+    const startConnectionMonitoring = () => {
+      // Check connection every 60 seconds
+      connectionCheckIntervalRef.current = window.setInterval(async () => {
+        try {
+          if (serialPortRef.current) {
+            // Try to read from the port to check if it's still connected
+            const reader = serialPortRef.current.readable?.getReader();
+            if (reader) {
+              try {
+                await reader.read();
+                reader.releaseLock();
+              } catch (error) {
+                // Connection lost
+                console.log('Coin acceptor connection lost');
+                await disconnectCoinAcceptor();
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error checking coin acceptor connection:', error);
+        }
+      }, 60000); // 60 seconds
+    };
+
+    const stopConnectionMonitoring = () => {
+      if (connectionCheckIntervalRef.current) {
+        clearInterval(connectionCheckIntervalRef.current);
+        connectionCheckIntervalRef.current = null;
+      }
+    };
+
     // Render UI (simplified, balanced JSX)
     return (
       <div className="min-h-screen bg-black text-white relative">
@@ -337,7 +487,7 @@ function App() {
           )}
 
           {/* Insert coin dev button (moved to avoid conflict with search button) */}
-          {!settings?.freeplay && (
+          {!settings?.freeplay && settings?.kiosk_show_virtual_coin_button && (
             <div className="fixed bottom-4 right-4 z-20">
               <button
                 onClick={handleCoinInsert}
@@ -349,10 +499,6 @@ function App() {
             </div>
           )}
 
-          {/* Watermark small */}
-          <div className="fixed bottom-2 left-4 text-xs text-white/70 drop-shadow-lg z-20 bg-black/30 px-2 py-1 rounded">
-            Powered by Obie Jukebox v2
-          </div>
         </main>
       </div>
     );
