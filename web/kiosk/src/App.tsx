@@ -186,10 +186,8 @@ function App() {
     };
 
     const handleSelectResult = (item: any) => {
-      console.log('handleSelectResult called with:', item);
       setSelectedResult(item);
       setShowConfirm(true);
-      console.log('showConfirm set to true, selectedResult set');
     };
 
     const handleConfirmAdd = async () => {
@@ -488,9 +486,7 @@ function App() {
           </div>
 
           {/* Confirmation Dialog */}
-          {(() => {
-            console.log('Dialog render check - showConfirm:', showConfirm, 'selectedResult:', selectedResult);
-            return showConfirm && selectedResult && (
+          {showConfirm && selectedResult && (
               <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
                 <div className="bg-yellow-50 text-black rounded-lg p-6 w-[520px]">
                   <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
@@ -515,8 +511,7 @@ function App() {
                   </div>
                 </div>
               </div>
-            );
-          })()}
+          )}
 
           {/* Insert coin dev button (moved to avoid conflict with search button) */}
           {!settings?.freeplay && settings?.kiosk_show_virtual_coin_button && (
