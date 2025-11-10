@@ -185,8 +185,10 @@ function App() {
     };
 
     const handleSelectResult = (item: any) => {
+      console.log('handleSelectResult called with:', item);
       setSelectedResult(item);
       setShowConfirm(true);
+      console.log('showConfirm set to true, selectedResult set');
     };
 
     const handleConfirmAdd = async () => {
@@ -465,26 +467,29 @@ function App() {
           </div>
 
           {/* Confirmation Dialog */}
-          {showConfirm && selectedResult && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
-              <div className="bg-yellow-50 text-black rounded-lg p-6 w-[520px]">
-                <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
-                <div className="text-sm text-gray-700 mb-4">Confirm adding this song to your playlist for playback.</div>
-                <div className="flex gap-4 items-center">
-                  <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
-                  <div>
-                    <div className="font-semibold">{selectedResult.title}</div>
-                    <div className="text-sm text-gray-700">{selectedResult.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
-                    <div className="text-sm text-gray-700 mt-2">Cost: 1 Credit</div>
+          {(() => {
+            console.log('Dialog render check - showConfirm:', showConfirm, 'selectedResult:', selectedResult);
+            return showConfirm && selectedResult && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+                <div className="bg-yellow-50 text-black rounded-lg p-6 w-[520px]">
+                  <div className="text-lg font-bold mb-2">Add song to Playlist?</div>
+                  <div className="text-sm text-gray-700 mb-4">Confirm adding this song to your playlist for playback.</div>
+                  <div className="flex gap-4 items-center">
+                    <img src={selectedResult.thumbnail} className="w-20 h-20 object-cover rounded" />
+                    <div>
+                      <div className="font-semibold">{selectedResult.title}</div>
+                      <div className="text-sm text-gray-700">{selectedResult.artist?.replace(/\s*-\s*Topic$/i, '')}</div>
+                      <div className="text-sm text-gray-700 mt-2">Cost: 1 Credit</div>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button onClick={() => setShowConfirm(false)} className="px-4 py-2 bg-red-100 rounded">No</button>
+                    <button onClick={handleConfirmAdd} className="px-4 py-2 bg-green-600 text-white rounded">Yes</button>
                   </div>
                 </div>
-                <div className="flex justify-end gap-3 mt-6">
-                  <button onClick={() => setShowConfirm(false)} className="px-4 py-2 bg-red-100 rounded">No</button>
-                  <button onClick={handleConfirmAdd} className="px-4 py-2 bg-green-600 text-white rounded">Yes</button>
-                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Insert coin dev button (moved to avoid conflict with search button) */}
           {!settings?.freeplay && settings?.kiosk_show_virtual_coin_button && (

@@ -25,6 +25,14 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   onIncludeKaraokeChange,
   bypassCreditCheck = false,
 }) => {
+  console.log('SearchInterface props:', {
+    isOpen,
+    searchResults: searchResults.length,
+    showSearchResults,
+    mode,
+    credits,
+    bypassCreditCheck
+  });
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 8; // 4 columns x 2 rows
@@ -44,12 +52,21 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     setCurrentPage(1);
   }, [searchResults]);
 
+  // Debug logging
+  useEffect(() => {
+    console.log('SearchInterface render - showSearchResults:', showSearchResults, 'paginatedResults:', paginatedResults.length);
+  }, [showSearchResults, paginatedResults]);
+
   const handleVideoSelect = (video: SearchResult) => {
+    console.log('SearchInterface handleVideoSelect called with:', video);
+    console.log('bypassCreditCheck:', bypassCreditCheck, 'mode:', mode, 'credits:', credits);
     // Bypass credit check for /index page (DJ/admin interface)
     if (!bypassCreditCheck && mode === "PAID" && credits === 0) {
+      console.log('Credit check failed - calling onInsufficientCredits');
       onInsufficientCredits?.();
       return;
     }
+    console.log('Calling onVideoSelect with video');
     onVideoSelect(video);
   };
 
