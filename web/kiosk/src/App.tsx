@@ -38,6 +38,7 @@ function App() {
   const [showKeyboard, setShowKeyboard] = useState(true);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
 
   // Coin acceptor connection state
   // const [coinAcceptorConnected, setCoinAcceptorConnected] = useState(false);
@@ -192,8 +193,9 @@ function App() {
     };
 
     const handleConfirmAdd = async () => {
-      if (!selectedResult || !session) return;
+      if (!selectedResult || !session || isConfirming) return;
 
+      setIsConfirming(true);
       try {
         // Call kiosk-handler request with URL, letting the handler scrape & enqueue atomically
         try {
@@ -214,6 +216,8 @@ function App() {
       } catch (error) {
         console.error('Failed to add request:', error);
         setShowConfirm(false);
+      } finally {
+        setIsConfirming(false);
       }
     };
 
@@ -371,6 +375,23 @@ function App() {
         />
 
         <main className="mx-auto max-w-5xl p-6 relative z-10">
+          {/* Now Playing Display - Top Left */}
+          <div className="fixed top-4 left-4 z-20">
+            <div className="bg-black/60 border-2 border-yellow-400 rounded-lg p-3 shadow-lg max-w-xs">
+              <div className="flex flex-col">
+                <p className="text-white text-sm font-bold mb-1">NOW PLAYING</p>
+                <p className="text-yellow-300 text-sm font-semibold truncate">
+                  {playerStatus?.current_media?.title || 'No song playing'}
+                </p>
+                {playerStatus?.current_media?.artist && (
+                  <p className="text-gray-300 text-xs truncate">
+                    {playerStatus.current_media.artist.replace(/\s*-\s*Topic$/i, '')}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Credits Display - Top Right */}
           <div className="fixed top-4 right-4 z-20">
             <div className="bg-black/60 border-2 border-yellow-400 rounded-lg p-3 shadow-lg">
@@ -484,7 +505,13 @@ function App() {
                   </div>
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={() => setShowConfirm(false)} className="px-4 py-2 bg-red-100 rounded">No</button>
-                    <button onClick={handleConfirmAdd} className="px-4 py-2 bg-green-600 text-white rounded">Yes</button>
+                    <button 
+                      onClick={handleConfirmAdd} 
+                      disabled={isConfirming}
+                      className={`px-4 py-2 rounded ${isConfirming ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white`}
+                    >
+                      {isConfirming ? 'Adding...' : 'Yes'}
+                    </button>
                   </div>
                 </div>
               </div>
