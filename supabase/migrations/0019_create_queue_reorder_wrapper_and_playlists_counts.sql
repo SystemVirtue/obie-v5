@@ -38,43 +38,44 @@ GROUP BY p.id;
 -- ============================================================================
 -- Enable RLS and create conservative policies for player_import_playlists
 -- (Use DROP POLICY IF EXISTS before CREATE to support older Postgres versions)
+-- NOTE: Skipping RLS setup for player_import_playlists as table doesn't exist
 -- ============================================================================
 
 -- Enable row level security on the import table
-ALTER TABLE IF EXISTS public.player_import_playlists ENABLE ROW LEVEL SECURITY;
+-- ALTER TABLE IF EXISTS public.player_import_playlists ENABLE ROW LEVEL SECURITY;
 
 -- SELECT policy: only the owning player (via JWT claim) can select their row
-DROP POLICY IF EXISTS player_import_playlists_select_authenticated ON public.player_import_playlists;
-CREATE POLICY player_import_playlists_select_authenticated
-  ON public.player_import_playlists
-  FOR SELECT
-  USING (
-    player_id IS NOT NULL
-    AND player_id = (current_setting('request.jwt.claims.player_id', true))::uuid
-  );
+-- DROP POLICY IF EXISTS player_import_playlists_select_authenticated ON public.player_import_playlists;
+-- CREATE POLICY player_import_playlists_select_authenticated
+--   ON public.player_import_playlists
+--   FOR SELECT
+--   USING (
+--     player_id IS NOT NULL
+--     AND player_id = (current_setting('request.jwt.claims.player_id', true))::uuid
+--   );
 
 -- INSERT policy: only allow a client to insert rows for their own player_id
-DROP POLICY IF EXISTS player_import_playlists_insert_authenticated ON public.player_import_playlists;
-CREATE POLICY player_import_playlists_insert_authenticated
-  ON public.player_import_playlists
-  FOR INSERT
-  WITH CHECK (
-    player_id = (current_setting('request.jwt.claims.player_id', true))::uuid
-  );
+-- DROP POLICY IF EXISTS player_import_playlists_insert_authenticated ON public.player_import_playlists;
+-- CREATE POLICY player_import_playlists_insert_authenticated
+--   ON public.player_import_playlists
+--   FOR INSERT
+--   WITH CHECK (
+--     player_id = (current_setting('request.jwt.claims.player_id', true))::uuid
+--   );
 
 -- UPDATE policy: only owning player can update their own rows
-DROP POLICY IF EXISTS player_import_playlists_update_authenticated ON public.player_import_playlists;
-CREATE POLICY player_import_playlists_update_authenticated
-  ON public.player_import_playlists
-  FOR UPDATE
-  USING (player_id = (current_setting('request.jwt.claims.player_id', true))::uuid)
-  WITH CHECK (player_id = (current_setting('request.jwt.claims.player_id', true))::uuid);
+-- DROP POLICY IF EXISTS player_import_playlists_update_authenticated ON public.player_import_playlists;
+-- CREATE POLICY player_import_playlists_update_authenticated
+--   ON public.player_import_playlists
+--   FOR UPDATE
+--   USING (player_id = (current_setting('request.jwt.claims.player_id', true))::uuid)
+--   WITH CHECK (player_id = (current_setting('request.jwt.claims.player_id', true))::uuid);
 
 -- DELETE policy: restrict deletes to admins (adjust role name as needed)
-DROP POLICY IF EXISTS player_import_playlists_delete_admin ON public.player_import_playlists;
-CREATE POLICY player_import_playlists_delete_admin
-  ON public.player_import_playlists
-  FOR DELETE
-  USING (current_setting('request.jwt.claims.role', true) = 'admin');
+-- DROP POLICY IF EXISTS player_import_playlists_delete_admin ON public.player_import_playlists;
+-- CREATE POLICY player_import_playlists_delete_admin
+--   ON public.player_import_playlists
+--   FOR DELETE
+--   USING (current_setting('request.jwt.claims.role', true) = 'admin');
 
 -- End of migration
