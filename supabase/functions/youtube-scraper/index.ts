@@ -82,9 +82,10 @@ Deno.serve(async (req)=>{
   try {
     let videos = [];
     let lastError = null;
+    let nextPageToken = null;
     const maxRetries = API_KEYS.length; // Try all keys if needed
     const body = await req.json();
-    const { url, query, type = 'auto' } = body;
+    const { url, query, type = 'auto', maxResults, pageToken } = body;
     if (type !== 'search' && !url) {
       return new Response(JSON.stringify({
         error: 'url is required'
@@ -133,7 +134,9 @@ Deno.serve(async (req)=>{
               }
             });
           }
-          videos = await fetchPlaylist(playlistId, apiKey);
+          const result = await fetchPlaylist(playlistId, apiKey, maxResults, pageToken);
+          videos = result.videos;
+          nextPageToken = result.nextPageToken;
         } else if (type === 'auto' && videoId || type === 'video') {
           if (!videoId) {
             return new Response(JSON.stringify({
@@ -164,9 +167,10 @@ Deno.serve(async (req)=>{
         break;
       } catch (error) {
         lastError = error;
-        // If quota exceeded, try next key
-        if (lastError.message.includes('Quota exceeded')) {
-          console.log(`Quota exceeded on attempt ${attempt + 1}, trying next key...`);
+        // If quota exceeded or other 403 error, try next key
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes('Quota exceeded') || errorMessage.includes('403 Forbidden')) {
+          console.log(`403 error on attempt ${attempt + 1}, trying next key...`);
           continue;
         }
         // Other errors - don't retry
@@ -175,11 +179,13 @@ Deno.serve(async (req)=>{
     }
     // If we exhausted all retries
     if (videos.length === 0 && lastError) {
-      throw new Error(`All API keys exhausted: ${lastError.message}`);
+      const errorMessage = lastError instanceof Error ? lastError.message : String(lastError);
+      throw new Error(`All API keys exhausted: ${errorMessage}`);
     }
     return new Response(JSON.stringify({
       videos,
-      count: videos.length
+      count: videos.length,
+      nextPageToken
     }), {
       status: 200,
       headers: {
@@ -189,8 +195,9 @@ Deno.serve(async (req)=>{
     });
   } catch (error) {
     console.error('YouTube scraper error:', error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return new Response(JSON.stringify({
-      error: error.message
+      error: errorMessage
     }), {
       status: 500,
       headers: {
@@ -253,9 +260,15 @@ async function fetchSearch(query, apiKey) {
   // Handle quota exceeded - mark key as failed and throw
   if (response.status === 403) {
     const errorData = await response.json();
+    console.log(`403 Error details:`, JSON.stringify(errorData, null, 2));
     if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
       markKeyAsFailed(apiKey);
       throw new Error('Quota exceeded - key marked as failed');
+    } else {
+      // For other 403 errors, still mark key as failed and retry
+      console.log(`Non-quota 403 error: ${errorData.error?.errors?.[0]?.reason || 'unknown'}`);
+      markKeyAsFailed(apiKey);
+      throw new Error(`YouTube API error: ${response.status} ${response.statusText} (${errorData.error?.errors?.[0]?.reason || 'unknown'})`);
     }
   }
   if (!response.ok) {
@@ -281,19 +294,27 @@ async function fetchSearch(query, apiKey) {
   return videos;
 }
 // Fetch playlist metadata (all videos)
-async function fetchPlaylist(playlistId, apiKey) {
+async function fetchPlaylist(playlistId, apiKey, requestedMaxResults = 50, requestedPageToken = null) {
   const videos = [];
-  let pageToken = null;
-  const maxResults = 50; // Max per request
+  let pageToken = requestedPageToken;
+  const maxResults = Math.min(requestedMaxResults || 50, 50); // Cap at 50 per YouTube API limits
+  let nextPageToken = null;
+  
   do {
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${playlistId}&maxResults=${maxResults}${pageToken ? `&pageToken=${pageToken}` : ''}&key=${apiKey}`;
     const response = await fetch(url);
     // Handle quota exceeded - mark key as failed and throw
     if (response.status === 403) {
       const errorData = await response.json();
+      console.log(`403 Error details:`, JSON.stringify(errorData, null, 2));
       if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
         markKeyAsFailed(apiKey);
         throw new Error('Quota exceeded - key marked as failed');
+      } else {
+        // For other 403 errors, still mark key as failed and retry
+        console.log(`Non-quota 403 error: ${errorData.error?.errors?.[0]?.reason || 'unknown'}`);
+        markKeyAsFailed(apiKey);
+        throw new Error(`YouTube API error: ${response.status} ${response.statusText} (${errorData.error?.errors?.[0]?.reason || 'unknown'})`);
       }
     }
     if (!response.ok) {
@@ -305,8 +326,10 @@ async function fetchPlaylist(playlistId, apiKey) {
     const videosData = await fetchVideosBatch(videoIds, apiKey);
     videos.push(...videosData);
     pageToken = data.nextPageToken || null;
-  }while (pageToken)
-  return videos;
+    nextPageToken = data.nextPageToken || null;
+  }while (pageToken && videos.length < (requestedMaxResults || Infinity))
+  
+  return { videos, nextPageToken };
 }
 // Fetch multiple videos in batch
 async function fetchVideosBatch(videoIds, apiKey) {
@@ -315,9 +338,15 @@ async function fetchVideosBatch(videoIds, apiKey) {
   // Handle quota exceeded - mark key as failed and throw
   if (response.status === 403) {
     const errorData = await response.json();
+    console.log(`403 Error details:`, JSON.stringify(errorData, null, 2));
     if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
       markKeyAsFailed(apiKey);
       throw new Error('Quota exceeded - key marked as failed');
+    } else {
+      // For other 403 errors, still mark key as failed and retry
+      console.log(`Non-quota 403 error: ${errorData.error?.errors?.[0]?.reason || 'unknown'}`);
+      markKeyAsFailed(apiKey);
+      throw new Error(`YouTube API error: ${response.status} ${response.statusText} (${errorData.error?.errors?.[0]?.reason || 'unknown'})`);
     }
   }
   if (!response.ok) {

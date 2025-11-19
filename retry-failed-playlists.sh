@@ -1,14 +1,15 @@
 #!/bin/bash
-# Retry Failed Playlist Imports
-# This script retries importing videos for playlists that previously failed due to rate limits
+# Retry Failed Playlists from YouTube
+# This script retries loading the playlists that failed in the previous run
 
 set -e
 
-echo "🔄 Retrying failed playlist imports..."
+echo "🔄 Retrying failed playlists from YouTube..."
 
 # Configuration
 SUPABASE_URL="${SUPABASE_URL:-http://localhost:54321}"
-REQUEST_DELAY=3  # Delay in seconds between requests
+DEFAULT_PLAYER_ID="00000000-0000-0000-0000-000000000001"
+REQUEST_DELAY=5  # Longer delay for retries
 
 # Check if Supabase is running
 if ! curl -s "${SUPABASE_URL}/health" > /dev/null 2>&1; then
@@ -28,15 +29,15 @@ if [ -z "$SERVICE_ROLE_KEY" ]; then
   exit 1
 fi
 
-# Failed playlists to retry (playlist_id from DB | YouTube playlist ID)
-FAILED_PLAYLISTS=(
-  "6fcf5ecf-09fb-4075-8293-d2ccd9920e27|PLN9QqCogPsXJCgeL_iEgYnW6Rl_8nIUUH|Obie Playlist"
-  "9949707d-ccc5-48e0-8556-6a3d8debf7f9|PLN9QqCogPsXIkPh6xm7cxSN9yTVaEoj0j|Obie Jo"
-  "d09676d2-7b3a-42ff-8802-66f485b18288|PLN9QqCogPsXLAtgvLQ0tvpLv820R7PQsM|Karaoke"
+# Define failed playlists to retry (playlist_id|playlist_name)
+declare -a FAILED_PLAYLISTS=(
+  "PLN9QqCogPsXJCgeL_iEgYnW6Rl_8nIUUH|Obie Playlist"
+  "PLN9QqCogPsXLAtgvLQ0tvpLv820R7PQsM|Karaoke"
+  "PLN9QqCogPsXIkPh6xm7cxSN9yTVaEoj0j|Obie Jo"
 )
 
 echo ""
-echo "📚 Found ${#FAILED_PLAYLISTS[@]} playlists to retry"
+echo "📚 Retrying ${#FAILED_PLAYLISTS[@]} failed playlists"
 echo ""
 
 TOTAL_SUCCESS=0
@@ -45,16 +46,36 @@ TOTAL_VIDEOS=0
 
 # Process each failed playlist
 for playlist_info in "${FAILED_PLAYLISTS[@]}"; do
-  IFS='|' read -r DB_PLAYLIST_ID YOUTUBE_PLAYLIST_ID PLAYLIST_NAME <<< "$playlist_info"
+  IFS='|' read -r PLAYLIST_ID PLAYLIST_NAME <<< "$playlist_info"
   
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo "📂 Retrying: ${PLAYLIST_NAME}"
-  echo "   DB ID: ${DB_PLAYLIST_ID}"
-  echo "   YouTube ID: ${YOUTUBE_PLAYLIST_ID}"
+  echo "   YouTube ID: ${PLAYLIST_ID}"
   echo ""
   
-  echo "   🔍 Fetching videos from YouTube..."
-  YOUTUBE_URL="https://www.youtube.com/playlist?list=${YOUTUBE_PLAYLIST_ID}"
+  # Get existing playlist ID
+  DB_PLAYLIST_ID=$(PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -t -c "SELECT id FROM playlists WHERE player_id = '${DEFAULT_PLAYER_ID}' AND name = '${PLAYLIST_NAME}' LIMIT 1;" 2>/dev/null | tr -d ' ')
+  
+  if [ -z "$DB_PLAYLIST_ID" ]; then
+    echo "   ❌ Could not find existing playlist '${PLAYLIST_NAME}'"
+    TOTAL_FAILED=$((TOTAL_FAILED + 1))
+    echo ""
+    continue
+  fi
+  
+  echo "   📋 Found existing playlist ID: ${DB_PLAYLIST_ID}"
+  
+  # Get current item count before retry
+  CURRENT_COUNT=$(PGPASSWORD=postgres psql -h 127.0.0.1 -p 54322 -U postgres -d postgres -t -c "SELECT COUNT(*) FROM playlist_items WHERE playlist_id = '${DB_PLAYLIST_ID}';" 2>/dev/null | tr -d ' ')
+  echo "   📊 Current items in playlist: ${CURRENT_COUNT}"
+  
+  # Add longer delay before YouTube API call for retries
+  echo "   ⏳ Waiting ${REQUEST_DELAY}s before retrying YouTube..."
+  sleep ${REQUEST_DELAY}
+  
+  # Step 2: Retry loading videos from YouTube (safe - won't delete existing items)
+  echo "   🔄 Retrying videos from YouTube..."
+  YOUTUBE_URL="https://www.youtube.com/playlist?list=${PLAYLIST_ID}"
   
   SCRAPE_RESPONSE=$(curl -s -X POST "${SUPABASE_URL}/functions/v1/playlist-manager" \
     -H "Content-Type: application/json" \
@@ -68,16 +89,10 @@ for playlist_info in "${FAILED_PLAYLISTS[@]}"; do
   # Check for errors in scrape
   if echo "$SCRAPE_RESPONSE" | grep -q '"error"'; then
     ERROR_MSG=$(echo "$SCRAPE_RESPONSE" | grep -o '"error":"[^"]*"' | cut -d '"' -f4)
-    echo "   ❌ Error importing videos: ${ERROR_MSG}"
+    echo "   ❌ Error retrying videos: ${ERROR_MSG}"
+    echo "   ✅ Existing ${CURRENT_COUNT} items preserved"
     TOTAL_FAILED=$((TOTAL_FAILED + 1))
     echo ""
-    
-    # Add delay before next retry
-    if [ $((${#FAILED_PLAYLISTS[@]} - TOTAL_SUCCESS - TOTAL_FAILED)) -gt 0 ]; then
-      echo "   ⏳ Waiting ${REQUEST_DELAY}s before next retry..."
-      sleep ${REQUEST_DELAY}
-    fi
-    
     continue
   fi
   
@@ -85,15 +100,17 @@ for playlist_info in "${FAILED_PLAYLISTS[@]}"; do
   COUNT=$(echo "$SCRAPE_RESPONSE" | grep -o '"count":[0-9]*' | cut -d ':' -f2)
   
   if [ -z "$COUNT" ] || [ "$COUNT" = "0" ]; then
-    echo "   ⚠️  No videos found"
+    echo "   ⚠️  No videos found on retry"
+    echo "   ✅ Existing ${CURRENT_COUNT} items preserved"
     TOTAL_FAILED=$((TOTAL_FAILED + 1))
   else
-    echo "   ✅ Successfully imported ${COUNT} videos!"
+    echo "   ✅ Successfully reloaded ${COUNT} videos!"
+    echo "   📊 Total items now: $(($CURRENT_COUNT + $COUNT))"
     TOTAL_SUCCESS=$((TOTAL_SUCCESS + 1))
     TOTAL_VIDEOS=$((TOTAL_VIDEOS + COUNT))
   fi
   
-  # Add delay before next retry
+  # Add delay before next playlist
   if [ $((${#FAILED_PLAYLISTS[@]} - TOTAL_SUCCESS - TOTAL_FAILED)) -gt 0 ]; then
     echo "   ⏳ Waiting ${REQUEST_DELAY}s before next retry..."
     sleep ${REQUEST_DELAY}
@@ -105,24 +122,19 @@ done
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo ""
 echo "📊 Retry Summary:"
-echo "   Total Playlists: ${#FAILED_PLAYLISTS[@]}"
+echo "   Total Retries: ${#FAILED_PLAYLISTS[@]}"
 echo "   ✅ Successful: ${TOTAL_SUCCESS}"
-echo "   ❌ Failed: ${TOTAL_FAILED}"
-echo "   🎵 Total Videos: ${TOTAL_VIDEOS}"
+echo "   ❌ Still Failed: ${TOTAL_FAILED}"
+echo "   🎵 Videos Added: ${TOTAL_VIDEOS}"
 echo ""
 
-if [ ${TOTAL_SUCCESS} -eq 0 ]; then
-  echo "⚠️  No playlists were successfully imported"
-  echo ""
-  echo "This likely means YouTube API quota is still exceeded."
-  echo "Please wait for quota reset (daily at midnight Pacific Time)"
-  echo "or try again later."
-  exit 1
+if [ "$TOTAL_SUCCESS" -gt 0 ]; then
+  echo "🎉 Some retries succeeded!"
 else
-  echo "🎉 Retry completed!"
+  echo "⚠️  All retries failed - these playlists may be private or API quota exceeded"
   echo ""
-  echo "Next steps:"
-  echo "1. Open Admin console: http://localhost:5173"
-  echo "2. Go to Playlists tab to view all imported playlists"
-  echo "3. Start the Player: http://localhost:5174"
+  echo "Troubleshooting:"
+  echo "1. Check if playlists are public on YouTube"
+  echo "2. Verify YouTube API quota hasn't been exceeded"
+  echo "3. Try again later when API quota resets"
 fi

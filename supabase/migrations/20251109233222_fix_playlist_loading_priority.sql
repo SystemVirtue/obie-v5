@@ -88,10 +88,25 @@ CREATE OR REPLACE FUNCTION queue_next(
 RETURNS TABLE(media_item_id UUID, title TEXT, url TEXT, duration INT) AS $$
 DECLARE
   v_next_queue_item RECORD;
+  v_current_media_id UUID;
   v_shuffle BOOLEAN;
 BEGIN
   -- Acquire lock
   PERFORM pg_advisory_xact_lock(hashtext('queue_' || p_player_id::text));
+
+  -- Get current media ID to mark as played
+  SELECT current_media_id INTO v_current_media_id
+  FROM player_status
+  WHERE player_id = p_player_id;
+
+  -- Mark currently playing item as played (if any)
+  IF v_current_media_id IS NOT NULL THEN
+    UPDATE queue
+    SET played_at = NOW()
+    WHERE player_id = p_player_id
+      AND queue.media_item_id = v_current_media_id
+      AND played_at IS NULL;
+  END IF;
 
   -- Check shuffle setting
   SELECT shuffle INTO v_shuffle FROM player_settings WHERE player_id = p_player_id;
@@ -128,18 +143,22 @@ BEGIN
 
   IF v_next_queue_item IS NULL THEN
     -- No items in queue
+    -- Clear current media when queue is empty
+    UPDATE player_status
+    SET
+      current_media_id = NULL,
+      state = 'idle',
+      progress = 0,
+      last_updated = NOW()
+    WHERE player_id = p_player_id;
+
     RETURN QUERY
     SELECT NULL::UUID, NULL::TEXT, NULL::TEXT, NULL::INT
     WHERE FALSE;
     RETURN;
   END IF;
 
-  -- Mark as played
-  UPDATE queue
-  SET played_at = NOW()
-  WHERE id = v_next_queue_item.id;
-
-  -- Update player status and advance now_playing_index for normal queue items
+  -- Update player status with next item
   UPDATE player_status
   SET
     current_media_id = v_next_queue_item.media_item_id,
@@ -155,7 +174,8 @@ BEGIN
   -- Log event
   PERFORM log_event(p_player_id, 'queue_next', 'info', jsonb_build_object(
     'media_item_id', v_next_queue_item.media_item_id,
-    'type', v_next_queue_item.type
+    'type', v_next_queue_item.type,
+    'previously_playing', v_current_media_id
   ));
 
   -- Return media details

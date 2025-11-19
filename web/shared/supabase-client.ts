@@ -298,6 +298,34 @@ export function subscribeToPlayerSettings(
 }
 
 /**
+ * Subscribe to player updates
+ */
+export function subscribeToPlayer(
+  playerId: string,
+  callback: (player: any) => void
+): RealtimeSubscription<any> {
+  // Fetch initial player data
+  supabase
+    .from('players')
+    .select('*')
+    .eq('id', playerId)
+    .single()
+    .then(({ data }) => {
+      if (data) callback(data);
+    });
+
+  return subscribeToTable<any>(
+    'players',
+    { column: 'id', value: playerId },
+    (payload) => {
+      if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
+        callback(payload.new);
+      }
+    }
+  );
+}
+
+/**
  * Subscribe to kiosk session
  */
 export function subscribeToKioskSession(

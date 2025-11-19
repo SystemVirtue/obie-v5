@@ -6,9 +6,11 @@ import {
   supabase,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToPlayer,
   callPlayerControl,
   callQueueManager,
   initializePlayerPlaylist,
+  loadPlaylist,
   type PlayerStatus,
   type MediaItem,
   type PlayerSettings,
@@ -28,6 +30,7 @@ function App() {
   const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
+  const [player, setPlayer] = useState<any>(null); // Track player data for playlist changes
   const [isSlavePlayer, setIsSlavePlayer] = useState(false); // Track if this is a slave player
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
@@ -249,10 +252,18 @@ function App() {
 
   // YouTube Player event handlers
   const onPlayerReady = useCallback((_event: any) => {
-    console.log('[Player] YouTube player ready - waiting for user to press play');
+    console.log('[Player] YouTube player ready - attempting autoplay');
     setPlayerReady(true); // Mark player as ready to hide loading overlay
-    // Don't report status here - let user click play first
-    // Reporting 'idle' here causes the backend to think video ended and skip to next
+    
+    // Try to start playback immediately
+    if (playerRef.current && playerRef.current.playVideo) {
+      try {
+        playerRef.current.playVideo();
+        console.log('[Player] Attempted autoplay on ready');
+      } catch (error) {
+        console.warn('[Player] Autoplay blocked, waiting for user interaction:', error);
+      }
+    }
   }, []);
 
   const onPlayerStateChange = useCallback((event: any) => {
@@ -270,7 +281,17 @@ function App() {
       // PLAYING
       console.log('[Player] Video PLAYING');
       reportStatus('playing');
-      
+      // Always ensure volume and opacity are 100% when playing
+      if (playerRef.current) {
+        if (typeof playerRef.current.setVolume === 'function') {
+          playerRef.current.setVolume(100);
+        } else if (typeof (playerRef.current as any).volume === 'number') {
+          (playerRef.current as any).volume = 1;
+        }
+      }
+      if (playerDivRef.current) {
+        playerDivRef.current.style.opacity = '1';
+      }
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
         const currentVol = ((): number => {
@@ -291,13 +312,18 @@ function App() {
       // If video was recently loaded and paused unexpectedly, attempt to auto-play
       if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
         console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
-        try {
-          playerRef.current.playVideo();
-          // Clear the flag since we're attempting to play
-          recentlyLoadedRef.current = false;
-        } catch (error) {
-          console.error('[Player] Error auto-playing video:', error);
-        }
+        // Clear the flag first to prevent loops
+        recentlyLoadedRef.current = false;
+        
+        // Wait a bit before trying to play (YouTube needs time after pause)
+        setTimeout(() => {
+          try {
+            playerRef.current.playVideo();
+            console.log('[Player] Retried autoplay after pause');
+          } catch (error) {
+            console.error('[Player] Error retrying autoplay:', error);
+          }
+        }, 1000); // Wait 1 second
       }
     } else if (event.data === 0) {
       // ENDED - trigger queue progression
@@ -554,6 +580,32 @@ function App() {
       } else {
         console.log('[Player] Same media in status update, not updating state');
       }
+
+      // If status is idle and we have an active playlist but no queue, load the playlist
+      if (newStatus.state === 'idle' && !newStatus.current_media_id && player?.active_playlist_id && !isSlavePlayer) {
+        console.log('[Player] Status is idle with active playlist but no current media - checking queue...');
+        
+        // Check if queue is empty
+        supabase
+          .from('queue')
+          .select('id', { count: 'exact', head: true })
+          .eq('player_id', PLAYER_ID)
+          .is('played_at', null)
+          .then(({ count }) => {
+            if (count === 0) {
+              console.log('[Player] Queue is empty, loading active playlist...');
+              loadPlaylist(PLAYER_ID, player.active_playlist_id)
+                .then((result) => {
+                  console.log('[Player] Playlist loaded from status check:', result);
+                })
+                .catch((error) => {
+                  console.error('[Player] Failed to load playlist from status check:', error);
+                });
+            } else {
+              console.log('[Player] Queue has', count, 'items, no need to load playlist');
+            }
+          });
+      }
     });
 
     return () => {
@@ -567,6 +619,93 @@ function App() {
     const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => settingsSub.unsubscribe();
   }, []);
+
+  // Subscribe to player updates (to watch active_playlist_id changes)
+  useEffect(() => {
+    console.log('[Player] Subscribing to player updates...');
+    const playerSub = subscribeToPlayer(PLAYER_ID, (newPlayer) => {
+      console.log('[Player] Player update:', newPlayer);
+      const oldPlaylistId = player?.active_playlist_id;
+      const newPlaylistId = newPlayer.active_playlist_id;
+      
+      setPlayer(newPlayer);
+      
+      // If playlist changed and we're not a slave, load the new playlist
+      if (newPlaylistId && newPlaylistId !== oldPlaylistId && !isSlavePlayer) {
+        console.log('[Player] Active playlist changed from', oldPlaylistId, 'to', newPlaylistId, '- loading new playlist');
+        loadPlaylist(PLAYER_ID, newPlaylistId)
+          .then((result) => {
+            console.log('[Player] New playlist loaded:', result);
+            // After loading playlist, if we're idle, start playing the first song
+            if (status?.state === 'idle' && !currentMedia) {
+              console.log('[Player] Starting first song after playlist load');
+              callPlayerControl({
+                player_id: PLAYER_ID,
+                state: 'idle',
+                progress: 0,
+                action: 'ended', // This will trigger queue_next
+              }).catch((error) => {
+                console.error('[Player] Failed to start first song:', error);
+              });
+            }
+          })
+          .catch((error) => {
+            console.error('[Player] Failed to load new playlist:', error);
+          });
+      }
+    });
+    
+    return () => {
+      console.log('[Player] Unsubscribing from player updates');
+      playerSub.unsubscribe();
+    };
+  }, [player?.active_playlist_id, isSlavePlayer, status?.state, currentMedia]);
+
+  // Auto-start first song if waiting for more than 5 seconds
+  useEffect(() => {
+    // Only trigger for priority players (not slaves)
+    if (isSlavePlayer) return;
+
+    const isWaitingForSong = status?.state === 'idle' && !currentMedia;
+    
+    if (isWaitingForSong) {
+      console.log('[Player] Detected waiting for next song, will auto-start in 5 seconds...');
+      
+      const timeoutId = setTimeout(async () => {
+        console.log('[Player] Auto-starting - checking for active playlist...');
+        
+        try {
+          // First check if we have an active playlist that needs loading
+          if (player?.active_playlist_id) {
+            console.log('[Player] Found active playlist, loading it first...');
+            const result = await loadPlaylist(PLAYER_ID, player.active_playlist_id);
+            console.log('[Player] Playlist loaded:', result);
+          }
+          
+          // Now start the first song
+          console.log('[Player] Starting first song from queue...');
+          const result = await callPlayerControl({
+            player_id: PLAYER_ID,
+            state: 'idle',
+            progress: 0,
+            action: 'ended', // This will trigger queue_next
+          });
+          
+          if (result?.next_item) {
+            console.log('[Player] Auto-started song:', result.next_item.title);
+          } else {
+            console.log('[Player] No songs available in queue');
+          }
+        } catch (error) {
+          console.error('[Player] Failed to auto-start:', error);
+        }
+      }, 5000); // 5 seconds
+      
+      return () => {
+        clearTimeout(timeoutId);
+      };
+    }
+  }, [status?.state, currentMedia, isSlavePlayer, player?.active_playlist_id]);
 
   // Fetch lyrics for a video/title using lrclib API (best-effort)
   async function fetchLyricsForMedia(title: string | undefined, artist?: string) {
@@ -777,13 +916,14 @@ function App() {
     playerRef.current = new window.YT.Player(playerDivRef.current, {
       videoId: youtubeId,
       playerVars: {
-        autoplay: 0,        // Don't autoplay on first load (browser policy)
+        autoplay: 1,        // Try to autoplay (may be blocked by browser policy)
         controls: 0,        // Hide controls to prevent accidental clicks
         disablekb: 1,       // Disable keyboard controls
         modestbranding: 1,  // Hide YouTube logo
         rel: 0,             // Don't show related videos
         iv_load_policy: 3,  // Hide annotations
         vq: 'auto',         // Set quality to auto (let YouTube choose best quality)
+        mute: 0,            // Don't mute (required for autoplay in some browsers)
       },
       events: {
         onReady: onPlayerReady,
@@ -813,7 +953,18 @@ function App() {
       <div 
         ref={playerDivRef}
         id="player"
-        className="w-full h-full"
+        className="w-full h-full cursor-pointer"
+        onClick={() => {
+          // If video is paused and we're waiting for user interaction, try to play
+          if (playerRef.current && playerRef.current.playVideo && status?.state === 'paused') {
+            console.log('[Player] User clicked to PLAY paused video');
+            try {
+              playerRef.current.playVideo();
+            } catch (error) {
+              console.error('[Player] Error playing on click:', error);
+            }
+          }
+        }}
       />
 
       {/* Click Prevention Overlay - Allows play when paused, blocks pause when playing */}

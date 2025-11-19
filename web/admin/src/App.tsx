@@ -339,8 +339,19 @@ function QueueView() {
         action: 'remove',
         queue_id: queueId,
       });
+      // Force refresh queue after removal
+      // This will trigger the subscribeToQueue callback, but we force a fetch in case of missed events
+      const { data, error } = await (supabase as any)
+        .from('queue')
+        .select('*')
+        .eq('player_id', PLAYER_ID)
+        .order('ord', { ascending: true });
+      if (!error && data) {
+        setQueue(data);
+      }
     } catch (error) {
       console.error('Failed to remove item:', error);
+      // Optionally show a user-facing error message here
     }
   };
 

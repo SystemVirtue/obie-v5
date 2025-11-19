@@ -276,78 +276,107 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Call youtube-scraper function
-      const scrapeResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
-        },
-        body: JSON.stringify({
-          url
-        })
-      });
-      if (!scrapeResponse.ok) {
-        const errorData = await scrapeResponse.json();
-        throw new Error(errorData.error || 'YouTube scraper failed');
-      }
-      const { videos } = await scrapeResponse.json();
-      if (!videos || videos.length === 0) {
-        return new Response(JSON.stringify({
-          error: 'No videos found at the provided URL'
-        }), {
-          status: 404,
+      // Stream videos in batches to handle large playlists
+      let totalProcessed = 0;
+      let pageToken = null;
+      const BATCH_SIZE = 25; // Smaller batch size
+      
+      do {
+        // Call youtube-scraper with pagination
+        const scrapeResponse = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+          method: 'POST',
           headers: {
-            ...corsHeaders,
-            'Content-Type': 'application/json'
-          }
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+          },
+          body: JSON.stringify({
+            url,
+            maxResults: BATCH_SIZE,
+            pageToken
+          })
         });
-      }
-      // Insert media items (with deduplication by source_id)
-      const mediaItems = [];
-      for (const video of videos){
-        const mediaData = {
-          source_id: video.id,
-          source_type: 'youtube',
-          title: video.title,
-          artist: video.artist,
-          url: video.url,
-          duration: video.duration,
-          thumbnail: video.thumbnail,
-          metadata: {}
-        };
-        // Check if media item already exists
-        const { data: existing } = await supabase.from('media_items').select('id').eq('source_id', video.id).eq('source_type', 'youtube').maybeSingle();
-        if (existing) {
-          // Update existing record
-          const { data: updated } = await supabase.from('media_items').update(mediaData).eq('id', existing.id).select().maybeSingle();
-          if (updated) mediaItems.push(updated);
-        } else {
-          // Insert new record
-          const { data: inserted } = await supabase.from('media_items').insert(mediaData).select().maybeSingle();
-          if (inserted) mediaItems.push(inserted);
+        
+        if (!scrapeResponse.ok) {
+          const errorData = await scrapeResponse.json();
+          throw new Error(errorData.error || 'YouTube scraper failed');
         }
-      }
-      // If playlist_id provided, add items to playlist
-      if (playlist_id) {
-        // Get current max position
-        const { data: maxPos } = await supabase.from('playlist_items').select('position').eq('playlist_id', playlist_id).order('position', {
-          ascending: false
-        }).limit(1).maybeSingle();
-        let position = (maxPos?.position || 0) + 1;
-        // Batch insert playlist items
-        const playlistItems = mediaItems.map((media)=>({
-            playlist_id,
-            media_item_id: media.id,
-            position: position++
-          }));
-        await supabase.from('playlist_items').insert(playlistItems);
-        // Sync queue if this is the active playlist
-        if (player_id) await syncQueueIfActive(supabase, player_id, playlist_id);
+        
+        const { videos: batchVideos, nextPageToken } = await scrapeResponse.json();
+        if (!batchVideos || batchVideos.length === 0) {
+          break; // No more videos
+        }
+        
+        console.log(`Processing batch of ${batchVideos.length} videos...`);
+        
+        // Process this batch immediately
+        const batchMediaItems = [];
+        for (const video of batchVideos) {
+          const mediaData = {
+            source_id: video.id,
+            source_type: 'youtube',
+            title: video.title,
+            artist: video.artist,
+            url: video.url,
+            duration: video.duration,
+            thumbnail: video.thumbnail,
+            metadata: {}
+          };
+          // Check if media item already exists
+          const { data: existing } = await supabase.from('media_items').select('id').eq('source_id', video.id).eq('source_type', 'youtube').maybeSingle();
+          if (existing) {
+            // Update existing record
+            const { data: updated } = await supabase.from('media_items').update(mediaData).eq('id', existing.id).select().maybeSingle();
+            if (updated) batchMediaItems.push(updated);
+          } else {
+            // Insert new record
+            const { data: inserted } = await supabase.from('media_items').insert(mediaData).select().maybeSingle();
+            if (inserted) batchMediaItems.push(inserted);
+          }
+        }
+        
+        // If playlist_id provided, add this batch to playlist (skip duplicates)
+        if (playlist_id && batchMediaItems.length > 0) {
+          // Get existing media_item_ids in this playlist
+          const { data: existingItems } = await supabase.from('playlist_items').select('media_item_id').eq('playlist_id', playlist_id);
+          const existingIds = new Set(existingItems?.map(item => item.media_item_id) || []);
+          
+          // Filter out items already in playlist
+          const newItems = batchMediaItems.filter(media => !existingIds.has(media.id));
+          
+          if (newItems.length > 0) {
+            // Get current max position
+            const { data: maxPos } = await supabase.from('playlist_items').select('position').eq('playlist_id', playlist_id).order('position', {
+              ascending: false
+            }).limit(1).maybeSingle();
+            let position = (maxPos?.position || 0) + 1;
+            
+            const playlistItems = newItems.map((media) => ({
+              playlist_id,
+              media_item_id: media.id,
+              position: position++
+            }));
+            
+            await supabase.from('playlist_items').insert(playlistItems);
+            console.log(`Added ${newItems.length} new items to playlist`);
+          } else {
+            console.log(`All ${batchMediaItems.length} items already in playlist`);
+          }
+        }
+        
+        totalProcessed += batchVideos.length;
+        pageToken = nextPageToken;
+        
+        console.log(`Completed batch. Total processed: ${totalProcessed}`);
+        
+      } while (pageToken);
+      
+      // Sync queue if this is the active playlist (only once at the end)
+      if (playlist_id && player_id) {
+        await syncQueueIfActive(supabase, player_id, playlist_id);
       }
       return new Response(JSON.stringify({
-        media_items: mediaItems,
-        count: mediaItems.length,
+        media_items: [], // Don't return all items for large playlists
+        count: totalProcessed,
         playlist_id: playlist_id || null
       }), {
         status: 200,

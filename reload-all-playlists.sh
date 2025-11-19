@@ -1,10 +1,10 @@
 #!/bin/bash
-# Import Multiple Playlists to Supabase
-# This script imports all playlists for the Obie Jukebox
+# Reload Multiple Playlists from YouTube
+# This script reloads existing playlists from YouTube without overwriting on failure
 
 set -e
 
-echo "🎵 Importing multiple playlists to Obie Jukebox..."
+echo "🔄 Reloading playlists from YouTube (safe mode - preserves existing data on failure)..."
 
 # Configuration
 SUPABASE_URL="${SUPABASE_URL:-http://localhost:54321}"

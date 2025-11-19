@@ -89,14 +89,15 @@ Deno.serve(async (req)=>{
         .single();
 
       if (!existingPriority?.priority_player_id) {
-        // No priority player yet - check if any players are currently playing
+        // No priority player yet - check if any OTHER players are currently playing
         const { data: playingPlayers } = await supabase
           .from('player_status')
           .select('id')
-          .eq('state', 'playing');
+          .eq('state', 'playing')
+          .neq('player_id', player_id); // Exclude this player itself
 
         if (!playingPlayers || playingPlayers.length === 0) {
-          // No players are currently playing - make this one priority
+          // No OTHER players are currently playing - make this one priority
           const { error: updateError } = await supabase
             .from('players')
             .update({ priority_player_id: player_id })

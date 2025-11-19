@@ -36,6 +36,20 @@ GROUP BY p.id;
 -- GRANT SELECT ON playlists_with_counts TO public;
 
 -- ============================================================================
+-- Create player_import_playlists table if it doesn't exist
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS public.player_import_playlists (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  player_id uuid NOT NULL REFERENCES player_status(player_id) ON DELETE CASCADE,
+  playlist_url text NOT NULL,
+  status text DEFAULT 'pending' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  error_message text
+);
+
+-- ============================================================================
 -- Enable RLS and create conservative policies for player_import_playlists
 -- (Use DROP POLICY IF EXISTS before CREATE to support older Postgres versions)
 -- ============================================================================
