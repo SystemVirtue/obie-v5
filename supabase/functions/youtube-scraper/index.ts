@@ -38,6 +38,10 @@ const API_KEYS = [
   {
     key: "AIzaSyD6lYWv9Jww_r_RCpO-EKZEyrK4vNd9FeQ",
     name: "Key 9"
+  },
+  {
+    key: "AIzaSyD3kfo9uNdHluv_U4fRPRdQ-sUowK4HmXo",
+    name: "Key 10"
   }
 ];
 let currentKeyIndex = 0;
