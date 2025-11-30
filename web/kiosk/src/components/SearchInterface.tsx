@@ -1,10 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
 import { SearchInterfaceProps, SearchResult } from "../../../shared/types";
 import { SearchKeyboard } from "./SearchKeyboard";
 import { VideoResultCard } from "./VideoResultCard";
 import { BackToSearchButton } from "./BackToSearchButton";
+
+// Declare global YT for TypeScript
+declare global {
+  interface Window {
+    YT: any;
+    onYouTubeIframeAPIReady: () => void;
+  }
+}
 
 export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   isOpen,
@@ -33,56 +41,180 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     credits,
     bypassCreditCheck
   });
-  // Pagination state
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 8; // 4 columns x 2 rows
 
-  // Calculate pagination
-  const totalPages = Math.max(
-    1,
-    Math.ceil(searchResults.length / itemsPerPage),
-  );
+  const [currentPage, setCurrentPage] = useState(1);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [validatingVideo, setValidatingVideo] = useState<string | null>(null);
+  const playerRef = useRef<any>(null);
+
+  const itemsPerPage = 8;
+  const totalPages = Math.max(1, Math.ceil(searchResults.length / itemsPerPage));
   const paginatedResults = searchResults.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage,
   );
 
-  // Reset to page 1 when new search results come in
+  // Reset page on new results
   useEffect(() => {
     setCurrentPage(1);
   }, [searchResults]);
 
-  // Debug logging
+  // Load YouTube IFrame API once
   useEffect(() => {
-    console.log('SearchInterface render - showSearchResults:', showSearchResults, 'paginatedResults:', paginatedResults.length);
-  }, [showSearchResults, paginatedResults]);
+    if (typeof window !== "undefined" && !window.YT) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      const firstScript = document.getElementsByTagName("script")[0];
+      firstScript?.parentNode?.insertBefore(tag, firstScript);
+
+      window.onYouTubeIframeAPIReady = () => {
+        console.log("YouTube IFrame API ready");
+      };
+    }
+  }, []);
+
+  // Cleanup player on unmount
+  useEffect(() => {
+    return () => {
+      if (playerRef.current) {
+        playerRef.current.destroy?.();
+      }
+    };
+  }, []);
+
+  const handleValidationSuccess = (video: SearchResult) => {
+    playerRef.current = null;
+    setValidatingVideo(null);
+    console.log('Video validated & playable:', video.id);
+    onVideoSelect(video); // Your original flow continues
+  };
+
+  const handleValidationFailure = (video: SearchResult) => {
+    playerRef.current?.destroy();
+    playerRef.current = null;
+    setValidatingVideo(null);
+
+    setErrorMessage("Sorry, selection is unavailable - please select another video");
+
+    // Remove the bad video from results
+    // We trigger this via prop update — parent must filter it out
+    // So we use a callback pattern (you'll need to wrap SearchInterface)
+    // But for now: just show message and let user continue
+    setTimeout(() => setErrorMessage(null), 5000);
+  };
 
   const handleVideoSelect = (video: SearchResult) => {
     console.log('SearchInterface handleVideoSelect called with:', video);
-    console.log('bypassCreditCheck:', bypassCreditCheck, 'mode:', mode, 'credits:', credits);
-    // Bypass credit check for /index page (DJ/admin interface)
+
     if (!bypassCreditCheck && mode === "PAID" && credits === 0) {
-      console.log('Credit check failed - calling onInsufficientCredits');
+      console.log('Credit check failed');
       onInsufficientCredits?.();
       return;
     }
-    console.log('Calling onVideoSelect with video');
-    onVideoSelect(video);
+
+    // If YouTube API not loaded yet, skip validation (rare)
+    if (!window.YT || !window.YT.Player) {
+      console.warn("YouTube API not ready — skipping validation");
+      onVideoSelect(video);
+      return;
+    }
+
+    setValidatingVideo(video.id);
+
+    // Destroy any previous player
+    if (playerRef.current) {
+      playerRef.current.destroy();
+    }
+
+    playerRef.current = new window.YT.Player("hidden-youtube-validator", {
+      height: "0",
+      width: "0",
+      videoId: video.id,
+      playerVars: {
+        autoplay: 1,
+        mute: 1,
+        controls: 0,
+        disablekb: 1,
+        fs: 0,
+        rel: 0,
+        modestbranding: 1,
+        origin: window.location.origin,
+      },
+      events: {
+        onReady: (event: any) => {
+          event.target.playVideo();
+        },
+        onStateChange: (event: any) => {
+          if (event.data === window.YT.PlayerState.PLAYING) {
+            handleValidationSuccess(video);
+          }
+          // Any other state after 1s = failure
+        },
+        onError: () => {
+          handleValidationFailure(video);
+        },
+      },
+    });
+
+    // Fallback timeout: if not playing in 6s → reject
+    setTimeout(() => {
+      if (playerRef.current?.getPlayerState) {
+        const state = playerRef.current.getPlayerState();
+        if (state !== window.YT.PlayerState.PLAYING) {
+          handleValidationFailure(video);
+        }
+      }
+    }, 6000);
   };
 
   if (!isOpen) return null;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      {/* Hidden player for validation */}
+      <div
+        id="hidden-youtube-validator"
+        style={{
+          position: "fixed",
+          left: "-9999px",
+          top: "-9999px",
+          width: 1,
+          height: 1,
+          opacity: 0,
+        }}
+      />
+
       <div className="bg-slate-900/20 backdrop-blur-sm border-slate-600 max-w-[95vw] w-full sm:w-[1200px] h-[calc(100vh-50px)] sm:h-[calc(100vh-200px)] p-0 relative">
-        {/* Responsive close button */}
+        {/* Close button */}
         <Button
           onClick={onClose}
           className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 w-8 h-8 sm:w-12 sm:h-12 bg-red-600/80 hover:bg-red-700/80 border-2 border-red-500 shadow-lg"
           style={{ filter: "drop-shadow(-5px -5px 10px rgba(0,0,0,0.8))" }}
         >
-          ✕
+          X
         </Button>
+
+        {/* Validation loading overlay */}
+        {validatingVideo && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+            <div className="text-2xl text-amber-200">Checking video...</div>
+          </div>
+        )}
+
+        {/* Error popover */}
+        {errorMessage && (
+          <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
+            <div className="bg-red-600 text-white px-8 py-6 rounded-2xl shadow-2xl max-w-md text-center animate-pulse pointer-events-auto">
+              <p className="text-xl font-bold mb-4">{errorMessage}</p>
+              <Button
+                onClick={() => setErrorMessage(null)}
+                className="bg-white text-red-600 px-8 py-3 text-lg font-bold rounded-lg hover:bg-gray-100"
+              >
+                OK
+              </Button>
+            </div>
+          </div>
+        )}
 
         {showKeyboard && (
           <SearchKeyboard
@@ -106,46 +238,21 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
               </div>
             ) : (
               <div className="flex-1 flex flex-col overflow-hidden">
-                <div
-                  className="flex-1 overflow-y-auto p-6 search-results-scrollable"
-                  style={{
-                    scrollbarWidth: "auto",
-                    scrollbarColor: "#f59e0b #374151",
-                  }}
-                >
-                  <style>{`
-                    .search-results-scrollable::-webkit-scrollbar {
-                      width: 20px;
-                      display: block;
-                    }
-
-                    .search-results-scrollable::-webkit-scrollbar-track {
-                      background: #374151;
-                      border-radius: 10px;
-                    }
-
-                    .search-results-scrollable::-webkit-scrollbar-thumb {
-                      background: #f59e0b;
-                      border-radius: 10px;
-                      border: 2px solid #374151;
-                    }
-
-                    .search-results-scrollable::-webkit-scrollbar-thumb:hover {
-                      background: #d97706;
-                    }
-                  `}</style>
+                <div className="flex-1 overflow-y-auto p-6 search-results-scrollable">
                   <div className="grid grid-cols-4 gap-6">
                     {paginatedResults.map((video) => (
                       <VideoResultCard
                         key={video.id}
                         video={video}
-                        onClick={handleVideoSelect}
+                        onClick={() => handleVideoSelect(video)}
                         variant="grid"
+                        disabled={validatingVideo === video.id}
                       />
                     ))}
                   </div>
-                  {/* Pagination Controls */}
-                  <div className="flex justify-center items-center gap-4 mt-6">
+
+                  {/* Pagination */}
+                  <div className="flex justify-center items-center gap-4 mt-8">
                     <Button
                       onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
                       disabled={currentPage === 1}
@@ -157,9 +264,7 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
                       Page {currentPage} of {totalPages}
                     </span>
                     <Button
-                      onClick={() =>
-                        setCurrentPage((p) => Math.min(totalPages, p + 1))
-                      }
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
                       disabled={currentPage === totalPages}
                       className="px-6 py-2 text-lg font-bold bg-black/60 text-white border-2 border-yellow-400 rounded shadow disabled:opacity-50"
                     >
