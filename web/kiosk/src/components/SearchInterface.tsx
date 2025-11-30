@@ -13,7 +13,12 @@ declare global {
   }
 }
 
-export const SearchInterface: React.FC<SearchInterfaceProps> = ({
+// Add this new optional prop to your shared/types.ts → SearchInterfaceProps
+interface SearchInterfacePropsExtended extends SearchInterfaceProps {
+  onVideoBlocked?: (videoId: string) => void;
+}
+
+export const SearchInterface: React.FC<SearchInterfacePropsExtended> = ({
   isOpen,
   onClose,
   searchQuery,
@@ -31,16 +36,8 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   includeKaraoke,
   onIncludeKaraokeChange,
   bypassCreditCheck = false,
+  onVideoBlocked, // ← NEW: parent removes bad video
 }) => {
-  console.log("SearchInterface props:", {
-    isOpen,
-    searchResults: searchResults.length,
-    showSearchResults,
-    mode,
-    credits,
-    bypassCreditCheck,
-  });
-
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [validatingVideoId, setValidatingVideoId] = useState<string | null>(null);
@@ -53,21 +50,15 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     currentPage * itemsPerPage,
   );
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchResults]);
+  useEffect(() => setCurrentPage(1), [searchResults]);
 
-  // Load YouTube IFrame API once
+  // Load YouTube IFrame API
   useEffect(() => {
     if (typeof window !== "undefined" && !window.YT) {
       const tag = document.createElement("script");
       tag.src = "https://www.youtube.com/iframe_api";
       const firstScript = document.getElementsByTagName("script")[0];
       firstScript?.parentNode?.insertBefore(tag, firstScript);
-
-      window.onYouTubeIframeAPIReady = () => {
-        console.log("YouTube IFrame API ready");
-      };
     }
   }, []);
 
@@ -76,39 +67,48 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     return () => playerRef.current?.destroy?.();
   }, []);
 
-  const handleValidationSuccess = () => {
+  const handleValidationSuccess = (video: SearchResult) => {
     playerRef.current?.destroy();
     playerRef.current = null;
     setValidatingVideoId(null);
-    // onVideoSelect will be called from the original click handler below
+    onVideoSelect(video); // ← Triggers your normal "Add song" dialog
   };
 
-  const handleValidationFailure = () => {
+  const handleValidationFailure = (video: SearchResult) => {
     playerRef.current?.destroy();
     playerRef.current = null;
     setValidatingVideoId(null);
+
+    // Show error
     setErrorMessage("Sorry, selection is unavailable - please select another video");
-    setTimeout(() => setErrorMessage(null), 5000);
+
+    // Remove from parent's results
+    onVideoBlocked?.(video.id);
+
+    // Auto-dismiss after 6s or on OK
+    const timeout = setTimeout(() => setErrorMessage(null), 6000);
+    const dismiss = () => {
+      clearTimeout(timeout);
+      setErrorMessage(null);
+    };
+
+    // Attach dismiss to OK button
+    (window as any).dismissUnavailable = dismiss;
   };
 
   const handleVideoSelect = (video: SearchResult) => {
-    console.log("Selecting video:", video.id, video.title);
-
     if (!bypassCreditCheck && mode === "PAID" && credits === 0) {
       onInsufficientCredits?.();
       return;
     }
 
-    // If API not ready → skip validation (fallback)
     if (!window.YT || !window.YT.Player) {
-      console.warn("YouTube API not loaded – skipping validation");
+      console.warn("YouTube API not ready — skipping validation");
       onVideoSelect(video);
       return;
     }
 
     setValidatingVideoId(video.id);
-
-    // Destroy any old player
     playerRef.current?.destroy();
 
     playerRef.current = new window.YT.Player("hidden-youtube-validator", {
@@ -120,7 +120,6 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
         mute: 1,
         controls: 0,
         disablekb: 1,
-        fs: 0,
         rel: 0,
         modestbranding: 1,
         origin: window.location.origin,
@@ -129,18 +128,17 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
         onReady: (e: any) => e.target.playVideo(),
         onStateChange: (e: any) => {
           if (e.data === window.YT.PlayerState.PLAYING) {
-            handleValidationSuccess();
-            onVideoSelect(video); // ← SUCCESS: enqueue it
+            handleValidationSuccess(video);
           }
         },
-        onError: () => handleValidationFailure(),
+        onError: () => handleValidationFailure(video),
       },
     });
 
-    // Timeout fallback
+    // Fallback timeout
     setTimeout(() => {
       if (playerRef.current?.getPlayerState?.() !== window.YT.PlayerState.PLAYING) {
-        handleValidationFailure();
+        handleValidationFailure(video);
       }
     }, 6000);
   };
@@ -149,35 +147,29 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      {/* Hidden validation player */}
-      <div
-        id="hidden-youtube-validator"
-        style={{ position: "fixed", left: "-9999px", top: "-9999px", width: 1, height: 1 }}
-      />
+      {/* Hidden player */}
+      <div id="hidden-youtube-validator" style={{ position: "fixed", left: "-9999px", width: 1, height: 1 }} />
 
       <div className="bg-slate-900/20 backdrop-blur-sm border-slate-600 max-w-[95vw] w-full sm:w-[1200px] h-[calc(100vh-50px)] sm:h-[calc(100vh-200px)] p-0 relative">
-        <Button
-          onClick={onClose}
-          className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 w-8 h-8 sm:w-12 sm:h-12 bg-red-600/80 hover:bg-red-700/80 border-2 border-red-500 shadow-lg"
-        >
+        <Button onClick={onClose} className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 w-12 h-12 bg-red-600/80 hover:bg-red-700/80 border-2 border-red-500 shadow-lg">
           X
         </Button>
 
-        {/* Validating overlay */}
+        {/* Checking overlay */}
         {validatingVideoId && (
-          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
-            <div className="text-3xl text-amber-300 font-bold">Checking video...</div>
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
+            <div className="text-4xl font-bold text-amber-300 animate-pulse">Checking video...</div>
           </div>
         )}
 
-        {/* Error popover */}
+        {/* Unavailable popup */}
         {errorMessage && (
-          <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
-            <div className="bg-red-600 text-white px-8 py-6 rounded-2xl shadow-2xl max-w-md text-center pointer-events-auto animate-pulse">
-              <p className="text-xl font-bold mb-4">{errorMessage}</p>
+          <div className="fixed inset-0 flex items-center justify-center z-50 bg-black/70">
+            <div className="bg-red-600 text-white px-10 py-8 rounded-3xl shadow-2xl text-center max-w-lg">
+              <h3 className="text-2xl font-bold mb-6">{errorMessage}</h3>
               <Button
                 onClick={() => setErrorMessage(null)}
-                className="bg-white text-red-600 px-8 py-3 text-lg font-bold rounded-lg"
+                className="bg-white text-red-600 px-12 py-4 text-xl font-bold rounded-xl hover:bg-gray-100"
               >
                 OK
               </Button>
@@ -185,6 +177,7 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
           </div>
         )}
 
+        {/* Rest of your UI (keyboard, results, pagination) */}
         {showKeyboard && (
           <SearchKeyboard
             searchQuery={searchQuery}
@@ -203,7 +196,7 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
 
             {isSearching ? (
               <div className="flex-1 flex items-center justify-center">
-                <div className="text-2xl text-amber-200">Searching...</div>
+                <div className="text-3xl text-amber-200">Searching...</div>
               </div>
             ) : (
               <div className="flex-1 flex flex-col overflow-hidden">
@@ -219,21 +212,21 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
                     ))}
                   </div>
 
-                  <div className="flex justify-center items-center gap-4 mt-8">
+                  <div className="flex justify-center items-center gap-6 mt-10">
                     <Button
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                       disabled={currentPage === 1}
-                      className="px-6 py-2 text-lg font-bold bg-black/60 text-white border-2 border-yellow-400 rounded shadow disabled:opacity-50"
+                      className="px-8 py-3 text-xl font-bold bg-black/70 border-2 border-yellow-400 rounded-lg disabled:opacity-50"
                     >
                       Previous
                     </Button>
-                    <span className="text-white text-lg font-bold">
-                      Page {currentPage} of {totalPages}
+                    <span className="text-2xl font-bold text-yellow-400">
+                      Page {currentPage} / {totalPages}
                     </span>
                     <Button
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                       disabled={currentPage === totalPages}
-                      className="px-6 py-2 text-lg font-bold bg-black/60 text-white border-2 border-yellow-400 rounded shadow disabled:opacity-50"
+                      className="px-8 py-3 text-xl font-bold bg-black/70 border-2 border-yellow-400 rounded-lg disabled:opacity-50"
                     >
                       Next
                     </Button>
