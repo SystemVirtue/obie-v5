@@ -6,7 +6,6 @@ import { SearchKeyboard } from "./SearchKeyboard";
 import { VideoResultCard } from "./VideoResultCard";
 import { BackToSearchButton } from "./BackToSearchButton";
 
-// Declare global YT for TypeScript
 declare global {
   interface Window {
     YT: any;
@@ -33,18 +32,18 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   onIncludeKaraokeChange,
   bypassCreditCheck = false,
 }) => {
-  console.log('SearchInterface props:', {
+  console.log("SearchInterface props:", {
     isOpen,
     searchResults: searchResults.length,
     showSearchResults,
     mode,
     credits,
-    bypassCreditCheck
+    bypassCreditCheck,
   });
 
   const [currentPage, setCurrentPage] = useState(1);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [validatingVideo, setValidatingVideo] = useState<string | null>(null);
+  const [validatingVideoId, setValidatingVideoId] = useState<string | null>(null);
   const playerRef = useRef<any>(null);
 
   const itemsPerPage = 8;
@@ -54,7 +53,6 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     currentPage * itemsPerPage,
   );
 
-  // Reset page on new results
   useEffect(() => {
     setCurrentPage(1);
   }, [searchResults]);
@@ -73,58 +71,45 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
     }
   }, []);
 
-  // Cleanup player on unmount
+  // Cleanup player
   useEffect(() => {
-    return () => {
-      if (playerRef.current) {
-        playerRef.current.destroy?.();
-      }
-    };
+    return () => playerRef.current?.destroy?.();
   }, []);
 
-  const handleValidationSuccess = (video: SearchResult) => {
-    playerRef.current = null;
-    setValidatingVideo(null);
-    console.log('Video validated & playable:', video.id);
-    onVideoSelect(video); // Your original flow continues
-  };
-
-  const handleValidationFailure = (video: SearchResult) => {
+  const handleValidationSuccess = () => {
     playerRef.current?.destroy();
     playerRef.current = null;
-    setValidatingVideo(null);
+    setValidatingVideoId(null);
+    // onVideoSelect will be called from the original click handler below
+  };
 
+  const handleValidationFailure = () => {
+    playerRef.current?.destroy();
+    playerRef.current = null;
+    setValidatingVideoId(null);
     setErrorMessage("Sorry, selection is unavailable - please select another video");
-
-    // Remove the bad video from results
-    // We trigger this via prop update — parent must filter it out
-    // So we use a callback pattern (you'll need to wrap SearchInterface)
-    // But for now: just show message and let user continue
     setTimeout(() => setErrorMessage(null), 5000);
   };
 
   const handleVideoSelect = (video: SearchResult) => {
-    console.log('SearchInterface handleVideoSelect called with:', video);
+    console.log("Selecting video:", video.id, video.title);
 
     if (!bypassCreditCheck && mode === "PAID" && credits === 0) {
-      console.log('Credit check failed');
       onInsufficientCredits?.();
       return;
     }
 
-    // If YouTube API not loaded yet, skip validation (rare)
+    // If API not ready → skip validation (fallback)
     if (!window.YT || !window.YT.Player) {
-      console.warn("YouTube API not ready — skipping validation");
+      console.warn("YouTube API not loaded – skipping validation");
       onVideoSelect(video);
       return;
     }
 
-    setValidatingVideo(video.id);
+    setValidatingVideoId(video.id);
 
-    // Destroy any previous player
-    if (playerRef.current) {
-      playerRef.current.destroy();
-    }
+    // Destroy any old player
+    playerRef.current?.destroy();
 
     playerRef.current = new window.YT.Player("hidden-youtube-validator", {
       height: "0",
@@ -141,28 +126,21 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
         origin: window.location.origin,
       },
       events: {
-        onReady: (event: any) => {
-          event.target.playVideo();
-        },
-        onStateChange: (event: any) => {
-          if (event.data === window.YT.PlayerState.PLAYING) {
-            handleValidationSuccess(video);
+        onReady: (e: any) => e.target.playVideo(),
+        onStateChange: (e: any) => {
+          if (e.data === window.YT.PlayerState.PLAYING) {
+            handleValidationSuccess();
+            onVideoSelect(video); // ← SUCCESS: enqueue it
           }
-          // Any other state after 1s = failure
         },
-        onError: () => {
-          handleValidationFailure(video);
-        },
+        onError: () => handleValidationFailure(),
       },
     });
 
-    // Fallback timeout: if not playing in 6s → reject
+    // Timeout fallback
     setTimeout(() => {
-      if (playerRef.current?.getPlayerState) {
-        const state = playerRef.current.getPlayerState();
-        if (state !== window.YT.PlayerState.PLAYING) {
-          handleValidationFailure(video);
-        }
+      if (playerRef.current?.getPlayerState?.() !== window.YT.PlayerState.PLAYING) {
+        handleValidationFailure();
       }
     }, 6000);
   };
@@ -171,44 +149,35 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      {/* Hidden player for validation */}
+      {/* Hidden validation player */}
       <div
         id="hidden-youtube-validator"
-        style={{
-          position: "fixed",
-          left: "-9999px",
-          top: "-9999px",
-          width: 1,
-          height: 1,
-          opacity: 0,
-        }}
+        style={{ position: "fixed", left: "-9999px", top: "-9999px", width: 1, height: 1 }}
       />
 
       <div className="bg-slate-900/20 backdrop-blur-sm border-slate-600 max-w-[95vw] w-full sm:w-[1200px] h-[calc(100vh-50px)] sm:h-[calc(100vh-200px)] p-0 relative">
-        {/* Close button */}
         <Button
           onClick={onClose}
           className="absolute top-2 right-2 sm:top-4 sm:right-4 z-50 w-8 h-8 sm:w-12 sm:h-12 bg-red-600/80 hover:bg-red-700/80 border-2 border-red-500 shadow-lg"
-          style={{ filter: "drop-shadow(-5px -5px 10px rgba(0,0,0,0.8))" }}
         >
           X
         </Button>
 
-        {/* Validation loading overlay */}
-        {validatingVideo && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-            <div className="text-2xl text-amber-200">Checking video...</div>
+        {/* Validating overlay */}
+        {validatingVideoId && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div className="text-3xl text-amber-300 font-bold">Checking video...</div>
           </div>
         )}
 
         {/* Error popover */}
         {errorMessage && (
           <div className="fixed inset-0 flex items-center justify-center z-50 pointer-events-none">
-            <div className="bg-red-600 text-white px-8 py-6 rounded-2xl shadow-2xl max-w-md text-center animate-pulse pointer-events-auto">
+            <div className="bg-red-600 text-white px-8 py-6 rounded-2xl shadow-2xl max-w-md text-center pointer-events-auto animate-pulse">
               <p className="text-xl font-bold mb-4">{errorMessage}</p>
               <Button
                 onClick={() => setErrorMessage(null)}
-                className="bg-white text-red-600 px-8 py-3 text-lg font-bold rounded-lg hover:bg-gray-100"
+                className="bg-white text-red-600 px-8 py-3 text-lg font-bold rounded-lg"
               >
                 OK
               </Button>
@@ -246,12 +215,10 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
                         video={video}
                         onClick={() => handleVideoSelect(video)}
                         variant="grid"
-                        disabled={validatingVideo === video.id}
                       />
                     ))}
                   </div>
 
-                  {/* Pagination */}
                   <div className="flex justify-center items-center gap-4 mt-8">
                     <Button
                       onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
