@@ -30,8 +30,8 @@ export interface Playlist {
 export interface PlaylistItem {
   id: string;
   playlist_id: string;
-  position: number;
   media_item_id: string;
+  position: number;
   added_at: string;
 }
 
@@ -142,7 +142,7 @@ export const supabase: SupabaseClient<Database> = createClient(supabaseUrl, supa
 // REALTIME HELPERS
 // =============================================================================
 
-// @ts-ignore - T is used in the interface definition
+// @ts-ignore - T is used in interface definition
 export interface RealtimeSubscription<T = any> {
   channel: RealtimeChannel;
   unsubscribe: () => void;
@@ -359,13 +359,13 @@ export async function callQueueManager(params: {
   type?: 'normal' | 'priority';
   requested_by?: string;
 }) {
-  // For very large reorders, call the RPC directly to avoid sending a huge
-  // payload through the Edge Function and to allow the client to use the
+  // For very large reorders, call RPC directly to avoid sending a huge
+  // payload through Edge Function and to allow client to use
   // database RPC which accepts uuid[] more directly. This matches the
-  // optimized behavior used in the compiled app bundle.
+  // optimized behavior used in compiled app bundle.
   try {
     if (params.action === 'reorder' && Array.isArray(params.queue_ids) && params.queue_ids.length > 50) {
-      // Call the unambiguous wrapper RPC to avoid overload resolution issues
+      // Call unambiguous wrapper RPC to avoid overload resolution issues
       const { error } = await supabase.rpc('queue_reorder_wrapper', {
         p_player_id: params.player_id,
         p_queue_ids: params.queue_ids,
@@ -386,7 +386,7 @@ export async function callQueueManager(params: {
 
     return data;
   } catch (err: any) {
-    // If the caught error is a Postgres error object, normalize it so UI logs
+    // If caught error is a Postgres error object, normalize it so UI logs
     // show readable information (code/message/detail).
     if (err && typeof err === 'object' && (err.message || err.code)) {
       throw new Error(err.message || `db_error:${err.code || JSON.stringify(err)}`);
@@ -495,7 +495,7 @@ export async function initializePlayerPlaylist(playerId: string) {
 }
 
 /**
- * Load a specific playlist into the player queue
+ * Load a specific playlist into player queue
  */
 export async function loadPlaylist(playerId: string, playlistId: string, startIndex: number = 0) {
   const { data, error } = await supabase.rpc('load_playlist', {
@@ -542,8 +542,8 @@ export async function getPlayer(playerId: string): Promise<Player | null> {
  * Get all playlists for a player
  */
 export async function getPlaylists(playerId: string): Promise<Playlist[]> {
-  // Prefer the aggregated view that includes item counts when available.
-  // Fallback to the raw playlists table if the view does not exist.
+  // Prefer aggregated view that includes item counts when available.
+  // Fallback to raw playlists table if view does not exist.
   const viewSelect = '*, item_count';
   const { data, error } = await supabase
     .from('playlists_with_counts')
@@ -561,7 +561,7 @@ export async function getPlaylists(playerId: string): Promise<Playlist[]> {
       is_active: row.is_active,
       created_at: row.created_at,
       updated_at: row.updated_at,
-      // item_count is available on the row if callers want it
+      // item_count is available on row if callers want it
       item_count: row.item_count,
     })) as any;
   }
@@ -591,7 +591,7 @@ export async function getPlaylistItems(playlistId: string): Promise<(PlaylistIte
     .order('position', { ascending: true });
 
   if (itemsError) {
-    // If the error indicates a missing foreign key relationship, fall back to the two-step approach
+    // If error indicates a missing foreign key relationship, fall back to two-step approach
     console.error('[getPlaylistItems] Initial fetch failed, error:', itemsError);
     throw itemsError;
   }
@@ -662,8 +662,8 @@ export async function updateAllCredits(playerId: string, action: 'clear' | 'add'
 
     if (error) throw error;
   } else if (action === 'add' && amount) {
-    // Add credits to the most-recently-active kiosk session for this player.
-    // Admin +1/+3 buttons are expected to increment the visible total by a small amount,
+    // Add credits to most-recently-active kiosk session for this player.
+    // Admin +1/+3 buttons are expected to increment visible total by a small amount,
     // so updating a single recent session prevents accidentally adding N times (one per session).
     const { data: sessions, error: fetchError } = await (supabase as any)
       .from('kiosk_sessions')
@@ -698,19 +698,6 @@ export interface AuthUser {
   id: string;
   email: string;
   role?: string;
-}
-
-/**
- * Sign up with email and password
- */
-export async function signUp(email: string, password: string) {
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-  });
-
-  if (error) throw error;
-  return data;
 }
 
 /**
