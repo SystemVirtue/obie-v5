@@ -1397,7 +1397,7 @@ function App() {
   const handleReorder = async (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id);
+    const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
     const oldIdx  = normalQ.findIndex(i => i.id === active.id);
     const newIdx  = normalQ.findIndex(i => i.id === over.id);
     const reordered = arrayMove(normalQ, oldIdx, newIdx);
@@ -1414,7 +1414,7 @@ function App() {
     const original = queue.slice();
     setIsShuffling(true);
     try {
-      const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id);
+      const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
       if (normalQ.length <= 1) {
         console.log('[Shuffle] Not enough items to shuffle');
         return;
@@ -1446,7 +1446,7 @@ function App() {
             const { data: latest } = await supabase.from('queue' as 'queue').select('*')
               .eq('player_id', PLAYER_ID).is('played_at', null)
               .order('type', { ascending: false }).order('position', { ascending: true });
-            const latestNormal = (latest || []).filter((i: QueueItem) => i.type === 'normal' && i.media_item_id !== status?.current_media_id);
+            const latestNormal = (latest || []).filter((i: QueueItem) => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
             ids = [...latestNormal].sort(() => Math.random() - 0.5).map((i: QueueItem) => i.id);
             await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
           } else if (attempt === maxAttempts - 1) {
