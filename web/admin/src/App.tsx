@@ -1411,7 +1411,6 @@ function App() {
   };
 
   const handleShuffle = async () => {
-    const original = queue.slice();
     setIsShuffling(true);
     try {
       const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
