@@ -27,7 +27,7 @@ import {
   getCurrentUser,
   subscribeToAuth,
   type AuthUser,
-} from "../../shared/supabase-client";
+} from '@shared/supabase-client';
 import {
   DndContext,
   closestCenter,
@@ -211,7 +211,7 @@ function SaveBtn({ onSave, loading }: { onSave: () => Promise<void>; loading?: b
   const handle = async () => { await onSave(); setSaved(true); setTimeout(() => setSaved(false), 2500); };
   return (
     <button onClick={handle} disabled={loading}
-      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 12, border: 'none',
+      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 12,
         cursor: loading ? 'default' : 'pointer', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600,
         background: saved ? 'rgba(34,197,94,0.18)' : 'var(--accent)',
         color: saved ? '#4ade80' : '#000',
@@ -1285,9 +1285,11 @@ function LogsPanel() {
 
   useEffect(() => {
     setLoading(true);
-    supabase.from('system_logs').select('*').order('timestamp', { ascending: false }).limit(200)
-      .then(({ data }) => setLogs((data as unknown as SystemLog[]) || []))
-      .catch(console.error).finally(() => setLoading(false));
+    Promise.resolve(
+      supabase.from('system_logs').select('*').order('timestamp', { ascending: false }).limit(200)
+    ).then(({ data }) => setLogs((data as unknown as SystemLog[]) || []))
+      .catch(console.error)
+      .finally(() => setLoading(false));
 
     const channel = supabase.channel('system_logs:realtime');
     channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_logs' }, (payload: { new: SystemLog }) => {
