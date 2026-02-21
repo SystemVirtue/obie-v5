@@ -282,9 +282,9 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
 // NOW PLAYING STAGE
 // ─────────────────────────────────────────────────────────────────────────────
 
-function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping }: {
+function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove }: {
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
-  onPlayPause: () => void; onSkip: () => void; isSkipping: boolean;
+  onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cm = (status as any)?.current_media as any;
@@ -348,6 +348,7 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{m?.artist || ''}</div>
                   </div>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                  <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
                 </div>
               );})}
           </div>
@@ -1482,6 +1483,7 @@ function App() {
         onPlayPause={handlePlayPause}
         onSkip={handleSkip}
         isSkipping={isSkipping}
+        onRemove={handleRemove}
       />
 
       {/* Body */}
