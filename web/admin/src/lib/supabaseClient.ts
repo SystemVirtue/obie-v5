@@ -232,8 +232,6 @@ export function subscribeToQueue(
   playerId: string,
   callback: (items: QueueItem[]) => void
 ): RealtimeSubscription<QueueItem> {
-  let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
-  
   const fetchQueue = () => {
     console.log('[subscribeToQueue] Fetching queue from database...');
     supabase
