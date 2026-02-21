@@ -1284,13 +1284,18 @@ function LogsPanel() {
   const [search, setSearch]   = useState('');
 
   useEffect(() => {
+    const loadLogs = async () => {
+      try {
+        const { data } = await supabase.from('system_logs').select('*').order('timestamp', { ascending: false }).limit(200);
+        setLogs((data as unknown as SystemLog[]) || []);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadLogs();
     setLoading(true);
-    Promise.resolve(
-      supabase.from('system_logs').select('*').order('timestamp', { ascending: false }).limit(200)
-    ).then(({ data }) => setLogs((data as unknown as SystemLog[]) || []))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-
     const channel = supabase.channel('system_logs:realtime');
     channel.on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'system_logs' }, (payload: { new: SystemLog }) => {
       setLogs(prev => [payload.new, ...prev].slice(0, 200));
