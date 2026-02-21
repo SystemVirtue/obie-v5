@@ -101,22 +101,18 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- Fix queue_next to always prioritize priority items, even when shuffle is enabled
+-- Fix queue_next to always prioritize priority items, then play normal items sequentially by position (shuffle only affects loading)
 CREATE OR REPLACE FUNCTION queue_next(
   p_player_id UUID
 )
 RETURNS TABLE(media_item_id UUID, title TEXT, url TEXT, duration INT) AS $$
 DECLARE
   v_next_queue_item RECORD;
-  v_shuffle BOOLEAN;
 BEGIN
   -- Acquire lock
   PERFORM pg_advisory_xact_lock(hashtext('queue_' || p_player_id::text));
 
-  -- Check shuffle setting
-  SELECT shuffle INTO v_shuffle FROM player_settings WHERE player_id = p_player_id;
-
-  -- Always check for priority items first (they take precedence over shuffle)
+  -- Always prioritize priority items first
   IF EXISTS (SELECT 1 FROM queue WHERE player_id = p_player_id AND type = 'priority' AND played_at IS NULL) THEN
     -- Priority items exist - pick the first one
     SELECT q.id, q.media_item_id, q.type INTO v_next_queue_item
@@ -126,17 +122,8 @@ BEGIN
       AND q.played_at IS NULL
     ORDER BY q.position ASC
     LIMIT 1;
-  ELSIF v_shuffle AND EXISTS (SELECT 1 FROM queue WHERE player_id = p_player_id AND type = 'normal' AND played_at IS NULL) THEN
-    -- No priority items, shuffle enabled - random from normal queue
-    SELECT q.id, q.media_item_id, q.type INTO v_next_queue_item
-    FROM queue q
-    WHERE q.player_id = p_player_id
-      AND q.type = 'normal'
-      AND q.played_at IS NULL
-    ORDER BY RANDOM()
-    LIMIT 1;
   ELSE
-    -- No priority items, shuffle disabled or no normal items - sequential from normal queue
+    -- No priority items - pick the first normal item by position
     SELECT q.id, q.media_item_id, q.type INTO v_next_queue_item
     FROM queue q
     WHERE q.player_id = p_player_id
