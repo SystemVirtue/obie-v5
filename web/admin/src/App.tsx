@@ -353,24 +353,7 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
           </div>
 
           {/* Priority requests */}
-          {priority.length > 0 && (
-            <div style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 4 }}>
-                <div style={{ width: 6, height: 6, borderRadius: '50%', background: '#60a5fa', animation: 'pulse 2s ease-in-out infinite' }} />
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#60a5fa', letterSpacing: '0.08em', textTransform: 'uppercase' }}>{priority.length} Kiosk Request{priority.length > 1 ? 's' : ''}</span>
-              </div>
-              {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-              {priority.slice(0, 2).map(item => { const m = (item as any).media_item as any; return (
-                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 7, borderRadius: 9, padding: '5px 9px', background: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.2)', width: 190 }}>
-                  {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 26, height: 26, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-                    <div style={{ fontSize: 10, color: '#60a5fa' }}>{item.requested_by || 'Kiosk'}</div>
-                  </div>
-                </div>
-              );})}
-            </div>
-          )}
+          {/* Moved to upNext for consistent order */}
         </div>
 
         {/* Controls */}
