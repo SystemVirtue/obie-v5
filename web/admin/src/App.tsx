@@ -1386,6 +1386,10 @@ function App() {
 
   // ── Queue handlers ────────────────────────────────────────────────────────
   const handleRemove = async (queueId: string) => {
+    if (!queueId) {
+      console.error('queueId is undefined');
+      return;
+    }
     try { await callQueueManager({ player_id: PLAYER_ID, action: 'remove', queue_id: queueId }); }
     catch (e) { console.error(e); }
   };
