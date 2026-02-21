@@ -876,7 +876,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   };
 
   const handleResetMasterPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_master' }); }
+    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
     catch (e) { console.error(e); }
   };
 
