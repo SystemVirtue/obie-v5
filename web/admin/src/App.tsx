@@ -875,11 +875,6 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     catch (e) { console.error(e); }
   };
 
-  const handleResetMasterPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
-    catch (e) { console.error(e); }
-  };
-
   if (!local) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner /></div>;
 
   const errBlock = error && (
