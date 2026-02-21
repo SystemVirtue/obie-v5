@@ -1415,16 +1415,29 @@ function App() {
     setIsShuffling(true);
     try {
       const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id);
-      const shuffled = [...normalQ].sort(() => Math.random() - 0.5);
-      const priority = queue.filter(i => i.type === 'priority');
-      const current  = queue.filter(i => i.media_item_id === status?.current_media_id);
-      setQueue([...current, ...priority, ...shuffled]); // optimistic
-
-      let ids = Array.from(new Set(shuffled.map(i => i.id)));
+      if (normalQ.length <= 1) {
+        console.log('[Shuffle] Not enough items to shuffle');
+        return;
+      }
+      
+      // Create shuffled order
+      const shuffledIds = [...normalQ]
+        .map(item => item.id)
+        .sort(() => Math.random() - 0.5);
+      
+      console.log('[Shuffle] Shuffling queue with', shuffledIds.length, 'items');
+      
+      // Reorder the queue
+      let ids = shuffledIds.slice();
       const maxAttempts = 5;
       for (let attempt = 0; attempt < maxAttempts; attempt++) {
         try {
-          await callQueueManager({ player_id: PLAYER_ID, action: 'reorder', queue_ids: ids, type: 'normal' });
+          await callQueueManager({
+            action: 'reorder',
+            player_id: PLAYER_ID,
+            queue_ids: ids,
+            type: 'normal'
+          });
           break;
         } catch (e: unknown) {
           const msg = String((e as Error)?.message || e);
@@ -1434,12 +1447,16 @@ function App() {
               .eq('player_id', PLAYER_ID).is('played_at', null)
               .order('type', { ascending: false }).order('position', { ascending: true });
             const latestNormal = (latest || []).filter((i: QueueItem) => i.type === 'normal' && i.media_item_id !== status?.current_media_id);
-            ids = Array.from(new Set([...latestNormal].sort(() => Math.random() - 0.5).map((i: QueueItem) => i.id)));
+            ids = [...latestNormal].sort(() => Math.random() - 0.5).map((i: QueueItem) => i.id);
             await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
-          } else if (attempt === maxAttempts - 1) { setQueue(original); }
+          } else if (attempt === maxAttempts - 1) {
+            console.error('[Shuffle] Failed to shuffle after', maxAttempts, 'attempts');
+          }
         }
       }
-    } finally { setIsShuffling(false); }
+    } finally {
+      setIsShuffling(false);
+    }
   };
 
   const handlePlayPause = async () => {
