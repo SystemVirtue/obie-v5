@@ -701,14 +701,37 @@ export interface AuthUser {
 }
 
 /**
- * Sign up with email and password
+ * Sign up with email and password.
+ * Supabase will send a confirmation email automatically.
+ * The on_auth_user_created trigger provisions a player instance on first sign-in.
  */
 export async function signUp(email: string, password: string) {
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-  });
+  const { data, error } = await supabase.auth.signUp({ email, password });
+  if (error) throw error;
+  return data;
+}
 
+/**
+ * Send a one-time-code (OTP / magic link) to the given email.
+ * Call verifyOtp() with the 6-digit code the user receives.
+ */
+export async function sendOtp(email: string) {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: { shouldCreateUser: true }, // auto-creates account if new
+  });
+  if (error) throw error;
+}
+
+/**
+ * Verify a 6-digit OTP sent via sendOtp().
+ */
+export async function verifyOtp(email: string, token: string) {
+  const { data, error } = await supabase.auth.verifyOtp({
+    email,
+    token,
+    type: 'email',
+  });
   if (error) throw error;
   return data;
 }
@@ -724,6 +747,25 @@ export async function signIn(email: string, password: string) {
 
   if (error) throw error;
   return data;
+}
+
+/**
+ * Resolve the current user's player_id via the get_my_player_id() RPC.
+ * Returns null if the user has no player yet (race between trigger and first request).
+ */
+export async function getUserPlayerId(): Promise<string | null> {
+  const { data, error } = await supabase.rpc('get_my_player_id' as any);
+  if (error) {
+    console.warn('[getUserPlayerId] RPC error, falling back to direct query:', error);
+    // Fallback: direct query (works if RLS grants read access)
+    const { data: rows } = await supabase
+      .from('players')
+      .select('id')
+      .limit(1)
+      .single();
+    return (rows as any)?.id ?? null;
+  }
+  return (data as string) ?? null;
 }
 
 /**
