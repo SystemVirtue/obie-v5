@@ -294,7 +294,7 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
   const isPlaying = status?.state === 'playing';
   const progress  = Math.min(100, (status?.progress ?? 0) * 100);
 
-  const upNext   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id).slice(0, 2);
+  const upNext   = queue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
   const priority = queue.filter(q => q.type === 'priority');
 
   return (
@@ -888,6 +888,11 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   };
   const handleResetPriorityPlayer = async () => {
     try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
+    catch (e) { console.error(e); }
+  };
+
+  const handleResetMasterPlayer = async () => {
+    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_master' }); }
     catch (e) { console.error(e); }
   };
 
