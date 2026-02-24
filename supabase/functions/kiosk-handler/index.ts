@@ -143,7 +143,8 @@ Deno.serve(async (req)=>{
             });
           }
 
-          const { videos } = await scraperResp.json();
+          const responseData = await scraperResp.json();
+          const { videos } = responseData.data || responseData;         
           if (!videos || videos.length === 0) {
             return new Response(JSON.stringify({
               error: 'No videos found at the provided URL'
