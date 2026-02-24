@@ -345,7 +345,8 @@ function QueueView() {
         .from('queue')
         .select('*')
         .eq('player_id', PLAYER_ID)
-        .order('ord', { ascending: true });
+        .order('type', { ascending: false })
+        .order('position', { ascending: true });
       if (!error && data) {
         setQueue(data);
       }
