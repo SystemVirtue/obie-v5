@@ -257,9 +257,12 @@ export function subscribeToQueue(
     'queue',
     { column: 'player_id', value: playerId },
     () => {
-      // Immediately refetch on queue changes to keep display in sync with playback
-      console.log('[subscribeToQueue] Change detected, refetching immediately...');
-      fetchQueue();
+      // Debounce refetch to allow database updates to complete
+      console.log('[subscribeToQueue] Change detected, scheduling refetch in 800ms...');
+      if (refetchTimeout) clearTimeout(refetchTimeout);
+      refetchTimeout = setTimeout(() => {
+        fetchQueue();
+      }, 800); // Increased to 800ms to ensure all position updates complete
     }
   );
 }
