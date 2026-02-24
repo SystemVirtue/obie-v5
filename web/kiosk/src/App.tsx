@@ -172,7 +172,8 @@ function App() {
           throw new Error(errText || `Search failed: ${resp.status}`);
         }
 
-        const { videos } = await resp.json();
+        const responseData = await resp.json();
+        const { videos } = responseData.data || responseData;        
         setSearchResults(videos || []);
         setShowSearchResults(true);
         setShowKeyboard(false);
