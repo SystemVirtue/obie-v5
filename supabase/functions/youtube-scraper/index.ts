@@ -236,29 +236,9 @@ function extractPlaylistId(url) {
   return null;
 }
 // Fetch single video metadata
-async function fetchVideo(videoId, apiKey) {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${apiKey}`;
-  const response = await fetch(url);
-  // Handle quota exceeded - mark key as failed and throw
-  if (response.status === 403) {
-    const errorData = await response.json();
-    if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
-      markKeyAsFailed(apiKey);
-      throw new Error('Quota exceeded - key marked as failed');
-    }
-  }
-  if (!response.ok) {
-    throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
-  }
-  const data = await response.json();
-  if (!data.items || data.items.length === 0) {
-    return null;
-  }
-  const item = data.items[0];
-  return parseVideoItem(item);
-}
-// Fetch search results
 async function fetchSearch(query, apiKey) {
+  // Preprocess query to replace | with OR for boolean search
+  query = query.replace(/\|/g, ' OR ');
   const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=10&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
