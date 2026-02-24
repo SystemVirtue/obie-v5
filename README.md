@@ -479,6 +479,36 @@ Built with ❤️ using:
 
 ---
 
+## 🎵 **Queue Management Implementation**
+
+**📋 Complete Guide**: See [QUEUE_MANAGEMENT.md](./QUEUE_MANAGEMENT.md) for detailed implementation documentation
+
+### Quick Reference
+
+| Component | Location | Critical Setting |
+|-----------|-----------|-----------------|
+| **Debounce** | `web/shared/supabase-client.ts` | `800ms` (prevents race conditions) |
+| **Current Item** | `web/admin/src/App.tsx` | `media_item_id` lookup (reliable) |
+| **Queue Logic** | `queue_next()` RPC | Priority first, then normal/shuffle |
+| **Locking** | All queue RPCs | `pg_advisory_xact_lock()` (atomic) |
+
+### ⚠️ **DO NOT CHANGE**
+
+1. **800ms debounce** - Critical for preventing race conditions
+2. **Media ID lookup** - Reliable currentQueueItem detection  
+3. **Priority queue logic** - Kiosk requests must play first
+4. **PostgreSQL locks** - Prevents data corruption
+5. **Server-first logic** - All business logic in database
+
+### 🎯 **Recent Fix (Feb 2026)**
+
+- **Issue**: Race condition caused `currentQueueItem` to become `undefined`
+- **Cause**: Removed 800ms debounce from `subscribeToQueue`
+- **Solution**: Restored debounce and reverted to original working logic
+- **Status**: ✅ **FIXED** - Queue management is stable and reliable
+
+---
+
 ## 📞 Support
 
 For issues, feature requests, or questions:
