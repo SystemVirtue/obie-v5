@@ -197,28 +197,66 @@ export function subscribeToPlayerStatus(
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
   // Fetch initial status with media_item join
+  console.log('[subscribeToPlayerStatus] 🎵 Fetching initial player status...');
   supabase
     .from('player_status')
     .select('*, current_media:media_items(*)')
     .eq('player_id', playerId)
     .single()
-    .then(({ data }) => {
-      if (data) callback(data as any);
+    .then(({ data, error }) => {
+      if (error) {
+        console.error('[subscribeToPlayerStatus] ❌ Initial status error:', error);
+        return;
+      }
+      
+      if (data) {
+        console.log('[subscribeToPlayerStatus] 📺 Initial status:', {
+          state: (data as any).state,
+          current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
+          title: (data as any).current_media?.title?.slice(0, 30) || 'none',
+          progress: (data as any).progress,
+          last_updated: (data as any).last_updated
+        });
+        callback(data as any);
+      }
     });
 
   return subscribeToTable<PlayerStatus>(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
+      console.log('[subscribeToPlayerStatus] 🔄 Status change detected:', {
+        eventType: payload.eventType,
+        old_state: payload.old?.state,
+        new_state: payload.new?.state,
+        old_media_id: payload.old?.current_media_id?.slice(0, 8) || 'none',
+        new_media_id: payload.new?.current_media_id?.slice(0, 8) || 'none'
+      });
+      
       if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
         // Fetch with media_item join
+        console.log('[subscribeToPlayerStatus] 🔄 Fetching updated status with media...');
         supabase
           .from('player_status')
           .select('*, current_media:media_items(*)')
           .eq('player_id', playerId)
           .single()
-          .then(({ data }) => {
-            if (data) callback(data as any);
+          .then(({ data, error }) => {
+            if (error) {
+              console.error('[subscribeToPlayerStatus] ❌ Update fetch error:', error);
+              return;
+            }
+            
+            if (data) {
+              console.log('[subscribeToPlayerStatus] 📺 Updated status:', {
+                state: (data as any).state,
+                current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
+                title: (data as any).current_media?.title?.slice(0, 30) || 'none',
+                progress: (data as any).progress,
+                last_updated: (data as any).last_updated
+              });
+              callback(data as any);
+            }
           });
       }
     }
@@ -235,7 +273,10 @@ export function subscribeToQueue(
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   
   const fetchQueue = () => {
-    console.log('[subscribeToQueue] Fetching queue from database...');
+    console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
+    const fetchTime = new Date().toISOString();
+    console.log('[subscribeToQueue] ⏰ Fetch timestamp:', fetchTime);
+    
     supabase
       .from('queue')
       .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
@@ -243,9 +284,27 @@ export function subscribeToQueue(
       .is('played_at', null)
       .order('type', { ascending: false })
       .order('position', { ascending: true })
-      .then(({ data }) => {
+      .then(({ data, error }) => {
+        if (error) {
+          console.error('[subscribeToQueue] ❌ Database error:', error);
+          return;
+        }
+        
+        console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
+        if (data && data.length > 0) {
+          console.log('[subscribeToQueue] 📋 Queue data:', (data as any[]).map(item => ({
+            id: item.id?.slice(0, 8) || 'unknown',
+            type: item.type || 'unknown',
+            position: item.position || -1,
+            media_id: item.media_item_id?.slice(0, 8) || 'unknown',
+            title: item.media_item?.title?.slice(0, 30) || 'unknown',
+            played_at: item.played_at || null
+          })));
+        } else {
+          console.log('[subscribeToQueue] 📋 Queue is empty');
+        }
+        
         if (data) {
-          console.log('[subscribeToQueue] Fetched', data.length, 'items');
           callback(data as QueueItem[]);
         }
       });

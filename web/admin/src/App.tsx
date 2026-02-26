@@ -294,7 +294,32 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
   const isPlaying = status?.state === 'playing';
   const progress  = Math.min(100, (status?.progress ?? 0) * 100);
 
-  const upNext   = queue.filter(q => q.media_item_id !== status?.current_media_id).slice(0, 3);
+  // 🐛 DEBUG: Track what's playing vs what's in queue
+  console.log('[NowPlayingStage] 🎵 Current playing status:', {
+    current_media_id: (status as any)?.current_media_id?.slice(0, 8) || 'none',
+    title: title,
+    state: status?.state,
+    queue_length: queue.length,
+    queue_items: queue.map(item => ({
+      id: item.id.slice(0, 8),
+      media_id: item.media_item_id?.slice(0, 8),
+      position: item.position,
+      type: item.type,
+      title: item.media_item?.title?.slice(0, 30)
+    }))
+  });
+
+  // Check if current media is actually in the queue
+  const currentQueueItem = queue.find((item) => item.media_item_id === (status as any)?.current_media_id);
+  console.log('[NowPlayingStage] 🎯 currentQueueItem match:', {
+    found: !!currentQueueItem,
+    media_id: currentQueueItem?.media_item_id?.slice(0, 8) || 'none',
+    position: currentQueueItem?.position,
+    type: currentQueueItem?.type,
+    title: currentQueueItem?.media_item?.title?.slice(0, 30) || 'none'
+  });
+
+  const upNext   = queue.filter(q => q.media_item_id !== (status as any)?.current_media_id).slice(0, 3);
   const priority = queue.filter(q => q.type === 'priority');
 
   return (
