@@ -1,52 +1,26 @@
 // YouTube Scraper Edge Function
 // Fetches metadata from YouTube videos and playlists using YouTube Data API v3
 import { corsHeaders } from '../_shared/cors.ts';
-// API Key rotation for better rate limit management
-const API_KEYS = [
-  {
-    key: "AIzaSyC12QKbzGaKZw9VD3-ulxU_mrd0htZBiI4",
-    name: "Key 1 (Primary)"
-  },
-  {
-    key: "AIzaSyDQ_Jx4Dwje2snQisj7hEFVK9lJJ0tptcc",
-    name: "Key 2"
-  },
-  {
-    key: "AIzaSyDy6_QI9SP5nOZRVoNa5xghSHtY3YWX5kU",
-    name: "Key 3"
-  },
-  {
-    key: "AIzaSyCPAY_ukeGnAGJdCvYk1bVVDxZjQRJqsdk",
-    name: "Key 4"
-  },
-  {
-    key: "AIzaSyD7iB_2dHUu9yS87WD4wMbkJQduibU5vco",
-    name: "Key 5"
-  },
-  {
-    key: "AIzaSyCgtXTfFuUiiBsNXH6z_k9-GiCqiS0Cgso",
-    name: "Key 6"
-  },
-  {
-    key: "AIzaSyCKHHGkaztp8tfs2BVxiny0InE_z-kGDtY",
-    name: "Key 7"
-  },
-  {
-    key: "AIzaSyBGcwaCm70o4ir0CKcNIJ0V_7TeyY2cwdA",
-    name: "Key 8"
-  },
-  {
-    key: "AIzaSyD6lYWv9Jww_r_RCpO-EKZEyrK4vNd9FeQ",
-    name: "Key 9"
-  }
+// API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets first,
+// falls back to the hardcoded values so the function still works without secrets set.
+const _FALLBACK_KEYS = [
+  "AIzaSyC12QKbzGaKZw9VD3-ulxU_mrd0htZBiI4",
+  "AIzaSyDQ_Jx4Dwje2snQisj7hEFVK9lJJ0tptcc",
+  "AIzaSyDy6_QI9SP5nOZRVoNa5xghSHtY3YWX5kU",
+  "AIzaSyCKHHGkaztp8tfs2BVxiny0InE_z-kGDtY",
+  "AIzaSyBGcwaCm70o4ir0CKcNIJ0V_7TeyY2cwdA",
+  "AIzaSyD6lYWv9Jww_r_RCpO-EKZEyrK4vNd9FeQ",
+  "AIzaSyD3kfo9uNdHluv_U4fRPRdQ-sUowK4HmXo",
+  "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
 ];
+const API_KEYS = Array.from({ length: 8 }, (_, i) => ({
+  key:  Deno.env.get(`YOUTUBE_API_KEY_${i + 1}`) || _FALLBACK_KEYS[i],
+  name: `Key ${i + 1}`,
+})).filter(k => k.key);
 let currentKeyIndex = 0;
 const failedKeys = new Set();
 function getNextApiKey() {
-  // Try environment variable first
-  const envKey = Deno.env.get('YOUTUBE_API_KEY');
-  if (envKey) return envKey;
-  // Find next valid key (not in failed list)
+  // Find next valid key (not in failed list) from the rotation pool
   const startIndex = currentKeyIndex;
   do {
     if (!failedKeys.has(currentKeyIndex)) {

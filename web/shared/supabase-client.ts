@@ -411,7 +411,7 @@ export function subscribeToSystemLogs(
  */
 export async function callQueueManager(params: {
   player_id: string;
-  action: 'add' | 'remove' | 'reorder' | 'next' | 'skip' | 'clear';
+  action: 'add' | 'remove' | 'reorder' | 'next' | 'skip' | 'clear' | 'shuffle';
   media_item_id?: string;
   queue_id?: string;
   queue_ids?: string[];
@@ -523,7 +523,7 @@ export async function callKioskHandler(params: {
  * Call playlist-manager Edge Function
  */
 export async function callPlaylistManager(params: {
-  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue';
+  action: 'create' | 'update' | 'delete' | 'add_item' | 'remove_item' | 'reorder' | 'scrape' | 'set_active' | 'clear_queue' | 'import_queue' | 'load_playlist' | 'remove_media_globally';
   player_id?: string;
   playlist_id?: string;
   name?: string;

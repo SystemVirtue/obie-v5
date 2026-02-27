@@ -164,46 +164,29 @@ Deno.serve(async (req)=>{
           const videoId = videoIdMatch ? videoIdMatch[1] : video.url.split('/').pop();
           const sourceId = `youtube:${videoId}`;
 
-          // Check if media item already exists
-          const { data: existingItem } = await supabase
-            .from('media_items')
-            .select('id')
-            .eq('source_id', sourceId)
-            .single();
+          // Create or update media item — canonical dedup via create_or_get_media_item RPC
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id:   sourceId,
+            p_source_type: 'youtube',
+            p_title:       video.title,
+            p_artist:      video.artist || null,
+            p_url:         video.url,
+            p_duration:    video.duration || null,
+            p_thumbnail:   video.thumbnail || null,
+            p_metadata:    {},
+          });
 
-          if (existingItem) {
-            mediaItemId = existingItem.id;
-          } else {
-            // Create new media item
-            const { data: newItem, error: insertError } = await supabase
-              .from('media_items')
-              .insert({
-                source_id: sourceId,
-                source_type: 'youtube',
-                title: video.title,
-                artist: video.artist,
-                url: video.url,
-                duration: video.duration,
-                thumbnail: video.thumbnail,
-              })
-              .select('id')
-              .single();
-
-            if (insertError || !newItem) {
-              console.error('Failed to create media item:', insertError);
-              return new Response(JSON.stringify({
-                error: 'Failed to create media item'
-              }), {
-                status: 500,
-                headers: {
-                  ...corsHeaders,
-                  'Content-Type': 'application/json'
-                }
-              });
-            }
-
-            mediaItemId = newItem.id;
+          if (mediaError || !resolvedId) {
+            console.error('Failed to create/get media item:', mediaError);
+            return new Response(JSON.stringify({
+              error: 'Failed to create media item'
+            }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
           }
+
+          mediaItemId = resolvedId;
         } catch (scrapeError) {
           console.error('Scraping error:', scrapeError);
           return new Response(JSON.stringify({

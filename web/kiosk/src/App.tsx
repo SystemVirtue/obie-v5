@@ -149,31 +149,14 @@ function App() {
       return () => clearTimeout(timer);
     }, [searchQuery]);
 
-    // Perform search using youtube-scraper Edge Function
+    // Perform search — routes through kiosk-handler for consistent single entry point
     const performSearch = async (query: string) => {
       try {
         setIsSearching(true);
         setSearchResults([]);
-
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-        const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-        const resp = await fetch(`${supabaseUrl}/functions/v1/youtube-scraper`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${supabaseAnonKey}`,
-          },
-          body: JSON.stringify({ query, type: 'search' }),
-        });
-
-        if (!resp.ok) {
-          const errText = await resp.text();
-          throw new Error(errText || `Search failed: ${resp.status}`);
-        }
-
-        const { videos } = await resp.json();
-        setSearchResults(videos || []);
+        const result = await callKioskHandler({ action: 'search', query }) as { videos?: any[] };
+        const videos = result?.videos || [];
+        setSearchResults(videos);
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {
@@ -320,9 +303,16 @@ function App() {
 
           // For now, assume any data means a coin was inserted
           // In a real implementation, you'd parse the specific protocol
-          if (data.trim()) {
-            // Add credit when coin is detected
-            await updateAllCredits(PLAYER_ID, 'add', 1);
+          if (data.trim() && session) {
+            // Route credit through kiosk-handler — consistent with handleCoinInsert()
+            const result = await callKioskHandler({
+              session_id: session.session_id,
+              action: 'credit',
+              amount: 1,
+            }) as { credits?: number };
+            if (result?.credits !== undefined) {
+              setSession(prev => prev ? { ...prev, credits: result.credits! } : prev);
+            }
             console.log('Credit added for coin insertion');
           }
         }

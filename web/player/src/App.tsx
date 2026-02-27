@@ -8,6 +8,7 @@ import {
   subscribeToPlayerSettings,
   callPlayerControl,
   callQueueManager,
+  callPlaylistManager,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
@@ -349,13 +350,13 @@ function App() {
             }
           }
           
-          // Delete from playlist_items if it exists (disabled for slave players)
+          // Remove from all playlists via server function — no direct DB access from client
           if (!isSlavePlayer) {
-            await supabase
-              .from('playlist_items')
-              .delete()
-              .eq('media_item_id', unavailableMediaId);
-            
+            await callPlaylistManager({
+              action: 'remove_media_globally',
+              player_id: PLAYER_ID,
+              media_item_id: unavailableMediaId,
+            });
             console.log('[Player] Removed unavailable video from queue and playlists');
           }
         } catch (error) {
@@ -447,53 +448,11 @@ function App() {
     initPlayer();
   }, []);
 
-  // Shuffle on load logic - runs after playlist initialization and when settings are available
-  useEffect(() => {
-    const shuffleOnLoad = async () => {
-      if (!settings?.shuffle || !hasInitialized.current) return;
-      
-      // Only shuffle if this is the priority player (to avoid conflicts)
-      if (isSlavePlayer) return;
-      
-      try {
-        console.log('[Player] Shuffle on load enabled, shuffling queue...');
-        
-        // Get current queue to shuffle
-        const { data: queueItems } = await supabase
-          .from('queue')
-          .select('id')
-          .eq('player_id', PLAYER_ID)
-          .eq('type', 'normal')
-          .is('played_at', null)
-          .order('position', { ascending: true });
-        
-        if (!queueItems || queueItems.length <= 1) {
-          console.log('[Player] Not enough items to shuffle');
-          return;
-        }
-        
-        // Create shuffled order
-        const shuffledIds = [...queueItems]
-          .map((item: any) => item.id)
-          .sort(() => Math.random() - 0.5);
-        
-        console.log('[Player] Shuffling queue with', shuffledIds.length, 'items');
-        
-        // Reorder the queue
-        await callQueueManager({
-          action: 'reorder',
-          player_id: PLAYER_ID,
-          queue_ids: shuffledIds,
-        });
-        
-        console.log('[Player] Queue shuffled successfully on load');
-      } catch (error) {
-        console.error('[Player] Failed to shuffle on load:', error);
-      }
-    };
-    
-    shuffleOnLoad();
-  }, [settings?.shuffle, isSlavePlayer]); // Only run when shuffle setting changes or slave status changes
+  // NOTE: Shuffle-on-load is handled entirely by the load_playlist RPC (migration 0028).
+  // When a playlist is loaded, load_playlist reads player_settings.shuffle and, if enabled,
+  // calls queue_shuffle which pins position 0 (Now Playing) and randomises positions 1+.
+  // A client-side effect here would fire on settings-change rather than on playlist-load,
+  // causing unexpected re-shuffles and potentially moving the currently playing item.
 
   // Subscribe to player_status updates from Supabase
   useEffect(() => {

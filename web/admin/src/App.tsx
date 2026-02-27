@@ -8,6 +8,7 @@ import {
   subscribeToQueue,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToTable,
   callQueueManager,
   callPlayerControl,
   callPlaylistManager,
@@ -286,13 +287,20 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
 }) {
+  const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cm = (status as any)?.current_media as any;
   const thumb  = cm?.thumbnail || '';
   const title  = cm?.title     || 'Nothing playing';
   const artist = cm?.artist    || '—';
   const isPlaying = status?.state === 'playing';
+  const isPaused  = status?.state === 'paused';
   const progress  = Math.min(100, (status?.progress ?? 0) * 100);
+  const stateLabel = isSkipping ? 'SKIPPING' : isPlaying ? 'Now Playing' : isPaused ? 'Paused' : (status?.state || 'Idle');
+  const handlePlayPauseClick = () => {
+    if (isSkipping) return;
+    if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
+  };
 
   // 🐛 DEBUG: Track what's playing vs what's in queue
   console.log('[NowPlayingStage] 🎵 Current playing status:', {
@@ -351,11 +359,22 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
 
           {/* Info */}
           <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.12em', color: 'var(--accent)', textTransform: 'uppercase', marginBottom: 4 }}>
-              ● {isPlaying ? 'Now Playing' : status?.state === 'paused' ? 'Paused' : (status?.state || 'Idle')}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24',
+                boxShadow: `0 0 8px ${isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24'}`,
+                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none' }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
+                color: isSkipping ? '#f59e0b' : isPlaying ? '#4ade80' : 'rgba(255,255,255,0.4)',
+                textTransform: 'uppercase', fontWeight: 600 }}>
+                {stateLabel}
+              </span>
             </div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-0.025em', lineHeight: 1.15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</h2>
-            <p style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: 'rgba(255,255,255,0.5)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{artist}</p>
+            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
+              letterSpacing: '-0.03em', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
+            <p style={{ fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{artist}</p>
           </div>
 
           {/* Up Next */}
@@ -394,9 +413,17 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(cm?.duration)}</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <button onClick={onPlayPause} style={{ width: 40, height: 40, borderRadius: '50%', border: 'none', cursor: 'pointer',
-              background: 'var(--accent)', color: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0,
-              boxShadow: '0 4px 18px var(--accent-glow)' }}>
+            {/* Play/Pause — RED+yellow when playing, GREEN+white when paused, grey when skipping */}
+            <button onClick={handlePlayPauseClick} disabled={isSkipping}
+              title={isSkipping ? 'Skipping…' : isPlaying ? 'Pause playback' : 'Resume playback'}
+              style={{ width: 44, height: 44, borderRadius: '50%', border: 'none',
+                cursor: isSkipping ? 'default' : 'pointer', flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+                background: isSkipping ? 'rgba(255,255,255,0.08)' : isPlaying ? '#dc2626' : '#16a34a',
+                color: isSkipping ? 'rgba(255,255,255,0.25)' : isPlaying ? '#facc15' : '#fff',
+                boxShadow: isSkipping ? 'none' : isPlaying ? '0 4px 18px rgba(220,38,38,0.45)' : '0 4px 18px rgba(22,163,74,0.45)',
+                transition: 'background 0.2s, box-shadow 0.2s, color 0.2s',
+                opacity: isSkipping ? 0.45 : 1 }}>
               {isPlaying ? '⏸' : '▶'}
             </button>
             <button onClick={onSkip} disabled={isSkipping} style={{ width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
@@ -409,10 +436,11 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 22 }}>{settings?.volume ?? 75}</span>
             <div style={{ flex: 1 }} />
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
-              background: isPlaying ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.07)',
-              border: `1px solid ${isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}` }}>
-              <div style={{ width: 5, height: 5, borderRadius: '50%', background: isPlaying ? '#22c55e' : '#fbbf24' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: isPlaying ? '#4ade80' : '#fbbf24', letterSpacing: '0.06em', textTransform: 'uppercase' }}>{status?.state || 'offline'}</span>
+              background: isSkipping ? 'rgba(245,158,11,0.12)' : isPlaying ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.07)',
+              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}` }}>
+              <div style={{ width: 5, height: 5, borderRadius: '50%', background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24' }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24' }}>{stateLabel}</span>
             </div>
             {priority.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}>
@@ -422,6 +450,35 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
           </div>
         </div>
       </div>
+
+      {/* Pause confirmation modal */}
+      {showPauseConfirm && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setShowPauseConfirm(false)}>
+          <div style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, minWidth: 280,
+            boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>Pause Playback?</div>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button onClick={() => setShowPauseConfirm(false)}
+                style={{ padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
+                  background: 'transparent', color: 'rgba(255,255,255,0.55)', cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500 }}>
+                Cancel
+              </button>
+              <button onClick={() => { setShowPauseConfirm(false); onPlayPause(); }}
+                style={{ padding: '9px 24px', borderRadius: 10, border: 'none',
+                  background: '#dc2626', color: '#fff', cursor: 'pointer',
+                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700,
+                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)' }}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -431,17 +488,13 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ViewId =
-  | 'queue-now' | 'queue-next' | 'queue-priority'
+  | 'queue'
   | 'playlists-all' | 'playlists-import'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
   | 'logs';
 
 const NAV = [
-  { id: 'queue',     icon: '🎵', label: 'Queue',     children: [
-    { id: 'queue-now'      as ViewId, label: 'Now Playing' },
-    { id: 'queue-next'     as ViewId, label: 'Up Next' },
-    { id: 'queue-priority' as ViewId, label: 'Priority Requests' },
-  ]},
+  { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
   { id: 'playlists', icon: '📋', label: 'Playlists', children: [
     { id: 'playlists-all'    as ViewId, label: 'All Playlists' },
     { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
@@ -465,14 +518,14 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
   const priorityCount = queue.filter(q => q.type === 'priority').length;
 
   const handleGroup = (group: typeof NAV[0]) => {
-    if (group.children.length === 0) { setOpenGroup(''); setView('logs'); return; }
+    if (group.children.length === 0) { setOpenGroup(''); setView(group.id as ViewId); return; }
     const isOpen = openGroup === group.id;
     setOpenGroup(isOpen ? '' : group.id);
     if (!isOpen) setView(group.children[0].id);
   };
 
   const isGroupActive = (group: typeof NAV[0]) =>
-    group.children.some(c => c.id === view) || (group.children.length === 0 && view === 'logs');
+    group.children.some(c => c.id === view) || (group.children.length === 0 && view === group.id as ViewId);
 
   return (
     <aside style={{ display: 'flex', flexDirection: 'column', flexShrink: 0,
@@ -521,9 +574,6 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
                       color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)' }}>
                       <div style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, background: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.15)' }} />
                       <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, flex: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>{child.label}</span>
-                      {child.id === 'queue-priority' && priorityCount > 0 && (
-                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '1px 5px', borderRadius: 99, background: 'rgba(59,130,246,0.2)', color: '#60a5fa' }}>{priorityCount}</span>
-                      )}
                     </button>
                   ))}
                 </div>
@@ -571,87 +621,76 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   );
 }
 
-function QueuePanel({ view, queue, status, onRemove, onReorder, onShuffle, isShuffling }: {
-  view: ViewId; queue: QueueItem[]; status: PlayerStatus | null;
+function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling }: {
+  queue: QueueItem[]; status: PlayerStatus | null;
   onRemove: (id: string) => void; onReorder: (e: DragEndEvent) => void;
   onShuffle: () => void; isShuffling: boolean;
 }) {
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cm      = (status as any)?.current_media as any;
   const normalQ   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
   const priorityQ = queue.filter(q => q.type === 'priority' && q.media_item_id !== status?.current_media_id);
+  const totalCount = normalQ.length + priorityQ.length;
 
-  if (view === 'queue-now') {
-    return (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <PanelHeader title="Now Playing" subtitle={status?.state || 'idle'} />
-        <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          {cm ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, borderRadius: 14, padding: 16, background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', marginBottom: 20 }}>
-              {cm.thumbnail && <img src={cm.thumbnail} alt="" style={{ width: 60, height: 60, borderRadius: 10, objectFit: 'cover', flexShrink: 0 }} />}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cm.title}</div>
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)', marginTop: 2 }}>{cm.artist}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 6 }}>
-                  <div style={{ width: 5, height: 5, borderRadius: '50%', background: '#22c55e', animation: 'pulse 2s ease-in-out infinite' }} />
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: '#4ade80' }}>{(status?.state || '').toUpperCase()} · Queue #{status?.now_playing_index}</span>
-                </div>
-              </div>
-            </div>
-          ) : <div style={{ color: 'rgba(255,255,255,0.3)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>Nothing currently playing.</div>}
-          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-          {normalQ.slice(0, 3).map((item, i) => { const m = (item as any).media_item as any; return (
-            <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 10, padding: '8px 10px', marginBottom: 3, background: 'rgba(255,255,255,0.025)' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 16 }}>{i + 1}</span>
-              {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 30, height: 30, borderRadius: 6, objectFit: 'cover' }} />}
-              <div style={{ flex: 1, minWidth: 0, fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)' }}>{fmtDuration(m?.duration)}</span>
-            </div>
-          );})}
-        </div>
-      </div>
-    );
-  }
-
-  if (view === 'queue-priority') {
-    return (
-      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <PanelHeader title="Priority Requests" subtitle={`${priorityQ.length} pending`} />
-        <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-          {priorityQ.length === 0
-            ? <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 40 }}>No priority requests</div>
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            : priorityQ.map(item => { const m = (item as any).media_item as any; return (
-              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
-                {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover' }} />}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-                  <div style={{ fontSize: 11, color: '#60a5fa' }}>{item.requested_by || 'Kiosk'}</div>
-                </div>
-                <button onClick={() => onRemove(item.id)} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12 }}>✕</button>
-              </div>
-            );})}
-        </div>
-      </div>
-    );
-  }
-
-  // queue-next (DnD)
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <PanelHeader title="Up Next" subtitle={`${normalQ.length} songs in queue`}
+      <PanelHeader title="Queue" subtitle={`${totalCount} song${totalCount !== 1 ? 's' : ''}`}
         actions={<Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>{isShuffling ? <><Spinner size={12} /> Shuffling…</> : '🔀 Shuffle'}</Btn>}
       />
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
-        {normalQ.length === 0
-          ? <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 40 }}>Queue is empty</div>
-          : <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px' }}>
+
+        {/* ── Priority Requests ─────────────────────────────────── */}
+        <div style={{ marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.12em', color: '#60a5fa', textTransform: 'uppercase' }}>Priority Requests</span>
+            {priorityQ.length > 0 && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'rgba(59,130,246,0.2)', color: '#60a5fa' }}>{priorityQ.length}</span>
+            )}
+          </div>
+
+          {priorityQ.length === 0 ? (
+            <div style={{ borderRadius: 10, padding: '14px 16px', background: 'rgba(59,130,246,0.04)', border: '1px dashed rgba(59,130,246,0.15)', color: 'rgba(255,255,255,0.22)', fontFamily: 'var(--font-mono)', fontSize: 11, textAlign: 'center' }}>
+              Empty
+            </div>
+          ) : (
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            priorityQ.map(item => { const m = (item as any).media_item as any; return (
+              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
+                  <div style={{ fontSize: 11, color: '#60a5fa', marginTop: 2 }}>{item.requested_by || 'Kiosk'}</div>
+                </div>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                <button onClick={() => onRemove(item.id)} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12, flexShrink: 0 }}>✕</button>
+              </div>
+            );})
+          )}
+        </div>
+
+        {/* ── Divider ───────────────────────────────────────────── */}
+        <div style={{ height: 1, background: 'rgba(255,255,255,0.06)', marginBottom: 20 }} />
+
+        {/* ── Up Next ───────────────────────────────────────────── */}
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.12em', color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase' }}>Up Next</span>
+            {normalQ.length > 0 && (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '1px 6px', borderRadius: 99, background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.4)' }}>{normalQ.length}</span>
+            )}
+          </div>
+
+          {normalQ.length === 0 ? (
+            <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 20 }}>Queue is empty</div>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onReorder}>
               <SortableContext items={normalQ.map(i => i.id)} strategy={verticalListSortingStrategy}>
                 {normalQ.map(item => <SortableQueueItem key={item.id} item={item} onRemove={onRemove} />)}
               </SortableContext>
             </DndContext>
-        }
+          )}
+        </div>
+
       </div>
     </div>
   );
@@ -685,9 +724,9 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   const handleLoad = async (e: React.MouseEvent, playlist: Playlist) => {
     e.stopPropagation(); setLoadingId(playlist.id);
     try {
-      await callPlaylistManager({ action: 'set_active',   player_id: PLAYER_ID, playlist_id: playlist.id, current_index: -1 });
-      await callPlaylistManager({ action: 'clear_queue',  player_id: PLAYER_ID });
-      await callPlaylistManager({ action: 'import_queue', player_id: PLAYER_ID, playlist_id: playlist.id });
+      // Single atomic call: clears normal queue, loads playlist, sets active_playlist_id,
+      // updates player_status — all under pg_advisory_xact_lock in the load_playlist RPC.
+      await callPlaylistManager({ action: 'load_playlist', player_id: PLAYER_ID, playlist_id: playlist.id });
       setMsg({ text: `✓ Loaded "${playlist.name}" into queue`, ok: true });
       await loadPlaylists();
     } catch (e) { console.error(e); setMsg({ text: '❌ Failed to load playlist', ok: false }); }
@@ -856,6 +895,12 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   useEffect(() => {
     setCreditsLoading(true);
     getTotalCredits(PLAYER_ID).then(setCredits).catch(console.error).finally(() => setCreditsLoading(false));
+
+    const sub = subscribeToTable('kiosk_sessions', { column: 'player_id', value: PLAYER_ID }, async () => {
+      const total = await getTotalCredits(PLAYER_ID).catch(() => null);
+      if (total !== null) setCredits(total);
+    });
+    return () => sub.unsubscribe();
   }, []);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -916,7 +961,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   );
 
   if (view === 'settings-playback') return wrap('Playback Settings', 'Queue and player behaviour', <>
-    <SettingsRow label="Shuffle on Load"  desc="Randomise queue when a playlist loads"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
+    <SettingsRow label="Shuffle Playlist when loaded"  desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
     <SettingsRow label="Loop Playlist"    desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop}         onChange={() => handleToggle('loop')} /></SettingsRow>
     {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
     <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
@@ -1156,6 +1201,60 @@ function ScriptsPanel() {
     log({ ts: now(), text: `✓ Scraped ${(data as { count?: number })?.count ?? '?'} items.`, level: 'ok' });
   };
 
+  // deduplicate-all-playlists: remove items where the same media_item_id
+  // appears more than once within the same playlist (keeps lowest position).
+  const runDeduplicateAllPlaylists = async (_: string, log: (e: ScriptLog) => void) => {
+    log({ ts: now(), text: 'Fetching playlists…', level: 'info' });
+    const { data: playlists, error: plErr } = await supabase
+      .from('playlists' as 'playlists')
+      .select('id,name')
+      .eq('player_id' as 'id', PLAYER_ID);
+    if (plErr) throw plErr;
+    if (!playlists?.length) { log({ ts: now(), text: 'No playlists found.', level: 'err' }); return; }
+
+    log({ ts: now(), text: `Checking ${playlists.length} playlist(s)…`, level: 'info' });
+    let totalRemoved = 0;
+
+    for (const playlist of (playlists as { id: string; name: string }[])) {
+      const { data: items, error: itemErr } = await supabase
+        .from('playlist_items' as 'playlist_items')
+        .select('id,media_item_id,position')
+        .eq('playlist_id' as 'id', playlist.id)
+        .order('position' as 'id', { ascending: true });
+      if (itemErr) { log({ ts: now(), text: `  ✗ ${playlist.name}: ${itemErr.message}`, level: 'err' }); continue; }
+
+      const rows = (items || []) as { id: string; media_item_id: string; position: number }[];
+      const seen = new Set<string>();
+      const toDelete: string[] = [];
+      for (const row of rows) {
+        if (seen.has(row.media_item_id)) toDelete.push(row.id);
+        else seen.add(row.media_item_id);
+      }
+
+      if (toDelete.length === 0) {
+        log({ ts: now(), text: `  ✓ ${playlist.name}: no duplicates`, level: 'ok' });
+        continue;
+      }
+
+      const { error: delErr } = await supabase
+        .from('playlist_items' as 'playlist_items')
+        .delete()
+        .in('id' as 'id', toDelete);
+      if (delErr) { log({ ts: now(), text: `  ✗ ${playlist.name}: ${delErr.message}`, level: 'err' }); continue; }
+
+      // Re-sequence positions on the survivors to close the gaps.
+      const survivors = rows.filter(r => !toDelete.includes(r.id));
+      for (let i = 0; i < survivors.length; i++) {
+        await supabase.from('playlist_items' as 'playlist_items').update({ position: i } as never).eq('id' as 'id', survivors[i].id);
+      }
+
+      log({ ts: now(), text: `  ✓ ${playlist.name}: removed ${toDelete.length} duplicate${toDelete.length === 1 ? '' : 's'}`, level: 'ok' });
+      totalRemoved += toDelete.length;
+    }
+
+    log({ ts: now(), text: `Done. ${totalRemoved} total duplicate${totalRemoved === 1 ? '' : 's'} removed across all playlists.`, level: totalRemoved > 0 ? 'ok' : 'info' });
+  };
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Functions & Scripts" subtitle="Invoke server-side operations via Supabase Edge Functions" />
@@ -1172,6 +1271,10 @@ function ScriptsPanel() {
         <ScriptCard icon="🔄" name="retry-failed-playlists" category="Playlists"
           desc="Re-scrape predefined playlists already in the database — useful when an import partially failed."
           onRun={runRetryFailed}
+        />
+        <ScriptCard icon="🧹" name="deduplicate-all-playlists" category="Playlists"
+          desc="Remove duplicate tracks within each playlist (same video appearing more than once). Keeps the first occurrence (lowest position) and re-sequences positions."
+          onRun={runDeduplicateAllPlaylists}
         />
         <ScriptCard icon="🔍" name="youtube-scraper" category="YouTube"
           desc="Directly invoke the youtube-scraper Edge Function with any YouTube playlist URL."
@@ -1381,12 +1484,14 @@ function LogsPanel() {
 function App() {
   const [user, setUser]         = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [view, setView]         = useState<ViewId>('queue-next');
+  const [view, setView]         = useState<ViewId>('queue');
   const [queue, setQueue]       = useState<QueueItem[]>([]);
   const [status, setStatus]     = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
   const [isSkipping,  setIsSkipping]  = useState(false);
+  const isSkippingRef = useRef(false);
+  useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
 
   const prefs = usePrefs();
 
@@ -1397,17 +1502,17 @@ function App() {
     return () => sub.unsubscribe();
   }, []);
 
-  // Realtime subscriptions
+  // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
     if (!user) return;
     const q  = subscribeToQueue(PLAYER_ID, setQueue);
     const s  = subscribeToPlayerStatus(PLAYER_ID, (ns) => {
       setStatus(ns);
-      if (isSkipping && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
+      if (isSkippingRef.current && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
     });
     const ps = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => { q.unsubscribe(); s.unsubscribe(); ps.unsubscribe(); };
-  }, [user, isSkipping]);
+  }, [user]);
 
   // ── Queue handlers ────────────────────────────────────────────────────────
   const handleRemove = async (queueId: string) => {
@@ -1434,49 +1539,15 @@ function App() {
   const handleShuffle = async () => {
     setIsShuffling(true);
     try {
+      // Guard: don't bother calling the server if there's nothing to shuffle.
+      // The server-side queue_shuffle RPC handles everything atomically under
+      // pg_advisory_xact_lock, eliminating the 23505 duplicate-key race that
+      // necessitated the previous client-side retry loop.
       const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
-      if (normalQ.length <= 1) {
-        console.log('[Shuffle] Not enough items to shuffle');
-        return;
-      }
-      
-      // Create shuffled order
-      const shuffledIds = [...normalQ]
-        .map(item => item.id)
-        .sort(() => Math.random() - 0.5);
-      
-      console.log('[Shuffle] Shuffling queue with', shuffledIds.length, 'items');
-      
-      // Reorder the queue
-      let ids = shuffledIds.slice();
-      const maxAttempts = 5;
-      for (let attempt = 0; attempt < maxAttempts; attempt++) {
-        try {
-          await callQueueManager({
-            action: 'reorder',
-            player_id: PLAYER_ID,
-            queue_ids: ids,
-            type: 'normal'
-          });
-          break;
-        } catch (e: unknown) {
-          const msg = String((e as Error)?.message || e);
-          if (msg.includes('23505') && attempt < maxAttempts - 1) {
-            // Duplicate key — refetch and retry
-            const { data: latest } = await supabase.from('queue' as 'queue').select('*')
-              .eq('player_id', PLAYER_ID).is('played_at', null)
-              .order('type', { ascending: false }).order('position', { ascending: true });
-            const latestNormal = (latest || []).filter((i: QueueItem) => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
-            ids = [...latestNormal].sort(() => Math.random() - 0.5).map((i: QueueItem) => i.id);
-            await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
-          } else if (attempt === maxAttempts - 1) {
-            console.error('[Shuffle] Failed to shuffle after', maxAttempts, 'attempts');
-          }
-        }
-      }
-    } finally {
-      setIsShuffling(false);
-    }
+      if (normalQ.length <= 1) return;
+      await callQueueManager({ player_id: PLAYER_ID, action: 'shuffle', type: 'normal' });
+    } catch (e) { console.error('[Shuffle] Failed:', e); }
+    finally { setIsShuffling(false); }
   };
 
   const handlePlayPause = async () => {
@@ -1528,7 +1599,7 @@ function App() {
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
           {isQueueView && (
-            <QueuePanel view={view} queue={queue} status={status}
+            <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
               onShuffle={handleShuffle} isShuffling={isShuffling} />
           )}
