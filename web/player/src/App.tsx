@@ -2,6 +2,7 @@
 // Uses YouTube IFrame Player API for reliable event handling
 
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { io } from 'socket.io-client';
 import {
   supabase,
   subscribeToPlayerStatus,
@@ -75,8 +76,8 @@ function App() {
   const [ytmNowPlaying, setYtmNowPlaying] = useState<{ title: string; artist: string; thumbnail: string } | null>(null);
   const [ytmAuthStep, setYtmAuthStep] = useState<'idle' | 'requesting' | 'waiting' | 'authorized'>('idle');
   const [ytmAuthCode, setYtmAuthCode] = useState<string | null>(null);
-  const ytmWsRef = useRef<WebSocket | null>(null);
-  const ytmPollRef = useRef<number | null>(null);
+  const [ytmToken, setYtmToken] = useState<string | null>(() => localStorage.getItem('ytm_auth_token'));
+  const ytmSocketRef = useRef<any>(null);
   const ytmCurrentVideoIdRef = useRef<string | null>(null);
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
@@ -683,8 +684,8 @@ function App() {
           if (authData.token) {
             clearInterval(poll);
             saveYtmToken(authData.token);
+            setYtmToken(authData.token); // triggers Socket.IO connection effect
             setYtmAuthStep('authorized');
-            setYtmConnected(true);
           }
         } catch { /* still waiting */ }
       }, 2000);
@@ -722,9 +723,8 @@ function App() {
   // Tear down YTM connections when leaving ytm_desktop mode
   useEffect(() => {
     if (playerMode !== 'ytm_desktop') {
-      ytmWsRef.current?.close();
-      ytmWsRef.current = null;
-      if (ytmPollRef.current) { clearInterval(ytmPollRef.current); ytmPollRef.current = null; }
+      ytmSocketRef.current?.disconnect();
+      ytmSocketRef.current = null;
       setYtmNowPlaying(null);
       setYtmConnected(false);
       setYtmError(null);
@@ -732,47 +732,63 @@ function App() {
     }
   }, [playerMode]);
 
-  // Poll YTM Desktop /state every 5 s in ytm_desktop mode for track info and end detection
+  // Socket.IO realtime connection: replaces polling — state-update events fire instantly on track changes
   useEffect(() => {
     if (playerMode !== 'ytm_desktop') return;
-    const poll = window.setInterval(async () => {
-      if (!getYtmToken()) return;
-      try {
-        const res = await ytmFetch('/api/v1/state');
-        if (res.status === 429) return; // rate-limited — skip this tick, stay connected
-        if (!res.ok) { setYtmConnected(false); return; }
-        const data = await res.json();
-        setYtmConnected(true);
-        setYtmError(null);
-        const video = data.video;
-        const player = data.player;
-        if (video) {
-          const thumb = video.thumbnails?.[0]?.url || '';
-          setYtmNowPlaying({ title: video.title || '', artist: video.author || '', thumbnail: thumb });
-        }
-        // End detection: videoProgress near 1 for the video Obie loaded (trackState 0 = ended)
-        if (player && ytmCurrentVideoIdRef.current && video?.id === ytmCurrentVideoIdRef.current) {
-          const pct: number = typeof player.videoProgress === 'number' ? player.videoProgress : 0;
-          const ended = pct >= 0.99 || (player.trackState === 0 && pct > 0.95);
-          if (ended) {
-            console.log('[YTM] Song ended (poll) — triggering queue_next');
-            ytmCurrentVideoIdRef.current = null; // prevent double-trigger
-            reportEndedAndNext();
-          }
-        }
-      } catch {
-        setYtmConnected(false);
-      }
-    }, 5000);
-    ytmPollRef.current = poll;
-    return () => {
-      clearInterval(poll);
-      ytmPollRef.current = null;
-    };
-  }, [playerMode, reportEndedAndNext]);
+    if (!ytmToken) return;
 
-  // YTM Desktop uses Socket.IO for real-time events (requires socket.io-client).
-  // End detection is handled by the 2s polling effect above via videoProgress >= 0.99.
+    const socket = io(YTM_BASE, {
+      auth: { token: ytmToken },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+    });
+    ytmSocketRef.current = socket;
+
+    socket.on('connect', () => {
+      console.log('[YTM] Socket.IO connected');
+      setYtmConnected(true);
+      setYtmError(null);
+    });
+
+    socket.on('disconnect', () => {
+      console.log('[YTM] Socket.IO disconnected');
+      setYtmConnected(false);
+    });
+
+    socket.on('connect_error', (err: Error) => {
+      console.error('[YTM] Socket.IO connect error:', err.message);
+      setYtmConnected(false);
+      setYtmError('Connection error — is YTM Desktop companion server running?');
+    });
+
+    socket.on('state-update', (data: any) => {
+      setYtmConnected(true);
+      setYtmError(null);
+      const video = data.video;
+      const player = data.player;
+      if (video) {
+        const thumb = video.thumbnails?.[0]?.url || '';
+        setYtmNowPlaying({ title: video.title || '', artist: video.author || '', thumbnail: thumb });
+      }
+      // End detection: videoProgress near 1 for the video Obie loaded (trackState 0 = ended)
+      if (player && ytmCurrentVideoIdRef.current && video?.id === ytmCurrentVideoIdRef.current) {
+        const pct: number = typeof player.videoProgress === 'number' ? player.videoProgress : 0;
+        const ended = pct >= 0.99 || (player.trackState === 0 && pct > 0.95);
+        if (ended) {
+          console.log('[YTM] Song ended (state-update event) — triggering queue_next');
+          ytmCurrentVideoIdRef.current = null; // prevent double-trigger
+          reportEndedAndNext();
+        }
+      }
+    });
+
+    return () => {
+      socket.disconnect();
+      ytmSocketRef.current = null;
+    };
+  }, [playerMode, ytmToken, reportEndedAndNext]);
 
   // Fetch lyrics for a video/title using lrclib API (best-effort)
   async function fetchLyricsForMedia(title: string | undefined, artist?: string) {
