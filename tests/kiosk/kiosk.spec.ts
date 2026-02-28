@@ -1,3 +1,36 @@
+test('kiosk-07: search and request adds to priority queue', async ({ page, consoleLogs }) => {
+  // Step 1: Open kiosk and wait for session
+  await page.goto(BASE);
+  await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(2000);
+
+  // Step 2: Find and use the search input
+  const searchInput = page.locator('input[type="text"], input[placeholder*="search" i], input[placeholder*="song" i]').first();
+  const hasInput = await searchInput.isVisible().catch(() => false);
+  expect(hasInput).toBe(true);
+  await searchInput.fill('FOO');
+  await page.keyboard.press('Enter');
+  await page.waitForTimeout(3000);
+
+  // Step 3: Wait for search results and select the first result
+  const firstResult = page.locator('[data-testid="video-result-card"], .video-result-card').first();
+  await expect(firstResult).toBeVisible({ timeout: 10000 });
+  await firstResult.click();
+
+  // Step 4: Confirm the request (look for a confirm button/dialog)
+  const confirmBtn = page.getByRole('button', { name: /confirm|add|request/i }).first();
+  await expect(confirmBtn).toBeVisible({ timeout: 5000 });
+  await confirmBtn.click();
+  await page.waitForTimeout(3000);
+
+  // Step 5: Check that the requested song appears in the priority queue
+  // (Assume the queue UI shows priority items first, and exposes their title or a marker)
+  const queueItem = page.locator('[data-queue-type="priority"], .queue-priority, .priority-queue-item').first();
+  await expect(queueItem).toBeVisible({ timeout: 10000 });
+  // Optionally, check that the queue item matches the requested song title
+  // const queueText = await queueItem.textContent();
+  // expect(queueText?.toLowerCase()).toContain('foo');
+});
 /**
  * KIOSK TESTS — Public search & request interface
  *
