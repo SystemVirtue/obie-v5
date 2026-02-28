@@ -403,16 +403,20 @@ function App() {
       }
 
       isDownloadingRef.current = true;
-      console.log('[Player] Calling download-video edge function for videoId:', videoId);
+      const dlStart = performance.now();
+      console.log(`[Player][download-video] ▶ START videoId=${videoId}  player_id=${PLAYER_ID}  t=+0.00s`);
 
       try {
-        await callDownloadVideo({ videoId, player_id: PLAYER_ID });
+        const result = await callDownloadVideo({ videoId, player_id: PLAYER_ID });
+        const dlSecs = ((performance.now() - dlStart) / 1000).toFixed(2);
         // Success: the edge function updated player_status with source='local'.
         // The realtime subscription will fire, set localPlaybackUrl, and the
         // <video> element will start playing.  Nothing more to do here.
-        console.log('[Player] download-video call returned — waiting for realtime to activate local playback');
+        console.log(`[Player][download-video] ✓ DONE  took=${dlSecs}s  publicUrl=${(result as any)?.publicUrl ?? '(awaiting realtime)'}  fileSizeBytes=${(result as any)?.fileSizeBytes ?? '?'}`);
+        console.log('[Player][download-video] Waiting for Realtime player_status update to activate local <video>');
       } catch (downloadErr) {
-        console.error('[Player] yt-dlp download failed:', downloadErr);
+        const dlSecs = ((performance.now() - dlStart) / 1000).toFixed(2);
+        console.error(`[Player][download-video] ✖ FAILED  took=${dlSecs}s`, downloadErr);
         isDownloadingRef.current = false;
         // Fall back to skipping the video
         await reportEndedAndNext(false);
@@ -597,11 +601,13 @@ function App() {
       if (newStatus.source === 'local' && newStatus.local_url) {
         // Only activate when the local_url is actually new (avoid redundant sets)
         if (newStatus.local_url !== localPlaybackUrl) {
-          console.log('[Player] Switching to local video playback:', newStatus.local_url);
+          console.log(`[Player][realtime] source=local → activating local <video>`);
+          console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
         }
       } else if (newMediaId && newMediaId !== oldMediaId) {
         // New song started — always return to YouTube iframe mode
+        console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} new media_id=${newMediaId} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
         isDownloadingRef.current = false;
       }
@@ -1064,12 +1070,16 @@ function App() {
           autoPlay
           className="absolute inset-0 w-full h-full"
           style={{ objectFit: 'contain', background: 'black' }}
+          onPlay={() => {
+            const v = localVideoRef.current;
+            console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
+          }}
           onEnded={() => {
-            console.log('[Player] Local video ended — triggering queue_next');
+            console.log('[Player][local-video] ■ ENDED — triggering queue_next');
             reportEndedAndNext(false);
           }}
           onError={(e) => {
-            console.error('[Player] Local video playback error:', e);
+            console.error('[Player][local-video] ✖ ERROR:', e);
             setLocalPlaybackUrl(null);
             reportEndedAndNext(false);
           }}
