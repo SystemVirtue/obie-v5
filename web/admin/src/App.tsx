@@ -705,6 +705,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   const [playlistItems, setPlaylistItems] = useState<(PlaylistItem & { media_item?: MediaItem })[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [loadingId, setLoadingId]   = useState<string | null>(null);
+  const isLoadingPlaylistRef        = useRef(false); // prevents concurrent load_playlist calls
   const [msg, setMsg]               = useState<{ text: string; ok: boolean } | null>(null);
   const [importYtId, setImportYtId] = useState('');
   const [importName, setImportName] = useState('');
@@ -722,7 +723,13 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   }, [expandedId]);
 
   const handleLoad = async (e: React.MouseEvent, playlist: Playlist) => {
-    e.stopPropagation(); setLoadingId(playlist.id);
+    // Ref guard prevents concurrent load_playlist calls regardless of React render timing.
+    // State guard (loadingId !== null) covers the UI, but there is a micro-race window
+    // between setLoadingId() and the next render that the ref eliminates.
+    if (isLoadingPlaylistRef.current) return;
+    e.stopPropagation();
+    setLoadingId(playlist.id);
+    isLoadingPlaylistRef.current = true;
     try {
       // Single atomic call: clears normal queue, loads playlist, sets active_playlist_id,
       // updates player_status — all under pg_advisory_xact_lock in the load_playlist RPC.
@@ -730,7 +737,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       setMsg({ text: `✓ Loaded "${playlist.name}" into queue`, ok: true });
       await loadPlaylists();
     } catch (e) { console.error(e); setMsg({ text: '❌ Failed to load playlist', ok: false }); }
-    finally { setLoadingId(null); }
+    finally { setLoadingId(null); isLoadingPlaylistRef.current = false; }
   };
 
   const handleDelete = async (playlist: Playlist) => {
@@ -832,7 +839,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
                   <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 2 }}>{(playlist.item_count ?? 0).toLocaleString()} songs</div>
                 </div>
                 <div style={{ display: 'flex', gap: 6, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                  <Btn variant="accent" onClick={e => handleLoad(e, playlist)} disabled={loadingId === playlist.id}>
+                  <Btn variant="accent" onClick={e => handleLoad(e, playlist)} disabled={loadingId !== null}>
                     {loadingId === playlist.id ? <Spinner size={12} /> : '▶ Load Queue'}
                   </Btn>
                   <Btn variant="danger" onClick={() => handleDelete(playlist)}>🗑</Btn>
@@ -1516,6 +1523,11 @@ function App() {
 
   // ── Queue handlers ────────────────────────────────────────────────────────
   const handleRemove = async (queueId: string) => {
+    // Optimistic update: remove immediately from local state.
+    // Supabase Realtime DELETE events don't carry player_id (only primary key),
+    // so the queue subscription filter never fires on DELETE — the UI would
+    // otherwise show the stale item until the next unrelated change triggers a refetch.
+    setQueue(prev => prev.filter(item => item.id !== queueId));
     try { await callQueueManager({ player_id: PLAYER_ID, action: 'remove', queue_id: queueId }); }
     catch (e) { console.error(e); }
   };

@@ -39,6 +39,7 @@ function App() {
   const fadeIntervalRef = useRef<number | null>(null);
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
+  const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
@@ -181,14 +182,23 @@ function App() {
       return;
     }
 
+    // Prevent concurrent calls: natural end + status subscription can both fire simultaneously.
+    // The primary guard is server-side (player-control skips the intermediate state='idle' write),
+    // but this ref provides belt-and-suspenders protection.
+    if (isEndingRef.current) {
+      console.log('[Player] End/skip already in-flight, ignoring duplicate trigger');
+      return;
+    }
+    isEndingRef.current = true;
+
     console.log(isSkip ? '[Player] Video SKIPPED - triggering queue_next' : '[Player] Video ENDED - triggering queue_next');
-    
+
     // Fade out if this is a skip
     if (isSkip) {
       await fadeOut();
       // Don't set skip loading flag - we'll fade back in immediately after loading
     }
-    
+
     try {
       const result = await callPlayerControl({
         player_id: PLAYER_ID,
@@ -245,6 +255,8 @@ function App() {
       }
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
+    } finally {
+      isEndingRef.current = false;
     }
   }, [fadeOut]);
 

@@ -159,10 +159,32 @@ Deno.serve(async (req)=>{
           // Use the first video
           const video = videos[0];
 
-          // Extract video ID from URL for source_id
-          const videoIdMatch = video.url.match(/[?&]v=([^#\&\?]*)/);
-          const videoId = videoIdMatch ? videoIdMatch[1] : video.url.split('/').pop();
-          const sourceId = `youtube:${videoId}`;
+          // Stricter validation: required fields must be non-empty strings
+          if (!video || typeof video.id !== 'string' || !video.id.trim() ||
+              typeof video.url !== 'string' || !video.url.trim() ||
+              typeof video.title !== 'string' || !video.title.trim()) {
+            console.error('Invalid video object from scraper:', video);
+            // Log to system_logs for failed scrape/validation
+            await supabase.from('system_logs').insert({
+              player_id,
+              event: 'kiosk_request_failed',
+              severity: 'error',
+              payload: {
+                reason: 'Invalid video data from YouTube scraper',
+                video
+              }
+            });
+            return new Response(JSON.stringify({
+              error: 'Invalid video data from YouTube scraper.',
+              details: video
+            }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+          // Use video.id directly for source_id
+          const sourceId = `youtube:${video.id}`;
 
           // Create or update media item — canonical dedup via create_or_get_media_item RPC
           const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
@@ -177,9 +199,22 @@ Deno.serve(async (req)=>{
           });
 
           if (mediaError || !resolvedId) {
-            console.error('Failed to create/get media item:', mediaError);
+            console.error('Failed to create/get media item:', mediaError, video);
+            // Log to system_logs for failed media item creation
+            await supabase.from('system_logs').insert({
+              player_id,
+              event: 'media_item_create_failed',
+              severity: 'error',
+              payload: {
+                error: mediaError,
+                video,
+                sourceId
+              }
+            });
             return new Response(JSON.stringify({
-              error: 'Failed to create media item'
+              error: 'Failed to create media item',
+              details: mediaError,
+              video
             }), {
               status: 500,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' }

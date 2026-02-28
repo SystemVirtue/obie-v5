@@ -34,7 +34,7 @@ function App() {
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
-  const [showSearchModal, setShowSearchModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(true);
   const [showKeyboard, setShowKeyboard] = useState(true);
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
@@ -58,6 +58,7 @@ function App() {
             action: 'init',
           });
           setSession(newSession);
+          setShowSearchModal(true); // Open search modal after session init
         } catch (error) {
           console.error('Failed to initialize session:', error);
         }
@@ -182,18 +183,27 @@ function App() {
         try {
           const res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
           if (res?.error) {
+            alert('Failed to add to priority queue: ' + (res.error.message || res.error));
             console.error('Server failed to enqueue request:', res.error);
+            setShowConfirm(false);
+            return;
           }
+          // Optionally, refresh the queue immediately
+          if (typeof subscribeToQueue === 'function') {
+            subscribeToQueue(PLAYER_ID, setQueue);
+          }
+          alert('Video added to priority queue!');
         } catch (err) {
+          alert('Failed to enqueue request via kiosk handler: ' + (err?.message || err));
           console.error('Failed to enqueue request via kiosk handler:', err);
+        } finally {
+          // Close modal and reset
+          setShowConfirm(false);
+          setShowSearchResults(false);
+          setShowKeyboard(true);
+          setShowSearchModal(false);
+          setSearchQuery('');
         }
-
-        // Close modal and reset
-        setShowConfirm(false);
-        setShowSearchResults(false);
-        setShowKeyboard(true);
-        setShowSearchModal(false);
-        setSearchQuery('');
       } catch (error) {
         console.error('Failed to add request:', error);
         setShowConfirm(false);
@@ -243,7 +253,7 @@ function App() {
           kiosk_coin_acceptor_connected: true,
           kiosk_coin_acceptor_device_id: 'usbserial-1420'
         })
-        .eq('id', 1);        // Start reading from the port
+        .eq('player_id', PLAYER_ID); // Use correct UUID key
         const reader = port.readable?.getReader();
         if (reader) {
           serialReaderRef.current = reader;
@@ -282,7 +292,7 @@ function App() {
           kiosk_coin_acceptor_connected: false,
           kiosk_coin_acceptor_device_id: null
         })
-        .eq('id', 1);        // Stop connection monitoring
+        .eq('player_id', PLAYER_ID); // Use correct UUID key
         stopConnectionMonitoring();
 
       } catch (error) {

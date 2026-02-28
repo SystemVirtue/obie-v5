@@ -365,6 +365,9 @@ Deno.serve(async (req)=>{
       });
     }
     // Handle clearing the queue
+    // NOTE: always pass p_type='normal' so priority (kiosk) items are never destroyed.
+    // The old 3-step flow (set_active→clear_queue→import_queue) called this with no type,
+    // which cleared ALL items including priority queue entries.
     if (action === 'clear_queue') {
       if (!player_id) {
         return new Response(JSON.stringify({
@@ -378,7 +381,8 @@ Deno.serve(async (req)=>{
         });
       }
       const { error: clearError } = await supabase.rpc('queue_clear', {
-        p_player_id: player_id
+        p_player_id: player_id,
+        p_type: 'normal'
       });
       if (clearError) throw clearError;
       return new Response(JSON.stringify({

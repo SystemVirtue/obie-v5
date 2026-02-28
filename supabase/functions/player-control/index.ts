@@ -167,10 +167,14 @@ Deno.serve(async (req)=>{
 
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
-      const updateData = {
+      const updateData: Record<string, unknown> = {
         last_updated: new Date().toISOString()
       };
-      if (state !== undefined) {
+      // For 'ended', skip writing state to player_status.  Writing state='idle' here
+      // fires a Realtime event that the player's status subscription misinterprets as
+      // an admin skip (playing→idle), triggering a second queue_next call.
+      // queue_next will set state='loading' atomically, so no intermediate write needed.
+      if (action !== 'ended' && state !== undefined) {
         updateData.state = state;
       }
       if (progress !== undefined) {
