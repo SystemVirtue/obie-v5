@@ -732,13 +732,14 @@ function App() {
     }
   }, [playerMode]);
 
-  // Poll YTM Desktop /status every 2 s in ytm_desktop mode for track info and end detection
+  // Poll YTM Desktop /state every 5 s in ytm_desktop mode for track info and end detection
   useEffect(() => {
     if (playerMode !== 'ytm_desktop') return;
     const poll = window.setInterval(async () => {
       if (!getYtmToken()) return;
       try {
         const res = await ytmFetch('/api/v1/state');
+        if (res.status === 429) return; // rate-limited — skip this tick, stay connected
         if (!res.ok) { setYtmConnected(false); return; }
         const data = await res.json();
         setYtmConnected(true);
@@ -762,7 +763,7 @@ function App() {
       } catch {
         setYtmConnected(false);
       }
-    }, 2000);
+    }, 5000);
     ytmPollRef.current = poll;
     return () => {
       clearInterval(poll);
