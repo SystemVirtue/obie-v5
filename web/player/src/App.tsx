@@ -185,8 +185,13 @@ function App() {
     // Prevent concurrent calls: natural end + status subscription can both fire simultaneously.
     // The primary guard is server-side (player-control skips the intermediate state='idle' write),
     // but this ref provides belt-and-suspenders protection.
+    //
+    // isEndingRef stays true for 1000ms AFTER the queue_next call completes (see finally block).
+    // This covers a race where player-control writing progress=1 to player_status fires a
+    // second Realtime event with state='idle' that arrives after the first call returns —
+    // the 1s cooldown absorbs that bounce window and prevents a double queue_next.
     if (isEndingRef.current) {
-      console.log('[Player] End/skip already in-flight, ignoring duplicate trigger');
+      console.log('[Player] End/skip cooldown active, ignoring duplicate trigger');
       return;
     }
     isEndingRef.current = true;
@@ -256,7 +261,14 @@ function App() {
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
     } finally {
-      isEndingRef.current = false;
+      // Hold the guard for 1000ms after completion.
+      // A second Realtime state='idle' event (caused by the progress=1 write in player-control)
+      // can arrive right after the first call returns. Without this cooldown, prevStateRef
+      // still shows 'playing' (updated only after the await resolves), so the subscription
+      // would trigger a second reportEndedAndNext and a second queue_next, skipping a song.
+      setTimeout(() => {
+        isEndingRef.current = false;
+      }, 1000);
     }
   }, [fadeOut]);
 
