@@ -79,6 +79,8 @@ function App() {
   const ytmPollRef = useRef<number | null>(null);
   const ytmCurrentVideoIdRef = useRef<string | null>(null);
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
+  const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
+  const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
 
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
@@ -688,6 +690,31 @@ function App() {
     }
   }, []);
 
+  // Test reachability of YTM Desktop Companion Server without requiring auth
+  const ytmTestConnection = useCallback(async () => {
+    setYtmTestResult('testing');
+    setYtmTestMsg(null);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const res = await fetch(`${YTM_BASE}/api/v1/status`, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (res.ok) {
+        setYtmTestResult('ok');
+        setYtmTestMsg('Server is running');
+      } else if (res.status === 401) {
+        setYtmTestResult('ok');
+        setYtmTestMsg('Server found — click Connect to authorize');
+      } else {
+        setYtmTestResult('error');
+        setYtmTestMsg(`HTTP ${res.status} — check Companion Server settings`);
+      }
+    } catch {
+      setYtmTestResult('error');
+      setYtmTestMsg('No response from localhost:9863 — is YTM Desktop running?');
+    }
+  }, []);
+
   // Tear down YTM connections when leaving ytm_desktop mode
   useEffect(() => {
     if (playerMode !== 'ytm_desktop') {
@@ -1107,20 +1134,82 @@ function App() {
           ) : ytmAuthStep === 'requesting' ? (
             <div style={{ color: '#aaa', fontSize: 16 }}>Connecting to YTM Desktop…</div>
           ) : (
-            <div style={{ textAlign: 'center', color: '#fff' }}>
-              <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>YTM Desktop Mode</div>
-              <div style={{ fontSize: 14, color: '#aaa', marginBottom: 24, maxWidth: 360 }}>
-                {ytmError || 'Start YTM Desktop with Companion Server enabled, then connect.'}
+            <div style={{ color: '#fff', maxWidth: 540, width: '100%', padding: '0 24px' }}>
+              <div style={{ fontSize: 20, fontWeight: 700, marginBottom: 6, textAlign: 'center' }}>YTM Desktop Mode</div>
+              <div style={{ textAlign: 'center', marginBottom: 20 }}>
+                <a
+                  href="https://github.com/ytmdesktop/ytmdesktop/releases"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: '#60a5fa', fontSize: 12, textDecoration: 'none', fontFamily: 'monospace' }}
+                >
+                  ↗ github.com/ytmdesktop/ytmdesktop/releases
+                </a>
               </div>
-              {!getYtmToken() ? (
+
+              {/* ── API Server Settings reference ── */}
+              <div style={{ marginBottom: 16, borderRadius: 10, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                <div style={{ padding: '8px 16px', background: 'rgba(255,255,255,0.05)', fontFamily: 'monospace', fontSize: 10, color: 'rgba(255,255,255,0.35)', letterSpacing: 1, textTransform: 'uppercase' }}>
+                  Required API Server Settings
+                </div>
+                {([
+                  ['Hostname',          'localhost  (127.0.0.1)'],
+                  ['Port',              '9863'],
+                  ['Authorization',     'Bearer token  —  OAuth-style companion handshake'],
+                  ['HTTPS / TLS',       'Disabled  (plain HTTP, no certificates needed)'],
+                ] as [string, string][]).map(([label, value]) => (
+                  <div key={label} style={{ display: 'flex', padding: '8px 16px', borderTop: '1px solid rgba(255,255,255,0.05)', gap: 12, alignItems: 'baseline' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'rgba(255,255,255,0.35)', minWidth: 130, flexShrink: 0 }}>{label}</span>
+                    <span style={{ fontFamily: 'monospace', fontSize: 12, color: '#e2e8f0' }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Setup instructions ── */}
+              <div style={{ marginBottom: 16, padding: '12px 16px', borderRadius: 10, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                <div style={{ fontFamily: 'monospace', fontSize: 10, color: 'rgba(255,255,255,0.35)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 }}>Setup</div>
+                {([
+                  <>Open YTM Desktop → <b style={{ color: '#e2e8f0' }}>Settings → Integrations → Companion Server</b></>,
+                  <>Toggle <b style={{ color: '#e2e8f0' }}>Enable Companion Server</b> ON; confirm port is <b style={{ color: '#e2e8f0' }}>9863</b></>,
+                  <>Click <b style={{ color: '#e2e8f0' }}>Test Connection</b> to verify reachability, then <b style={{ color: '#e2e8f0' }}>Connect</b> to authorize Obie</>,
+                ]).map((step, i) => (
+                  <div key={i} style={{ display: 'flex', gap: 10, marginBottom: i < 2 ? 8 : 0, fontSize: 13, color: '#999', lineHeight: '1.5' }}>
+                    <span style={{ color: 'rgba(255,255,255,0.2)', minWidth: 18, fontFamily: 'monospace', flexShrink: 0 }}>{i + 1}.</span>
+                    <span>{step}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Error banner ── */}
+              {ytmError && (
+                <div style={{ marginBottom: 14, padding: '8px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)', color: '#fca5a5', fontSize: 12 }}>
+                  {ytmError}
+                </div>
+              )}
+
+              {/* ── Action row ── */}
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={ytmTestConnection}
+                  disabled={ytmTestResult === 'testing'}
+                  style={{ padding: '9px 18px', borderRadius: 9, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: '#fff', cursor: ytmTestResult === 'testing' ? 'default' : 'pointer', fontSize: 13, fontWeight: 600, opacity: ytmTestResult === 'testing' ? 0.6 : 1 }}
+                >
+                  {ytmTestResult === 'testing' ? 'Testing…' : 'Test Connection'}
+                </button>
                 <button
                   onClick={ytmRequestAuth}
-                  style={{ padding: '10px 28px', background: '#e33122', borderRadius: 9, border: 'none', color: '#fff', cursor: 'pointer', fontSize: 15, fontWeight: 600 }}
+                  style={{ padding: '9px 18px', background: '#e33122', borderRadius: 9, border: 'none', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
                 >
-                  Connect YTM Desktop
+                  {getYtmToken() ? 'Reconnect YTM Desktop' : 'Connect YTM Desktop'}
                 </button>
-              ) : (
-                <div style={{ color: '#555', fontSize: 13 }}>Token found — waiting for YTM Desktop to respond…</div>
+              </div>
+
+              {/* ── Test result ── */}
+              {ytmTestResult !== 'idle' && ytmTestMsg && (
+                <div style={{ marginTop: 10, fontSize: 12, color: ytmTestResult === 'ok' ? '#4ade80' : '#f87171', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontFamily: 'monospace' }}>{ytmTestResult === 'ok' ? '✓' : '✗'}</span>
+                  <span>{ytmTestMsg}</span>
+                </div>
               )}
             </div>
           )}
