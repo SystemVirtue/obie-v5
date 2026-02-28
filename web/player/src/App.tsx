@@ -79,6 +79,8 @@ function App() {
   const [ytmToken, setYtmToken] = useState<string | null>(() => localStorage.getItem('ytm_auth_token'));
   const ytmSocketRef = useRef<any>(null);
   const ytmCurrentVideoIdRef = useRef<string | null>(null);
+  const ytmPlayingReportedRef = useRef(false);       // guard: report 'playing' once per video
+  const ytmTrackStateRef = useRef<number | null>(null); // previous YTM trackState for transition detection
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
@@ -131,6 +133,27 @@ function App() {
             clearInterval(fadeIntervalRef.current);
             fadeIntervalRef.current = null;
           }
+          resolve();
+        }
+      }, stepDuration);
+    });
+  }, []);
+
+  // YTM Desktop skip fade: step volume 100→0 over 2s via setVolume commands
+  const fadeOutYtm = useCallback((): Promise<void> => {
+    return new Promise((resolve) => {
+      const steps = 10;
+      const stepDuration = 2000 / steps; // 200ms per step
+      let currentStep = 0;
+      const interval = window.setInterval(() => {
+        currentStep++;
+        const vol = Math.round(100 * (1 - currentStep / steps));
+        ytmFetch('/api/v1/command', {
+          method: 'POST',
+          body: JSON.stringify({ command: 'setVolume', data: vol }),
+        }).catch(() => {});
+        if (currentStep >= steps) {
+          clearInterval(interval);
           resolve();
         }
       }, stepDuration);
@@ -238,7 +261,14 @@ function App() {
 
     // Fade out if this is a skip
     if (isSkip) {
-      await fadeOut();
+      if (playerModeRef.current === 'ytm_desktop') {
+        // YTM Desktop: fade volume to 0, pause, then restore volume for next track
+        await fadeOutYtm();
+        await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
+        ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'setVolume', data: 100 }) }).catch(() => {});
+      } else {
+        await fadeOut();
+      }
       // Don't set skip loading flag - we'll fade back in immediately after loading
     }
 
@@ -308,7 +338,7 @@ function App() {
         isEndingRef.current = false;
       }, 1000);
     }
-  }, [fadeOut]);
+  }, [fadeOut, fadeOutYtm]);
 
   // YouTube Player event handlers
   const onPlayerReady = useCallback((_event: any) => {
@@ -561,8 +591,10 @@ function App() {
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
       
-      // Handle state transitions with fades
-      if (playerRef.current && prevState !== newState) {
+      // Handle state transitions with fades.
+      // In YTM Desktop mode playerRef.current is null (no iframe), so we must also
+      // allow the block when playerModeRef indicates ytm_desktop.
+      if ((playerRef.current || playerModeRef.current === 'ytm_desktop') && prevState !== newState) {
         // SKIP: Admin set state to 'idle' while video was playing
         if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
@@ -739,7 +771,7 @@ function App() {
 
     const socket = io(YTM_BASE, {
       auth: { token: ytmToken },
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'], // API requires websocket-only (no polling)
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 2000,
@@ -766,18 +798,42 @@ function App() {
     socket.on('state-update', (data: any) => {
       setYtmConnected(true);
       setYtmError(null);
+      // YTM Desktop API v1 state-update has the same structure as GET /state:
+      //   data.player.trackState    (-1=Unknown, 0=Paused, 1=Playing, 2=Buffering; no "ended" state)
+      //   data.player.videoProgress (float, SECONDS)
+      //   data.video.id             (YouTube video ID)
+      //   data.video.durationSeconds (integer, seconds)
       const video = data.video;
-      const player = data.player;
+      const trackState: number = typeof data.player?.trackState === 'number' ? data.player.trackState : -1;
+      const videoProgress: number = typeof data.player?.videoProgress === 'number' ? data.player.videoProgress : 0;
+
       if (video) {
         const thumb = video.thumbnails?.[0]?.url || '';
         setYtmNowPlaying({ title: video.title || '', artist: video.author || '', thumbnail: thumb });
       }
-      // End detection: videoProgress near 1 for the video Obie loaded (trackState 0 = ended)
-      if (player && ytmCurrentVideoIdRef.current && video?.id === ytmCurrentVideoIdRef.current) {
-        const pct: number = typeof player.videoProgress === 'number' ? player.videoProgress : 0;
-        const ended = pct >= 0.99 || (player.trackState === 0 && pct > 0.95);
-        if (ended) {
-          console.log('[YTM] Song ended (state-update event) — triggering queue_next');
+
+      if (ytmCurrentVideoIdRef.current) {
+        // Per API: the state video object uses "id" for the YouTube video ID
+        const videoMatches = (video?.id ?? null) === ytmCurrentVideoIdRef.current;
+        const prevTrackState = ytmTrackStateRef.current;
+        ytmTrackStateRef.current = trackState;
+
+        // Report 'playing' once per video (backup path if changeVideo HTTP response was slow/missed)
+        if (videoMatches && trackState === 1 && !ytmPlayingReportedRef.current) {
+          ytmPlayingReportedRef.current = true;
+          reportStatus('playing');
+        }
+
+        // End detection — videoProgress is SECONDS, trackState 0=Paused (no explicit ended state).
+        // We detect end by comparing elapsed seconds to the track duration.
+        // Per API: video.durationSeconds (integer, seconds) — NOT video.duration.
+        const duration: number = typeof video?.durationSeconds === 'number' ? video.durationSeconds : 0;
+        const atEnd = videoMatches && duration > 0 && videoProgress >= duration - 1.5; // within 1.5s of end
+        const pausedAtEnd = videoMatches && trackState === 0                           // paused…
+                            && prevTrackState === 1                                    // …was playing
+                            && duration > 0 && videoProgress > duration * 0.90;       // …near end
+        if (atEnd || pausedAtEnd) {
+          console.log('[YTM] Song ended — triggering queue_next', { videoProgress, duration, trackState, prevTrackState });
           ytmCurrentVideoIdRef.current = null; // prevent double-trigger
           reportEndedAndNext();
         }
@@ -788,7 +844,7 @@ function App() {
       socket.disconnect();
       ytmSocketRef.current = null;
     };
-  }, [playerMode, ytmToken, reportEndedAndNext]);
+  }, [playerMode, ytmToken, reportEndedAndNext, reportStatus]);
 
   // Fetch lyrics for a video/title using lrclib API (best-effort)
   async function fetchLyricsForMedia(title: string | undefined, artist?: string) {
@@ -936,13 +992,20 @@ function App() {
       if (!videoId) { console.error('[YTM] Could not extract YouTube ID from:', currentMedia.url); return; }
       currentMediaIdRef.current = currentMedia.id;
       ytmCurrentVideoIdRef.current = videoId;
+      ytmPlayingReportedRef.current = false;
+      ytmTrackStateRef.current = null;
       console.log('[YTM] Sending changeVideo:', videoId);
       ytmFetch('/api/v1/command', {
         method: 'POST',
         body: JSON.stringify({ command: 'changeVideo', data: { videoId } }),
       }).then(res => {
-        if (res.ok) { setYtmConnected(true); setYtmError(null); }
-        else if (res.status === 401) { setYtmConnected(false); setYtmError('YTM auth failed — please reconnect'); }
+        if (res.ok) {
+          setYtmConnected(true);
+          setYtmError(null);
+          // changeVideo causes immediate autoplay in YTM Desktop — report 'playing' now
+          // so admin console advances from 'loading' → 'playing' without waiting for a socket event.
+          reportStatus('playing');
+        } else if (res.status === 401) { setYtmConnected(false); setYtmError('YTM auth failed — please reconnect'); }
         else setYtmError(`YTM command failed (HTTP ${res.status})`);
       }).catch(() => {
         setYtmError('YTM Desktop offline — start YTM Desktop with Companion Server enabled');
@@ -1042,7 +1105,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError]);
+  }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
 
   // Sync player state with server commands
   useEffect(() => {
