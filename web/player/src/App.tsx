@@ -1222,6 +1222,7 @@ function App() {
       )}
 
       {/* Click Prevention Overlay - Allows play when paused, blocks pause when playing */}
+      {/* Disabled in YTM Desktop mode so the YTM overlay buttons are clickable */}
       <div
         className="absolute inset-0 w-full h-full cursor-default"
         onClick={(e) => {
@@ -1243,7 +1244,7 @@ function App() {
           console.log('[Player] Click blocked - can only play when paused');
           return false;
         }}
-        style={{ pointerEvents: 'auto' }}
+        style={{ pointerEvents: playerMode === 'ytm_desktop' ? 'none' : 'auto' }}
       />
 
       {/* Obie Logo Overlay */}
