@@ -9,6 +9,7 @@ import {
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
+  callDownloadVideo,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
@@ -16,6 +17,22 @@ import {
 } from '@shared/supabase-client';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
+
+// ── YTM Desktop Companion ────────────────────────────────────────────────────
+const YTM_BASE = 'http://localhost:9863';
+const YTM_APP_ID = 'obie-jukebox';
+const getYtmToken = () => localStorage.getItem('ytm_auth_token');
+const saveYtmToken = (token: string) => localStorage.setItem('ytm_auth_token', token);
+
+async function ytmFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = getYtmToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return fetch(`${YTM_BASE}${path}`, {
+    ...init,
+    headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
+  });
+}
 
 // YouTube Player API types
 declare global {
@@ -40,10 +57,28 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
+  const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  // Tracks the YouTube ID of the currently-loaded video for the download fallback
+  const currentYouTubeIdRef = useRef<string | null>(null);
+  // Prevents duplicate download-video calls when onPlayerError fires multiple times
+  const isDownloadingRef = useRef(false);
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
+
+  // YTM Desktop state
+  const [ytmConnected, setYtmConnected] = useState(false);
+  const [ytmError, setYtmError] = useState<string | null>(null);
+  const [ytmNowPlaying, setYtmNowPlaying] = useState<{ title: string; artist: string; thumbnail: string } | null>(null);
+  const [ytmAuthStep, setYtmAuthStep] = useState<'idle' | 'requesting' | 'waiting' | 'authorized'>('idle');
+  const [ytmAuthCode, setYtmAuthCode] = useState<string | null>(null);
+  const ytmWsRef = useRef<WebSocket | null>(null);
+  const ytmPollRef = useRef<number | null>(null);
+  const ytmCurrentVideoIdRef = useRef<string | null>(null);
+  const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
 
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
@@ -338,63 +373,94 @@ function App() {
   // Handle playback errors (unavailable videos, embedding disabled, etc.)
   const onPlayerError = useCallback(async (event: any) => {
     console.error('[Player] YouTube player error:', event.data);
-    
+
     // Error codes:
-    // 2 = Invalid parameter
-    // 5 = HTML5 player error  
+    // 2   = Invalid parameter
+    // 5   = HTML5 player error
     // 100 = Video not found or private
     // 101 = Embedding not allowed by owner
     // 150 = Same as 101
-    
-    if (event.data === 101 || event.data === 150 || event.data === 100) {
-      console.error('[Player] Video unavailable (embedding disabled or not found) - auto-skipping and removing from playlist');
-      
-      // Get current media ID before skipping
+
+    if (event.data === 101 || event.data === 150) {
+      // ── yt-dlp download fallback ──────────────────────────────────────────
+      console.error('[Player] Embedding disabled (101/150) — attempting yt-dlp fallback download');
+
+      if (isSlavePlayer) {
+        console.log('[Slave Player] Skipping download fallback');
+        return;
+      }
+
+      if (isDownloadingRef.current) {
+        console.log('[Player] Download already in progress, ignoring duplicate error event');
+        return;
+      }
+
+      const videoId = currentYouTubeIdRef.current;
+      if (!videoId) {
+        console.error('[Player] No YouTube ID available for fallback — skipping to next');
+        await reportEndedAndNext(false);
+        return;
+      }
+
+      isDownloadingRef.current = true;
+      console.log('[Player] Calling download-video edge function for videoId:', videoId);
+
+      try {
+        await callDownloadVideo({ videoId, player_id: PLAYER_ID });
+        // Success: the edge function updated player_status with source='local'.
+        // The realtime subscription will fire, set localPlaybackUrl, and the
+        // <video> element will start playing.  Nothing more to do here.
+        console.log('[Player] download-video call returned — waiting for realtime to activate local playback');
+      } catch (downloadErr) {
+        console.error('[Player] yt-dlp download failed:', downloadErr);
+        isDownloadingRef.current = false;
+        // Fall back to skipping the video
+        await reportEndedAndNext(false);
+      }
+      return;
+    }
+
+    if (event.data === 100) {
+      // ── Video not found / private — remove and skip ───────────────────────
+      console.error('[Player] Video not found or private (100) — removing and skipping');
+
       const unavailableMediaId = currentMediaIdRef.current;
-      
-      // Remove from queue
-      if (unavailableMediaId) {
+      if (unavailableMediaId && !isSlavePlayer) {
         try {
-          // Find queue item with this media_item_id (disabled for slave players)
-          if (!isSlavePlayer) {
-            const { data: queueItem, error: queueError } = await supabase
-              .from('queue')
-              .select('id')
-              .eq('media_item_id', unavailableMediaId)
-              .eq('player_id', PLAYER_ID)
-              .maybeSingle();
-            
-            if (!queueError && queueItem) {
-              // Remove from queue
-              await callQueueManager({
-                player_id: PLAYER_ID,
-                action: 'remove',
-                queue_id: (queueItem as { id: string }).id,
-              });
-            }
-          }
-          
-          // Remove from all playlists via server function — no direct DB access from client
-          if (!isSlavePlayer) {
-            await callPlaylistManager({
-              action: 'remove_media_globally',
+          const { data: queueItem, error: queueError } = await supabase
+            .from('queue')
+            .select('id')
+            .eq('media_item_id', unavailableMediaId)
+            .eq('player_id', PLAYER_ID)
+            .maybeSingle();
+
+          if (!queueError && queueItem) {
+            await callQueueManager({
               player_id: PLAYER_ID,
-              media_item_id: unavailableMediaId,
+              action: 'remove',
+              queue_id: (queueItem as { id: string }).id,
             });
-            console.log('[Player] Removed unavailable video from queue and playlists');
           }
-        } catch (error) {
-          console.error('[Player] Failed to remove unavailable video:', error);
+
+          await callPlaylistManager({
+            action: 'remove_media_globally',
+            player_id: PLAYER_ID,
+            media_item_id: unavailableMediaId,
+          });
+          console.log('[Player] Removed unavailable video from queue and playlists');
+        } catch (removeErr) {
+          console.error('[Player] Failed to remove unavailable video:', removeErr);
         }
       }
-      
-      // Skip to next video
-      await reportEndedAndNext(false); // Don't fade, just skip immediately
-    } else {
-      console.error('[Player] Unhandled player error, skipping to next');
+
       await reportEndedAndNext(false);
+      return;
     }
-  }, [reportEndedAndNext]);
+
+    // Other errors — skip to next
+    console.error('[Player] Unhandled player error, skipping to next');
+    await reportEndedAndNext(false);
+  }, [reportEndedAndNext, isSlavePlayer]);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -500,15 +566,23 @@ function App() {
         }
         
         if (newState === 'paused' && prevState === 'playing') {
-          // Fade out when pausing
-          console.log('[Player] Pausing - fading out...');
-          await fadeOut();
-          playerRef.current.pauseVideo();
+          if (playerModeRef.current === 'ytm_desktop') {
+            ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
+          } else if (playerRef.current) {
+            // Fade out when pausing
+            console.log('[Player] Pausing - fading out...');
+            await fadeOut();
+            playerRef.current.pauseVideo();
+          }
         } else if (newState === 'playing' && prevState === 'paused') {
-          // Fade in when resuming
-          console.log('[Player] Resuming - fading in...');
-          playerRef.current.playVideo();
-          await fadeIn();
+          if (playerModeRef.current === 'ytm_desktop') {
+            ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
+          } else if (playerRef.current) {
+            // Fade in when resuming
+            console.log('[Player] Resuming - fading in...');
+            playerRef.current.playVideo();
+            await fadeIn();
+          }
         }
       }
       
@@ -519,6 +593,19 @@ function App() {
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
 
+      // ── Local-source fallback (yt-dlp download complete) ─────────────────
+      if (newStatus.source === 'local' && newStatus.local_url) {
+        // Only activate when the local_url is actually new (avoid redundant sets)
+        if (newStatus.local_url !== localPlaybackUrl) {
+          console.log('[Player] Switching to local video playback:', newStatus.local_url);
+          setLocalPlaybackUrl(newStatus.local_url);
+        }
+      } else if (newMediaId && newMediaId !== oldMediaId) {
+        // New song started — always return to YouTube iframe mode
+        setLocalPlaybackUrl(null);
+        isDownloadingRef.current = false;
+      }
+
       if (newMediaId && newMediaId !== oldMediaId) {
         console.log('[Player] New media from status (CHANGED):', {
           old_id: oldMediaId,
@@ -527,7 +614,7 @@ function App() {
           artist: newStatus.current_media?.artist
         });
         setCurrentMedia(newStatus.current_media || null);
-        
+
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
         recentlyLoadedRef.current = true;
         // Clear the flag after 5 seconds
@@ -550,6 +637,135 @@ function App() {
     const settingsSub = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => settingsSub.unsubscribe();
   }, []);
+
+  // Derive current player mode; keep a ref in sync for use inside subscription callbacks
+  const playerMode = settings?.player_mode ?? 'iframe';
+  useEffect(() => {
+    playerModeRef.current = settings?.player_mode ?? 'iframe';
+  }, [settings?.player_mode]);
+
+  // ── YTM Desktop auth ──────────────────────────────────────────────────────
+  const ytmRequestAuth = useCallback(async () => {
+    setYtmAuthStep('requesting');
+    setYtmError(null);
+    try {
+      const res = await fetch(
+        `${YTM_BASE}/api/v1/auth/requestcode?appid=${YTM_APP_ID}&appname=Obie+Jukebox&appversion=1.0.0`
+      );
+      if (!res.ok) throw new Error('YTM Desktop not responding');
+      const data = await res.json();
+      const code: string = data.code;
+      setYtmAuthCode(code);
+      setYtmAuthStep('waiting');
+      // Poll every 2 s until approved (max 90 s)
+      let attempts = 0;
+      const poll = setInterval(async () => {
+        attempts++;
+        if (attempts > 45) { clearInterval(poll); setYtmAuthStep('idle'); return; }
+        try {
+          const authRes = await fetch(
+            `${YTM_BASE}/api/v1/auth/request?appid=${YTM_APP_ID}&token=${code}`
+          );
+          if (!authRes.ok) return;
+          const authData = await authRes.json();
+          if (authData.token) {
+            clearInterval(poll);
+            saveYtmToken(authData.token);
+            setYtmAuthStep('authorized');
+            setYtmConnected(true);
+          }
+        } catch { /* still waiting */ }
+      }, 2000);
+    } catch {
+      setYtmError('YTM Desktop not found at localhost:9863. Start YTM Desktop and enable Companion Server.');
+      setYtmAuthStep('idle');
+    }
+  }, []);
+
+  // Tear down YTM connections when leaving ytm_desktop mode
+  useEffect(() => {
+    if (playerMode !== 'ytm_desktop') {
+      ytmWsRef.current?.close();
+      ytmWsRef.current = null;
+      if (ytmPollRef.current) { clearInterval(ytmPollRef.current); ytmPollRef.current = null; }
+      setYtmNowPlaying(null);
+      setYtmConnected(false);
+      setYtmError(null);
+      setYtmAuthStep('idle');
+    }
+  }, [playerMode]);
+
+  // Poll YTM Desktop /status every 2 s in ytm_desktop mode for track info and end detection
+  useEffect(() => {
+    if (playerMode !== 'ytm_desktop') return;
+    const poll = window.setInterval(async () => {
+      if (!getYtmToken()) return;
+      try {
+        const res = await ytmFetch('/api/v1/status');
+        if (!res.ok) { setYtmConnected(false); return; }
+        const data = await res.json();
+        setYtmConnected(true);
+        setYtmError(null);
+        const track = data.track;
+        if (track) {
+          setYtmNowPlaying({ title: track.title || '', artist: track.author || '', thumbnail: track.cover || '' });
+        }
+        // End detection: statePercent near 1 for the video Obie loaded
+        const player = data.player;
+        if (player && ytmCurrentVideoIdRef.current && player.videoId === ytmCurrentVideoIdRef.current) {
+          const pct: number = typeof player.statePercent === 'number' ? player.statePercent : 0;
+          const pos: number = typeof player.seekbarCurrentPosition === 'number' ? player.seekbarCurrentPosition : 0;
+          const ended = pct >= 0.99 || (player.trackState === 0 && pos > 0 && pct > 0.95);
+          if (ended) {
+            console.log('[YTM] Song ended (poll) — triggering queue_next');
+            ytmCurrentVideoIdRef.current = null; // prevent double-trigger
+            reportEndedAndNext();
+          }
+        }
+      } catch {
+        setYtmConnected(false);
+      }
+    }, 2000);
+    ytmPollRef.current = poll;
+    return () => {
+      clearInterval(poll);
+      ytmPollRef.current = null;
+    };
+  }, [playerMode, reportEndedAndNext]);
+
+  // YTM Desktop WebSocket for real-time end detection
+  useEffect(() => {
+    if (playerMode !== 'ytm_desktop') return;
+    const token = getYtmToken();
+    if (!token) return;
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket('ws://localhost:9863/api/v1/events');
+      ytmWsRef.current = ws;
+      ws.onopen = () => {
+        console.log('[YTM] WebSocket connected');
+        ws!.send(JSON.stringify({ type: 'AUTH', token }));
+      };
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data as string);
+          if (msg.type === 'ENDED' || (msg.type === 'STATE_CHANGE' && msg.data?.player?.trackState === 5)) {
+            console.log('[YTM] Song ended (WS) — triggering queue_next');
+            ytmCurrentVideoIdRef.current = null;
+            reportEndedAndNext();
+          }
+        } catch { /* ignore malformed messages */ }
+      };
+      ws.onerror = () => setYtmError('YTM WebSocket error — using polling for end detection');
+      ws.onclose = () => { ytmWsRef.current = null; };
+    } catch {
+      console.warn('[YTM] WebSocket unavailable, using polling only');
+    }
+    return () => {
+      ws?.close();
+      ytmWsRef.current = null;
+    };
+  }, [playerMode, ytmAuthStep, reportEndedAndNext]);
 
   // Fetch lyrics for a video/title using lrclib API (best-effort)
   async function fetchLyricsForMedia(title: string | undefined, artist?: string) {
@@ -685,7 +901,34 @@ function App() {
 
   // Create or update YouTube player when media changes
   useEffect(() => {
-    if (!currentMedia || !ytApiReady || !playerDivRef.current) return;
+    if (!currentMedia) return;
+
+    // YTM Desktop mode: dispatch changeVideo instead of creating an iframe
+    if (playerModeRef.current === 'ytm_desktop') {
+      if (currentMediaIdRef.current === currentMedia.id) {
+        console.log('[Player] Same media (YTM), skipping');
+        return;
+      }
+      const videoId = extractYouTubeId(currentMedia.url);
+      if (!videoId) { console.error('[YTM] Could not extract YouTube ID from:', currentMedia.url); return; }
+      currentMediaIdRef.current = currentMedia.id;
+      ytmCurrentVideoIdRef.current = videoId;
+      console.log('[YTM] Sending changeVideo:', videoId);
+      ytmFetch('/api/v1/command', {
+        method: 'POST',
+        body: JSON.stringify({ command: 'changeVideo', data: { videoId } }),
+      }).then(res => {
+        if (res.ok) { setYtmConnected(true); setYtmError(null); }
+        else if (res.status === 401) { setYtmConnected(false); setYtmError('YTM auth failed — please reconnect'); }
+        else setYtmError(`YTM command failed (HTTP ${res.status})`);
+      }).catch(() => {
+        setYtmError('YTM Desktop offline — start YTM Desktop with Companion Server enabled');
+        setYtmConnected(false);
+      });
+      return;
+    }
+
+    if (!ytApiReady || !playerDivRef.current) return;
 
     // Check if this is actually a new media item
     if (currentMediaIdRef.current === currentMedia.id) {
@@ -710,6 +953,7 @@ function App() {
     if (playerRef.current && playerRef.current.loadVideoById) {
       console.log('[Player] Loading new video in existing player:', youtubeId);
       currentMediaIdRef.current = currentMedia.id;
+      currentYouTubeIdRef.current = youtubeId;
       
       // Check if this is loading after a skip
       const isAfterSkip = isSkipLoadingRef.current;
@@ -754,6 +998,7 @@ function App() {
 
     // First time setup - create new player
     currentMediaIdRef.current = currentMedia.id;
+    currentYouTubeIdRef.current = youtubeId;
     setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
@@ -778,10 +1023,20 @@ function App() {
 
   // Sync player state with server commands
   useEffect(() => {
-    if (!status || !playerRef.current || !playerRef.current.playVideo) return;
+    if (!status) return;
 
+    if (playerModeRef.current === 'ytm_desktop') {
+      if (status.state === 'playing') {
+        ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
+      } else if (status.state === 'paused') {
+        ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
+      }
+      return;
+    }
+
+    if (!playerRef.current || !playerRef.current.playVideo) return;
     const player = playerRef.current;
-    
+
     // Send commands to YouTube player based on server state
     if (status.state === 'playing') {
       player.playVideo();
@@ -792,12 +1047,80 @@ function App() {
 
   return (
     <div className="relative w-screen h-screen bg-black">
-      {/* YouTube Player Container */}
-      <div 
+      {/* YouTube Player Container (hidden in ytm_desktop mode or when local fallback is active) */}
+      <div
         ref={playerDivRef}
         id="player"
         className="w-full h-full"
+        style={{ display: (playerMode === 'ytm_desktop' || !!localPlaybackUrl) ? 'none' : 'block' }}
       />
+
+      {/* Local Video Fallback — plays a yt-dlp-downloaded .mp4 from Supabase Storage */}
+      {localPlaybackUrl && (
+        <video
+          ref={localVideoRef}
+          key={localPlaybackUrl}
+          src={localPlaybackUrl}
+          autoPlay
+          className="absolute inset-0 w-full h-full"
+          style={{ objectFit: 'contain', background: 'black' }}
+          onEnded={() => {
+            console.log('[Player] Local video ended — triggering queue_next');
+            reportEndedAndNext(false);
+          }}
+          onError={(e) => {
+            console.error('[Player] Local video playback error:', e);
+            setLocalPlaybackUrl(null);
+            reportEndedAndNext(false);
+          }}
+        />
+      )}
+
+      {/* YTM Desktop Overlay */}
+      {playerMode === 'ytm_desktop' && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black">
+          {ytmConnected && ytmNowPlaying ? (
+            <div style={{ textAlign: 'center', maxWidth: 480, padding: '0 24px' }}>
+              {ytmNowPlaying.thumbnail && (
+                <img src={ytmNowPlaying.thumbnail} alt="" style={{ width: 240, height: 180, objectFit: 'cover', borderRadius: 12, marginBottom: 20 }} />
+              )}
+              <div style={{ color: '#fff', fontSize: 26, fontWeight: 700, marginBottom: 8, lineHeight: '1.3' }}>{ytmNowPlaying.title}</div>
+              <div style={{ color: '#aaa', fontSize: 18, marginBottom: 16 }}>{ytmNowPlaying.artist}</div>
+              <div style={{ color: '#4ade80', fontSize: 12, letterSpacing: 1 }}>▶ Playing via YTM Desktop</div>
+            </div>
+          ) : ytmAuthStep === 'waiting' && ytmAuthCode ? (
+            <div style={{ textAlign: 'center', color: '#fff' }}>
+              <div style={{ fontSize: 16, color: '#aaa', marginBottom: 12 }}>Approve connection in YTM Desktop:</div>
+              <div style={{ fontSize: 36, fontWeight: 700, letterSpacing: 10, background: '#111', padding: '18px 28px', borderRadius: 10, marginBottom: 16, fontFamily: 'monospace' }}>{ytmAuthCode}</div>
+              <div style={{ fontSize: 13, color: '#555' }}>Waiting for approval…</div>
+            </div>
+          ) : ytmAuthStep === 'requesting' ? (
+            <div style={{ color: '#aaa', fontSize: 16 }}>Connecting to YTM Desktop…</div>
+          ) : (
+            <div style={{ textAlign: 'center', color: '#fff' }}>
+              <div style={{ fontSize: 22, fontWeight: 700, marginBottom: 8 }}>YTM Desktop Mode</div>
+              <div style={{ fontSize: 14, color: '#aaa', marginBottom: 24, maxWidth: 360 }}>
+                {ytmError || 'Start YTM Desktop with Companion Server enabled, then connect.'}
+              </div>
+              {!getYtmToken() ? (
+                <button
+                  onClick={ytmRequestAuth}
+                  style={{ padding: '10px 28px', background: '#e33122', borderRadius: 9, border: 'none', color: '#fff', cursor: 'pointer', fontSize: 15, fontWeight: 600 }}
+                >
+                  Connect YTM Desktop
+                </button>
+              ) : (
+                <div style={{ color: '#555', fontSize: 13 }}>Token found — waiting for YTM Desktop to respond…</div>
+              )}
+            </div>
+          )}
+          {ytmError && ytmConnected && (
+            <div style={{ position: 'absolute', top: 16, left: 16, right: 16, background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 8, padding: '8px 16px', color: '#fca5a5', fontSize: 12, textAlign: 'center' }}>
+              {ytmError}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Click Prevention Overlay - Allows play when paused, blocks pause when playing */}
       <div

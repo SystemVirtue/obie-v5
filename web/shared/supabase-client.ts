@@ -70,6 +70,10 @@ export interface PlayerStatus {
   queue_head_position: number;
   last_updated: string;
   current_media?: MediaItem; // Joined data
+  /** 'youtube' = normal iframe mode (default); 'local' = yt-dlp download in Storage */
+  source?: 'youtube' | 'local';
+  /** Public URL of the downloaded .mp4 in the 'downloads' bucket (only set when source='local') */
+  local_url?: string | null;
 }
 
 export interface PlayerSettings {
@@ -92,6 +96,7 @@ export interface PlayerSettings {
   kiosk_coin_acceptor_connected?: boolean;
   kiosk_coin_acceptor_device_id?: string | null;
   kiosk_show_virtual_coin_button?: boolean;
+  player_mode?: 'iframe' | 'ytm_desktop';
 }
 
 export interface KioskSession {
@@ -475,6 +480,27 @@ export async function callPlayerControl(params: {
   }
 
   return data;
+}
+
+/**
+ * Call download-video edge function
+ * Triggers a server-side yt-dlp download for a YouTube video that cannot be
+ * embedded, uploads the result to Supabase Storage, and flips player_status
+ * to source='local'.  The Player's realtime subscription handles the switch.
+ */
+export async function callDownloadVideo(params: {
+  videoId: string;
+  player_id?: string;
+}): Promise<{ success: boolean; publicUrl?: string }> {
+  const { data, error } = await supabase.functions.invoke('download-video', {
+    body: params,
+  });
+
+  if (error) {
+    throw new Error(error.message || JSON.stringify(error));
+  }
+
+  return data as { success: boolean; publicUrl?: string };
 }
 
 /**

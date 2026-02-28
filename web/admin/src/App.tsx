@@ -923,7 +923,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     finally { setSaving(false); }
   };
 
-  const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode }) : Promise.resolve();
+  const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode, player_mode: local.player_mode }) : Promise.resolve();
   const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit }) : Promise.resolve();
   const handleSaveBranding = () => local ? saveFields({ branding: local.branding }) : Promise.resolve();
 
@@ -974,6 +974,18 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
       <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
     </SettingsRow>
+    {'player_mode' in local && (
+      <SettingsRow label="Player Mode" desc="iFrame embeds YouTube directly; ytm_desktop routes playback through YTM Desktop Companion (localhost:9863)">
+        <select
+          value={local.player_mode ?? 'iframe'}
+          onChange={e => set('player_mode', e.target.value as 'iframe' | 'ytm_desktop')}
+          style={{ padding: '7px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', cursor: 'pointer' }}
+        >
+          <option value="iframe">iFrame Player</option>
+          <option value="ytm_desktop">ytm_desktop API</option>
+        </select>
+      </SettingsRow>
+    )}
   </>, handleSavePlayback);
 
   if (view === 'settings-kiosk') return (
