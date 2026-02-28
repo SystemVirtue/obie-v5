@@ -27,7 +27,7 @@ const saveYtmToken = (token: string) => localStorage.setItem('ytm_auth_token', t
 async function ytmFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getYtmToken();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (token) headers['Authorization'] = token; // YTM hashes the raw token — no "Bearer" prefix
   return fetch(`${YTM_BASE}${path}`, {
     ...init,
     headers: { ...headers, ...(init.headers as Record<string, string> ?? {}) },
