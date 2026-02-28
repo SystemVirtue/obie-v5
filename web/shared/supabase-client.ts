@@ -483,24 +483,32 @@ export async function callPlayerControl(params: {
 }
 
 /**
- * Call download-video edge function
- * Triggers a server-side yt-dlp download for a YouTube video that cannot be
- * embedded, uploads the result to Supabase Storage, and flips player_status
- * to source='local'.  The Player's realtime subscription handles the switch.
+ * Trigger a yt-dlp download via the local companion service.
+ *
+ * Calls the download-service.mjs Node.js process running on localhost:3742
+ * (hosted Supabase Edge Functions cannot shell out to yt-dlp).
+ * The service downloads the video, uploads to Storage, and flips
+ * player_status to source='local'.  The Player's Realtime subscription
+ * then switches from the iframe to a native <video> element.
+ *
+ * Start the service:  node scripts/download-service.mjs
  */
 export async function callDownloadVideo(params: {
   videoId: string;
   player_id?: string;
 }): Promise<{ success: boolean; publicUrl?: string }> {
-  const { data, error } = await supabase.functions.invoke('download-video', {
-    body: params,
+  const res = await fetch('http://127.0.0.1:3742/download', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(params),
   });
 
-  if (error) {
-    throw new Error(error.message || JSON.stringify(error));
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { error?: string };
+    throw new Error(err.error ?? `Download service returned HTTP ${res.status}`);
   }
 
-  return data as { success: boolean; publicUrl?: string };
+  return res.json() as Promise<{ success: boolean; publicUrl?: string }>;
 }
 
 /**
