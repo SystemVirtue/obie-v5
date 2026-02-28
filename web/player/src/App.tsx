@@ -657,23 +657,27 @@ function App() {
     setYtmAuthStep('requesting');
     setYtmError(null);
     try {
-      const res = await fetch(
-        `${YTM_BASE}/api/v1/auth/requestcode?appid=${YTM_APP_ID}&appname=Obie+Jukebox&appversion=1.0.0`
-      );
+      const res = await fetch(`${YTM_BASE}/api/v1/auth/requestcode`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ appId: YTM_APP_ID, appName: 'Obie Jukebox', appVersion: '1.0.0' }),
+      });
       if (!res.ok) throw new Error('YTM Desktop not responding');
       const data = await res.json();
       const code: string = data.code;
       setYtmAuthCode(code);
       setYtmAuthStep('waiting');
-      // Poll every 2 s until approved (max 90 s)
+      // Poll every 2 s until approved (max 30 s timeout per request)
       let attempts = 0;
       const poll = setInterval(async () => {
         attempts++;
         if (attempts > 45) { clearInterval(poll); setYtmAuthStep('idle'); return; }
         try {
-          const authRes = await fetch(
-            `${YTM_BASE}/api/v1/auth/request?appid=${YTM_APP_ID}&token=${code}`
-          );
+          const authRes = await fetch(`${YTM_BASE}/api/v1/auth/request`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ appId: YTM_APP_ID, code }),
+          });
           if (!authRes.ok) return;
           const authData = await authRes.json();
           if (authData.token) {
@@ -697,7 +701,7 @@ function App() {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 3000);
-      const res = await fetch(`${YTM_BASE}/api/v1/status`, { signal: controller.signal });
+      const res = await fetch(`${YTM_BASE}/api/v1/state`, { signal: controller.signal });
       clearTimeout(timeout);
       if (res.ok) {
         setYtmTestResult('ok');
@@ -734,21 +738,21 @@ function App() {
     const poll = window.setInterval(async () => {
       if (!getYtmToken()) return;
       try {
-        const res = await ytmFetch('/api/v1/status');
+        const res = await ytmFetch('/api/v1/state');
         if (!res.ok) { setYtmConnected(false); return; }
         const data = await res.json();
         setYtmConnected(true);
         setYtmError(null);
-        const track = data.track;
-        if (track) {
-          setYtmNowPlaying({ title: track.title || '', artist: track.author || '', thumbnail: track.cover || '' });
-        }
-        // End detection: statePercent near 1 for the video Obie loaded
+        const video = data.video;
         const player = data.player;
-        if (player && ytmCurrentVideoIdRef.current && player.videoId === ytmCurrentVideoIdRef.current) {
-          const pct: number = typeof player.statePercent === 'number' ? player.statePercent : 0;
-          const pos: number = typeof player.seekbarCurrentPosition === 'number' ? player.seekbarCurrentPosition : 0;
-          const ended = pct >= 0.99 || (player.trackState === 0 && pos > 0 && pct > 0.95);
+        if (video) {
+          const thumb = video.thumbnails?.[0]?.url || '';
+          setYtmNowPlaying({ title: video.title || '', artist: video.author || '', thumbnail: thumb });
+        }
+        // End detection: videoProgress near 1 for the video Obie loaded (trackState 0 = ended)
+        if (player && ytmCurrentVideoIdRef.current && video?.id === ytmCurrentVideoIdRef.current) {
+          const pct: number = typeof player.videoProgress === 'number' ? player.videoProgress : 0;
+          const ended = pct >= 0.99 || (player.trackState === 0 && pct > 0.95);
           if (ended) {
             console.log('[YTM] Song ended (poll) — triggering queue_next');
             ytmCurrentVideoIdRef.current = null; // prevent double-trigger
@@ -766,39 +770,8 @@ function App() {
     };
   }, [playerMode, reportEndedAndNext]);
 
-  // YTM Desktop WebSocket for real-time end detection
-  useEffect(() => {
-    if (playerMode !== 'ytm_desktop') return;
-    const token = getYtmToken();
-    if (!token) return;
-    let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket('ws://localhost:9863/api/v1/events');
-      ytmWsRef.current = ws;
-      ws.onopen = () => {
-        console.log('[YTM] WebSocket connected');
-        ws!.send(JSON.stringify({ type: 'AUTH', token }));
-      };
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data as string);
-          if (msg.type === 'ENDED' || (msg.type === 'STATE_CHANGE' && msg.data?.player?.trackState === 5)) {
-            console.log('[YTM] Song ended (WS) — triggering queue_next');
-            ytmCurrentVideoIdRef.current = null;
-            reportEndedAndNext();
-          }
-        } catch { /* ignore malformed messages */ }
-      };
-      ws.onerror = () => setYtmError('YTM WebSocket error — using polling for end detection');
-      ws.onclose = () => { ytmWsRef.current = null; };
-    } catch {
-      console.warn('[YTM] WebSocket unavailable, using polling only');
-    }
-    return () => {
-      ws?.close();
-      ytmWsRef.current = null;
-    };
-  }, [playerMode, ytmAuthStep, reportEndedAndNext]);
+  // YTM Desktop uses Socket.IO for real-time events (requires socket.io-client).
+  // End detection is handled by the 2s polling effect above via videoProgress >= 0.99.
 
   // Fetch lyrics for a video/title using lrclib API (best-effort)
   async function fetchLyricsForMedia(title: string | undefined, artist?: string) {
