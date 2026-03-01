@@ -346,16 +346,17 @@ Deno.serve(async (req)=>{
         }
 
         // Test iframe embedding by attempting to load the video in an iframe
-        // We'll use a server-side approach: fetch the YouTube embed HTML and check for errors
+        // Use GET request (HEAD often fails with YouTube), but don't download the full page
         try {
-          const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+          const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=0`;
           const embedResponse = await fetch(embedUrl, {
-            method: 'HEAD',
+            method: 'GET',
             redirect: 'follow'
           });
 
-          // If we get a redirect or non-200, the video might be restricted
-          if (!embedResponse.ok && embedResponse.status !== 200) {
+          // Only mark as invalid if we get a clear 404 or 403 error
+          // Status 200-399 = valid (includes redirects handled by fetch)
+          if (embedResponse.status === 404 || embedResponse.status === 403) {
             return new Response(JSON.stringify({
               valid: false,
               reason: 'Video is not available for iframe playback'
@@ -381,7 +382,7 @@ Deno.serve(async (req)=>{
           });
         } catch (embedError) {
           console.error('Error checking iframe availability:', embedError);
-          // On network errors, assume the video might be available
+          // On network errors, assume the video is valid (fail open)
           return new Response(JSON.stringify({
             valid: true,
             reason: 'Could not verify, but proceeding with video'
