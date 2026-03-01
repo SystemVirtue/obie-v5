@@ -38,6 +38,8 @@ function App() {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [checkResult, setCheckResult] = useState<{ valid: boolean; reason: string } | null>(null);
+  const [showCheckResult, setShowCheckResult] = useState(false);
 
   // Serial connection refs
   const serialPortRef = useRef<any>(null);
@@ -203,7 +205,39 @@ function App() {
 
       setIsConfirming(true);
       try {
-        // Call kiosk-handler request with URL, letting the handler scrape & enqueue atomically
+        // First, check if the video can be played in an iframe
+        try {
+          const checkRes = await callKioskHandler({
+            action: 'check',
+            url: selectedResult.url
+          }) as { valid?: boolean; reason?: string; error?: string };
+
+          // Store the result and show the check result modal
+          const checkResult = {
+            valid: checkRes.valid ?? false,
+            reason: checkRes.reason || checkRes.error || 'Unknown error'
+          };
+          setCheckResult(checkResult);
+          setShowCheckResult(true);
+          setIsConfirming(false);
+
+          // If not valid, stop here - the user will see the error modal
+          if (!checkResult.valid) {
+            return;
+          }
+        } catch (err) {
+          console.error('Failed to check video availability:', err);
+          setCheckResult({
+            valid: false,
+            reason: 'Failed to verify video availability'
+          });
+          setShowCheckResult(true);
+          setIsConfirming(false);
+          return;
+        }
+
+        // If check passed, proceed with adding to queue
+        setIsConfirming(true);
         try {
           const res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
           if (res?.error) {
@@ -503,12 +537,47 @@ function App() {
                   </div>
                   <div className="flex justify-end gap-3 mt-6">
                     <button onClick={() => setShowConfirm(false)} className="px-4 py-2 bg-red-100 rounded">No</button>
-                    <button 
-                      onClick={handleConfirmAdd} 
+                    <button
+                      onClick={handleConfirmAdd}
                       disabled={isConfirming}
                       className={`px-4 py-2 rounded ${isConfirming ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white`}
                     >
                       {isConfirming ? 'Adding...' : 'Yes'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+          )}
+
+          {/* Video Check Result Modal */}
+          {showCheckResult && checkResult && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60">
+                <div className={`rounded-lg p-8 w-[520px] ${checkResult.valid ? 'bg-green-50' : 'bg-red-50'}`}>
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className={`text-4xl ${checkResult.valid ? 'text-green-600' : 'text-red-600'}`}>
+                      {checkResult.valid ? '✓' : '✗'}
+                    </div>
+                    <div>
+                      <div className={`text-lg font-bold ${checkResult.valid ? 'text-green-800' : 'text-red-800'}`}>
+                        {checkResult.valid ? 'Video Available' : 'Video Unavailable'}
+                      </div>
+                      <div className={`text-sm ${checkResult.valid ? 'text-green-700' : 'text-red-700'}`}>
+                        {checkResult.reason}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-3 mt-6">
+                    <button
+                      onClick={() => {
+                        setShowCheckResult(false);
+                        setCheckResult(null);
+                        if (!checkResult.valid) {
+                          setShowConfirm(false);
+                        }
+                      }}
+                      className={`px-6 py-2 rounded font-semibold text-white ${checkResult.valid ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+                    >
+                      {checkResult.valid ? 'Continue' : 'Back'}
                     </button>
                   </div>
                 </div>

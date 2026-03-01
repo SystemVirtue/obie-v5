@@ -308,6 +308,105 @@ Deno.serve(async (req)=>{
         });
       }
     }
+    // Handle iframe video validation check
+    if (action === 'check') {
+      const { url } = body;
+      if (!url) {
+        return new Response(JSON.stringify({
+          error: 'url is required for check action'
+        }), {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      try {
+        // Extract video ID from YouTube URL
+        let videoId = null;
+        const youtubeRegex = /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?#]+)/;
+        const match = url.match(youtubeRegex);
+        if (match && match[1]) {
+          videoId = match[1];
+        }
+
+        if (!videoId) {
+          return new Response(JSON.stringify({
+            valid: false,
+            reason: 'Invalid YouTube URL'
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+
+        // Test iframe embedding by attempting to load the video in an iframe
+        // We'll use a server-side approach: fetch the YouTube embed HTML and check for errors
+        try {
+          const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+          const embedResponse = await fetch(embedUrl, {
+            method: 'HEAD',
+            redirect: 'follow'
+          });
+
+          // If we get a redirect or non-200, the video might be restricted
+          if (!embedResponse.ok && embedResponse.status !== 200) {
+            return new Response(JSON.stringify({
+              valid: false,
+              reason: 'Video is not available for iframe playback'
+            }), {
+              status: 200,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json'
+              }
+            });
+          }
+
+          // Video appears to be embeddable
+          return new Response(JSON.stringify({
+            valid: true,
+            reason: 'Video is available for iframe playback'
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        } catch (embedError) {
+          console.error('Error checking iframe availability:', embedError);
+          // On network errors, assume the video might be available
+          return new Response(JSON.stringify({
+            valid: true,
+            reason: 'Could not verify, but proceeding with video'
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+      } catch (err) {
+        console.error('Check action error:', err);
+        return new Response(JSON.stringify({
+          error: err.message
+        }), {
+          status: 500,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+    }
+
     // Handle adding credits to a session (e.g., coin insert)
     if (action === 'credit') {
       const { session_id, amount } = body;

@@ -517,7 +517,7 @@ export async function callDownloadVideo(params: {
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request';
+  action: 'init' | 'search' | 'credit' | 'request' | 'check';
   query?: string;
   media_item_id?: string;
   amount?: number;
