@@ -259,7 +259,7 @@ async function fetchVideo(videoId: string, apiKey: string): Promise<Video | null
   const item = data.items[0];
   return parseVideoItem(item);
 }
-// Fetch search results
+// Fetch search results with embeddability filtering
 async function fetchSearch(query: string, apiKey: string): Promise<Video[]> {
   const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=10&key=${apiKey}`;
   const response = await fetch(url);
@@ -275,23 +275,48 @@ async function fetchSearch(query: string, apiKey: string): Promise<Video[]> {
     throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
   }
   const data = await response.json();
-  const videos = data.items.map(item => {
-    const snippet = item.snippet;
-    // Extract artist from title (common format: "Artist - Title")
-    const titleParts = snippet.title.split(' - ');
-    const artist = titleParts.length > 1 ? titleParts[0].trim() : snippet.channelTitle;
-    const title = titleParts.length > 1 ? titleParts.slice(1).join(' - ').trim() : snippet.title;
-    return {
-      id: item.id.videoId,
-      title,
-      artist,
-      duration: 0, // Duration not available in search results
-      thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
-      thumbnailUrl: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
-      url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
-      embeddable: true  // Default to true for search results (will be verified by kiosk check)
-    };
+
+  // Extract video IDs from search results
+  const videoIds = data.items.map((item: any) => item.id.videoId).join(',');
+
+  if (!videoIds) {
+    return [];
+  }
+
+  // Fetch embeddability status for all videos at once
+  const videosWithStatus = await fetchVideosBatch(videoIds, apiKey);
+
+  // Build a map of video ID to embeddable status for quick lookup
+  const embeddableMap = new Map<string, boolean>();
+  videosWithStatus.forEach((video) => {
+    embeddableMap.set(video.id, video.embeddable !== false);
   });
+
+  // Map search results and filter out non-embeddable videos
+  const videos = data.items
+    .map((item: any) => {
+      const snippet = item.snippet;
+      const videoId = item.id.videoId;
+      const isEmbeddable = embeddableMap.get(videoId) ?? true;
+
+      // Extract artist from title (common format: "Artist - Title")
+      const titleParts = snippet.title.split(' - ');
+      const artist = titleParts.length > 1 ? titleParts[0].trim() : snippet.channelTitle;
+      const title = titleParts.length > 1 ? titleParts.slice(1).join(' - ').trim() : snippet.title;
+
+      return {
+        id: videoId,
+        title,
+        artist,
+        duration: 0, // Duration not available in search results (but will be in batch call)
+        thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
+        thumbnailUrl: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        embeddable: isEmbeddable
+      };
+    })
+    .filter((video: Video) => video.embeddable !== false);
+
   return videos;
 }
 // Fetch playlist metadata (all videos)
