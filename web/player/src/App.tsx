@@ -57,7 +57,7 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
-  const playbackTimeoutRef = useRef<number | null>(null); // Timeout to skip if video doesn't start playing
+  const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -359,13 +359,8 @@ function App() {
     // 5 = CUED
 
     if (event.data === 1) {
-      // PLAYING - clear the "didn't start" timeout
+      // PLAYING
       console.log('[Player] Video PLAYING');
-      if (playbackTimeoutRef.current) {
-        clearTimeout(playbackTimeoutRef.current);
-        playbackTimeoutRef.current = null;
-        console.log('[Player] Cleared playback timeout - video started successfully');
-      }
       reportStatus('playing');
 
       // If we're at volume 0 (after skip), fade in
@@ -1097,50 +1092,46 @@ function App() {
     });
   }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
 
-  // Auto-skip videos that fail to start playing within 5 seconds
-  // This catches age-restricted videos that don't fire error events, plus other failures
+  // Auto-skip videos that stay in 'loading' status for 4+ seconds
+  // This catches age-restricted, geographically blocked, or other failed-to-load videos
   useEffect(() => {
-    if (!currentMedia || playerModeRef.current === 'ytm_desktop') {
-      // Clear timeout if no current media or in YTM Desktop mode
-      if (playbackTimeoutRef.current) {
-        clearTimeout(playbackTimeoutRef.current);
-        playbackTimeoutRef.current = null;
-      }
-      return;
-    }
+    if (!status) return;
 
     // Clear any existing timeout
-    if (playbackTimeoutRef.current) {
-      clearTimeout(playbackTimeoutRef.current);
+    if (loadingTimeoutRef.current) {
+      clearTimeout(loadingTimeoutRef.current);
+      loadingTimeoutRef.current = null;
     }
 
-    // Set a 5-second timeout: if video hasn't started playing by then, skip it
-    console.log('[Player] Setting 5-second playback timeout for:', currentMedia.title);
-    playbackTimeoutRef.current = window.setTimeout(async () => {
-      console.error('[Player] Video did not start playing within 5 seconds — skipping to next');
-      playbackTimeoutRef.current = null;
+    // If status is 'loading', set a 4-second timeout to skip if still loading
+    if (status.state === 'loading') {
+      console.log('[Player] Video entered loading state, setting 4-second timeout to skip if not loaded');
+      loadingTimeoutRef.current = window.setTimeout(async () => {
+        console.error('[Player] Video still in loading state after 4 seconds — skipping to next');
+        loadingTimeoutRef.current = null;
 
-      // Bypass isEndingRef guard for timeout-triggered skips (age-restricted, etc)
-      // These are auto-detected failures, not user actions or error events
-      isEndingRef.current = true;
-      try {
-        console.log('[Player] Forcing skip via timeout (might bypass recent skip guard)');
-        await reportEndedAndNext(false);
-      } finally {
-        setTimeout(() => {
-          isEndingRef.current = false;
-        }, 1000);
-      }
-    }, 5000);
+        // Bypass isEndingRef guard for timeout-triggered skips
+        isEndingRef.current = true;
+        try {
+          await reportEndedAndNext(false);
+        } finally {
+          setTimeout(() => {
+            isEndingRef.current = false;
+          }, 1000);
+        }
+      }, 4000);
+    } else {
+      // Status changed away from 'loading', clear the timeout
+      console.log('[Player] Status changed from loading to:', status.state);
+    }
 
-    // Cleanup the timeout when component unmounts or currentMedia changes
     return () => {
-      if (playbackTimeoutRef.current) {
-        clearTimeout(playbackTimeoutRef.current);
-        playbackTimeoutRef.current = null;
+      if (loadingTimeoutRef.current) {
+        clearTimeout(loadingTimeoutRef.current);
+        loadingTimeoutRef.current = null;
       }
     };
-  }, [currentMedia, reportEndedAndNext]);
+  }, [status?.state, reportEndedAndNext]);
 
   // Sync player state with server commands
   useEffect(() => {
