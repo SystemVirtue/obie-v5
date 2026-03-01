@@ -1105,19 +1105,38 @@ function App() {
 
     // If status is 'loading', set a 4-second timeout to skip if still loading
     if (status.state === 'loading') {
-      console.log('[Player] Video entered loading state, setting 4-second timeout to skip if not loaded');
+      console.log('[Player] Video entered loading state, setting 4-second timeout to load next if not loaded');
       loadingTimeoutRef.current = window.setTimeout(async () => {
-        console.error('[Player] Video still in loading state after 4 seconds — skipping to next');
+        console.error('[Player] Video still in loading state after 4 seconds — loading next video');
         loadingTimeoutRef.current = null;
 
-        // Bypass isEndingRef guard for timeout-triggered skips
-        isEndingRef.current = true;
+        // Video never started loading, just advance to next without skip/fade logic
         try {
-          await reportEndedAndNext(false);
-        } finally {
-          setTimeout(() => {
-            isEndingRef.current = false;
-          }, 1000);
+          const result = await callPlayerControl({
+            player_id: PLAYER_ID,
+            state: 'idle',
+            progress: 1,
+            action: 'ended',
+          });
+
+          if (result?.next_item) {
+            const nextMedia: MediaItem = {
+              id: result.next_item.media_item_id,
+              title: result.next_item.title || 'Unknown',
+              artist: 'Unknown',
+              url: result.next_item.url,
+              duration: result.next_item.duration || 0,
+              source_id: '',
+              source_type: 'youtube',
+              thumbnail: null,
+              fetched_at: new Date().toISOString(),
+              metadata: {},
+            };
+            console.log('[Player] Loading next media after loading timeout:', nextMedia);
+            setCurrentMedia(nextMedia);
+          }
+        } catch (error) {
+          console.error('[Player] Failed to advance after loading timeout:', error);
         }
       }, 4000);
     } else {
@@ -1131,7 +1150,7 @@ function App() {
         loadingTimeoutRef.current = null;
       }
     };
-  }, [status?.state, reportEndedAndNext]);
+  }, [status?.state]);
 
   // Sync player state with server commands
   useEffect(() => {
