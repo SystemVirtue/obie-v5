@@ -1097,7 +1097,8 @@ function App() {
     });
   }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
 
-  // Auto-skip videos that fail to start playing within 15 seconds
+  // Auto-skip videos that fail to start playing within 5 seconds
+  // This catches age-restricted videos that don't fire error events, plus other failures
   useEffect(() => {
     if (!currentMedia || playerModeRef.current === 'ytm_desktop') {
       // Clear timeout if no current media or in YTM Desktop mode
@@ -1118,7 +1119,18 @@ function App() {
     playbackTimeoutRef.current = window.setTimeout(async () => {
       console.error('[Player] Video did not start playing within 5 seconds — skipping to next');
       playbackTimeoutRef.current = null;
-      await reportEndedAndNext(false);
+
+      // Bypass isEndingRef guard for timeout-triggered skips (age-restricted, etc)
+      // These are auto-detected failures, not user actions or error events
+      isEndingRef.current = true;
+      try {
+        console.log('[Player] Forcing skip via timeout (might bypass recent skip guard)');
+        await reportEndedAndNext(false);
+      } finally {
+        setTimeout(() => {
+          isEndingRef.current = false;
+        }, 1000);
+      }
     }, 5000);
 
     // Cleanup the timeout when component unmounts or currentMedia changes
