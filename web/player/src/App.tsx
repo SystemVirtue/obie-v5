@@ -58,6 +58,7 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  const playbackTimeoutRef = useRef<number | null>(null); // Timeout to skip if video doesn't start playing
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -351,7 +352,7 @@ function App() {
 
   const onPlayerStateChange = useCallback((event: any) => {
     console.log('[Player] YouTube state change:', event.data);
-    
+
     // YouTube Player States:
     // -1 = UNSTARTED
     // 0 = ENDED
@@ -359,12 +360,17 @@ function App() {
     // 2 = PAUSED
     // 3 = BUFFERING
     // 5 = CUED
-    
+
     if (event.data === 1) {
-      // PLAYING
+      // PLAYING - clear the "didn't start" timeout
       console.log('[Player] Video PLAYING');
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+        console.log('[Player] Cleared playback timeout - video started successfully');
+      }
       reportStatus('playing');
-      
+
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
         const currentVol = ((): number => {
@@ -381,7 +387,7 @@ function App() {
       // PAUSED
       console.log('[Player] Video PAUSED');
       reportStatus('paused');
-      
+
       // If video was recently loaded and paused unexpectedly, attempt to auto-play
       if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
         console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
@@ -409,11 +415,11 @@ function App() {
     console.error('[Player] YouTube player error:', event.data);
 
     // Error codes:
-    // 2   = Invalid parameter
-    // 5   = HTML5 player error
+    // 2   = Invalid parameter (could indicate age-restricted)
+    // 5   = HTML5 player error (network, decoding, etc)
     // 100 = Video not found or private
     // 101 = Embedding not allowed by owner
-    // 150 = Same as 101
+    // 150 = Same as 101 (embedding not allowed)
 
     if (event.data === 101 || event.data === 150) {
       // ── yt-dlp download fallback ──────────────────────────────────────────
@@ -453,6 +459,7 @@ function App() {
         console.error(`[Player][download-video] ✖ FAILED  took=${dlSecs}s`, downloadErr);
         isDownloadingRef.current = false;
         // Fall back to skipping the video
+        console.log('[Player] Fallback download failed — skipping to next video');
         await reportEndedAndNext(false);
       }
       return;
@@ -495,8 +502,17 @@ function App() {
       return;
     }
 
-    // Other errors — skip to next
-    console.error('[Player] Unhandled player error, skipping to next');
+    // ── Other errors (2, 5, etc) — skip to next ──────────────────────────────
+    // Error 2: Invalid parameter (might indicate age-restricted, geographically blocked, etc)
+    // Error 5: HTML5 player error (network issue, codec problem, etc)
+    // Any other error that causes playback to fail
+    const errorDescriptions: Record<number, string> = {
+      2: 'Invalid parameter (possibly age-restricted or geographically restricted)',
+      5: 'HTML5 player error (network, codec, or playback issue)',
+    };
+    const errorDesc = errorDescriptions[event.data] || `Unknown error code ${event.data}`;
+    console.error(`[Player] Playback error (${event.data}): ${errorDesc} — skipping to next video`);
+
     await reportEndedAndNext(false);
   }, [reportEndedAndNext, isSlavePlayer]);
 
@@ -1121,6 +1137,39 @@ function App() {
       },
     });
   }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
+
+  // Auto-skip videos that fail to start playing within 15 seconds
+  useEffect(() => {
+    if (!currentMedia || playerModeRef.current === 'ytm_desktop') {
+      // Clear timeout if no current media or in YTM Desktop mode
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    // Clear any existing timeout
+    if (playbackTimeoutRef.current) {
+      clearTimeout(playbackTimeoutRef.current);
+    }
+
+    // Set a 15-second timeout: if video hasn't started playing by then, skip it
+    console.log('[Player] Setting 15-second playback timeout for:', currentMedia.title);
+    playbackTimeoutRef.current = window.setTimeout(async () => {
+      console.error('[Player] Video did not start playing within 15 seconds — skipping to next');
+      playbackTimeoutRef.current = null;
+      await reportEndedAndNext(false);
+    }, 15000);
+
+    // Cleanup the timeout when component unmounts or currentMedia changes
+    return () => {
+      if (playbackTimeoutRef.current) {
+        clearTimeout(playbackTimeoutRef.current);
+        playbackTimeoutRef.current = null;
+      }
+    };
+  }, [currentMedia, reportEndedAndNext]);
 
   // Sync player state with server commands
   useEffect(() => {
