@@ -81,6 +81,7 @@ function App() {
   const ytmCurrentVideoIdRef = useRef<string | null>(null);
   const ytmPlayingReportedRef = useRef(false);       // guard: report 'playing' once per video
   const ytmTrackStateRef = useRef<number | null>(null); // previous YTM trackState for transition detection
+  const ytmAdminPausedRef = useRef(false);           // true while a Supabase-admin pause is in flight
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
@@ -606,6 +607,10 @@ function App() {
         
         if (newState === 'paused' && prevState === 'playing') {
           if (playerModeRef.current === 'ytm_desktop') {
+            // Mark that this pause is admin-initiated so end detection ignores the
+            // resulting trackState 1→0 transition in the state-update handler.
+            ytmAdminPausedRef.current = true;
+            setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
           } else if (playerRef.current) {
             // Fade out when pausing
@@ -769,7 +774,7 @@ function App() {
     if (playerMode !== 'ytm_desktop') return;
     if (!ytmToken) return;
 
-    const socket = io(YTM_BASE, {
+    const socket = io(`${YTM_BASE}/api/v1/realtime`, {
       auth: { token: ytmToken },
       transports: ['websocket'], // API requires websocket-only (no polling)
       reconnection: true,
@@ -824,15 +829,25 @@ function App() {
           reportStatus('playing');
         }
 
-        // End detection — videoProgress is SECONDS, trackState 0=Paused (no explicit ended state).
-        // We detect end by comparing elapsed seconds to the track duration.
-        // Per API: video.durationSeconds (integer, seconds) — NOT video.duration.
-        const duration: number = typeof video?.durationSeconds === 'number' ? video.durationSeconds : 0;
-        const atEnd = videoMatches && duration > 0 && videoProgress >= duration - 1.5; // within 1.5s of end
-        const pausedAtEnd = videoMatches && trackState === 0                           // paused…
-                            && prevTrackState === 1                                    // …was playing
-                            && duration > 0 && videoProgress > duration * 0.90;       // …near end
-        if (atEnd || pausedAtEnd) {
+        // End detection — videoProgress is SECONDS, trackState 0=Paused (no "ended" state in API).
+        // API field is video.durationSeconds; fall back to video.duration in case of API variance.
+        const duration: number =
+          (typeof video?.durationSeconds === 'number' && video.durationSeconds > 0 ? video.durationSeconds : 0) ||
+          (typeof video?.duration === 'number' && video.duration > 0 ? video.duration : 0);
+
+        // Within 2 seconds of the end (requires duration to be known)
+        const atEnd = videoMatches && duration > 0 && videoProgress >= duration - 2;
+
+        // YTM Desktop transitions playing→unknown (-1) at end (observed via Socket.IO).
+        // Fallback: also catch playing→paused (0) in case behaviour varies by track.
+        // Gated on !ytmAdminPausedRef so admin-initiated pauses don't falsely trigger this.
+        const pausedWhilePlaying = videoMatches
+          && (trackState === 0 || trackState === -1) && prevTrackState === 1  // playing → paused/unknown
+          && !ytmAdminPausedRef.current                        // not an admin pause
+          && (duration > 0 ? videoProgress > duration * 0.85  // near end (if duration known)
+                           : videoProgress > 10);             // >10s in (if duration unknown)
+
+        if (atEnd || pausedWhilePlaying) {
           console.log('[YTM] Song ended — triggering queue_next', { videoProgress, duration, trackState, prevTrackState });
           ytmCurrentVideoIdRef.current = null; // prevent double-trigger
           reportEndedAndNext();
