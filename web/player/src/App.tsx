@@ -412,13 +412,7 @@ function App() {
     // 100 = Video not found or private
     // 101 = Embedding not allowed by owner
     // 150 = Same as 101 (embedding not allowed)
-
-    if (event.data === 101 || event.data === 150) {
-      // ── Embedding disabled — skip to next ──────────────────────────────────
-      console.error('[Player] Embedding disabled (101/150) — skipping to next video');
-      await reportEndedAndNext(false);
-      return;
-    }
+    // Note: These videos will stay in 'loading' state and be caught by the 4-second timeout
 
     if (event.data === 100) {
       // ── Video not found / private — remove and skip ───────────────────────
@@ -453,23 +447,14 @@ function App() {
         }
       }
 
-      await reportEndedAndNext(false);
+      // Let the 4-second timeout handle advancing to next video
       return;
     }
 
-    // ── Other errors (2, 5, etc) — skip to next ──────────────────────────────
-    // Error 2: Invalid parameter (might indicate age-restricted, geographically blocked, etc)
-    // Error 5: HTML5 player error (network issue, codec problem, etc)
-    // Any other error that causes playback to fail
-    const errorDescriptions: Record<number, string> = {
-      2: 'Invalid parameter (possibly age-restricted or geographically restricted)',
-      5: 'HTML5 player error (network, codec, or playback issue)',
-    };
-    const errorDesc = errorDescriptions[event.data] || `Unknown error code ${event.data}`;
-    console.error(`[Player] Playback error (${event.data}): ${errorDesc} — skipping to next video`);
-
-    await reportEndedAndNext(false);
-  }, [reportEndedAndNext, isSlavePlayer]);
+    // Error codes 2, 5, and all others: Let the 4-second loading timeout handle them
+    // These videos will fail to load and stay in 'loading' state, triggering the timeout
+    console.error(`[Player] Playback error (${event.data}): Video failed to load — will auto-skip after 4 seconds if stuck`);
+  }, [isSlavePlayer]);
 
   // Load YouTube IFrame API
   useEffect(() => {
