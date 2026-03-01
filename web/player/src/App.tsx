@@ -1154,13 +1154,13 @@ function App() {
       clearTimeout(playbackTimeoutRef.current);
     }
 
-    // Set a 15-second timeout: if video hasn't started playing by then, skip it
-    console.log('[Player] Setting 15-second playback timeout for:', currentMedia.title);
+    // Set a 5-second timeout: if video hasn't started playing by then, skip it
+    console.log('[Player] Setting 5-second playback timeout for:', currentMedia.title);
     playbackTimeoutRef.current = window.setTimeout(async () => {
-      console.error('[Player] Video did not start playing within 15 seconds — skipping to next');
+      console.error('[Player] Video did not start playing within 5 seconds — skipping to next');
       playbackTimeoutRef.current = null;
       await reportEndedAndNext(false);
-    }, 15000);
+    }, 5000);
 
     // Cleanup the timeout when component unmounts or currentMedia changes
     return () => {
