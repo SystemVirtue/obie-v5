@@ -16,6 +16,7 @@ interface Video {
   duration: number;
   thumbnail: string;
   url: string;
+  embeddable?: boolean;
 }
 
 // API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets
@@ -238,7 +239,7 @@ function extractPlaylistId(url: string): string | null {
 
 // Fetch single video metadata
 async function fetchVideo(videoId: string, apiKey: string): Promise<Video | null> {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${apiKey}`;
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status&id=${videoId}&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
   if (response.status === 403) {
@@ -287,7 +288,8 @@ async function fetchSearch(query: string, apiKey: string): Promise<Video[]> {
       duration: 0, // Duration not available in search results
       thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
       thumbnailUrl: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
-      url: `https://www.youtube.com/watch?v=${item.id.videoId}`
+      url: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+      embeddable: true  // Default to true for search results (will be verified by kiosk check)
     };
   });
   return videos;
@@ -322,7 +324,7 @@ async function fetchPlaylist(playlistId: string, apiKey: string): Promise<Video[
 }
 // Fetch multiple videos in batch
 async function fetchVideosBatch(videoIds: string, apiKey: string): Promise<Video[]> {
-  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoIds}&key=${apiKey}`;
+  const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status&id=${videoIds}&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
   if (response.status === 403) {
@@ -345,9 +347,11 @@ function parseVideoItem(item: unknown): Video {
     id: string;
     snippet: { title: string; channelTitle: string; thumbnails?: Record<string, { url: string }> };
     contentDetails?: { duration: string };
+    status?: { embeddable?: boolean };
   };
   const snippet = typedItem.snippet;
   const contentDetails = typedItem.contentDetails;
+  const status = typedItem.status;
   // Parse ISO 8601 duration (PT4M13S -> 253 seconds)
   const duration = contentDetails?.duration ? parseDuration(contentDetails.duration) : 0;
   // Extract artist from title (common format: "Artist - Title")
@@ -360,7 +364,8 @@ function parseVideoItem(item: unknown): Video {
     artist,
     duration,
     thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
-    url: `https://www.youtube.com/watch?v=${typedItem.id}`
+    url: `https://www.youtube.com/watch?v=${typedItem.id}`,
+    embeddable: status?.embeddable ?? true  // Default to true if not specified
   };
 }
 // Parse ISO 8601 duration to seconds
