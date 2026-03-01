@@ -1,10 +1,26 @@
 // YouTube Scraper Edge Function
 // Fetches metadata from YouTube videos and playlists using YouTube Data API v3
+/// <reference lib="deno.window" />
 import { corsHeaders } from '../_shared/cors.ts';
+
+// Type definitions
+interface ApiKey {
+  key: string;
+  name: string;
+}
+
+interface Video {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number;
+  thumbnail: string;
+  url: string;
+}
 
 // API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets
 // These must be configured in your Supabase project settings
-const API_KEYS = Array.from({ length: 8 }, (_, i) => {
+const API_KEYS: ApiKey[] = Array.from({ length: 8 }, (_, i) => {
   const key = Deno.env.get(`YOUTUBE_API_KEY_${i + 1}`);
   if (key) {
     return {
@@ -13,7 +29,7 @@ const API_KEYS = Array.from({ length: 8 }, (_, i) => {
     };
   }
   return null;
-}).filter((k) => k !== null);
+}).filter((k): k is ApiKey => k !== null);
 let currentKeyIndex = 0;
 const failedKeys = new Set();
 
@@ -22,7 +38,7 @@ if (API_KEYS.length === 0) {
   console.error('ERROR: No YouTube API keys configured. Set YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_8 in Supabase secrets.');
 }
 
-function getNextApiKey() {
+function getNextApiKey(): string {
   // Find next valid key (not in failed list) from the rotation pool
   const startIndex = currentKeyIndex;
   do {
@@ -42,14 +58,16 @@ function getNextApiKey() {
   currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
   return key;
 }
-function markKeyAsFailed(apiKey) {
-  const index = API_KEYS.findIndex((k)=>k.key === apiKey);
+
+function markKeyAsFailed(apiKey: string): void {
+  const index = API_KEYS.findIndex((k) => k.key === apiKey);
   if (index !== -1) {
     failedKeys.add(index);
     console.log(`Marked ${API_KEYS[index].name} as failed/quota exceeded`);
   }
 }
-Deno.serve(async (req)=>{
+
+Deno.serve(async (req: Request): Promise<Response> => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -70,8 +88,8 @@ Deno.serve(async (req)=>{
       });
     }
 
-    let videos = [];
-    let lastError = null;
+    let videos: Video[] = [];
+    let lastError: Error | null = null;
     const maxRetries = API_KEYS.length; // Try all keys if needed
     const body = await req.json();
     const { url, query, type = 'auto' } = body;
@@ -153,14 +171,14 @@ Deno.serve(async (req)=>{
         }
         break;
       } catch (error) {
-        lastError = error;
+        lastError = error instanceof Error ? error : new Error(String(error));
         // If quota exceeded, try next key
         if (lastError.message.includes('Quota exceeded')) {
           console.log(`Quota exceeded on attempt ${attempt + 1}, trying next key...`);
           continue;
         }
         // Other errors - don't retry
-        throw error;
+        throw lastError;
       }
     }
     // If we exhausted all retries
@@ -184,9 +202,10 @@ Deno.serve(async (req)=>{
       }
     });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('YouTube scraper error:', error);
     return new Response(JSON.stringify({
-      error: error.message
+      error: errorMessage
     }), {
       status: 500,
       headers: {
@@ -197,7 +216,7 @@ Deno.serve(async (req)=>{
   }
 });
 // Extract YouTube video ID from various URL formats
-function extractVideoId(url) {
+function extractVideoId(url: string): string | null {
   const patterns = [
     /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/,
     /^([a-zA-Z0-9_-]{11})$/
@@ -208,8 +227,9 @@ function extractVideoId(url) {
   }
   return null;
 }
+
 // Extract YouTube playlist ID from URL
-function extractPlaylistId(url) {
+function extractPlaylistId(url: string): string | null {
   const patterns = [
     /[?&]list=([a-zA-Z0-9_-]+)/,
     /^PL[a-zA-Z0-9_-]+$/
@@ -220,8 +240,9 @@ function extractPlaylistId(url) {
   }
   return null;
 }
+
 // Fetch single video metadata
-async function fetchVideo(videoId, apiKey) {
+async function fetchVideo(videoId: string, apiKey: string): Promise<Video | null> {
   const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoId}&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
@@ -243,7 +264,7 @@ async function fetchVideo(videoId, apiKey) {
   return parseVideoItem(item);
 }
 // Fetch search results
-async function fetchSearch(query, apiKey) {
+async function fetchSearch(query: string, apiKey: string): Promise<Video[]> {
   const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&maxResults=10&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
@@ -277,9 +298,9 @@ async function fetchSearch(query, apiKey) {
   return videos;
 }
 // Fetch playlist metadata (all videos)
-async function fetchPlaylist(playlistId, apiKey) {
-  const videos = [];
-  let pageToken = null;
+async function fetchPlaylist(playlistId: string, apiKey: string): Promise<Video[]> {
+  const videos: Video[] = [];
+  let pageToken: string | null = null;
   const maxResults = 50; // Max per request
   do {
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${playlistId}&maxResults=${maxResults}${pageToken ? `&pageToken=${pageToken}` : ''}&key=${apiKey}`;
@@ -305,7 +326,7 @@ async function fetchPlaylist(playlistId, apiKey) {
   return videos;
 }
 // Fetch multiple videos in batch
-async function fetchVideosBatch(videoIds, apiKey) {
+async function fetchVideosBatch(videoIds: string, apiKey: string): Promise<Video[]> {
   const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&id=${videoIds}&key=${apiKey}`;
   const response = await fetch(url);
   // Handle quota exceeded - mark key as failed and throw
@@ -320,29 +341,35 @@ async function fetchVideosBatch(videoIds, apiKey) {
     throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
   }
   const data = await response.json();
-  return data.items.map((item)=>parseVideoItem(item));
+  return data.items.map((item: unknown) => parseVideoItem(item));
 }
+
 // Parse YouTube API video item into our format
-function parseVideoItem(item) {
-  const snippet = item.snippet;
-  const contentDetails = item.contentDetails;
+function parseVideoItem(item: unknown): Video {
+  const typedItem = item as {
+    id: string;
+    snippet: { title: string; channelTitle: string; thumbnails?: Record<string, { url: string }> };
+    contentDetails?: { duration: string };
+  };
+  const snippet = typedItem.snippet;
+  const contentDetails = typedItem.contentDetails;
   // Parse ISO 8601 duration (PT4M13S -> 253 seconds)
-  const duration = parseDuration(contentDetails.duration);
+  const duration = contentDetails?.duration ? parseDuration(contentDetails.duration) : 0;
   // Extract artist from title (common format: "Artist - Title")
   const titleParts = snippet.title.split(' - ');
   const artist = titleParts.length > 1 ? titleParts[0].trim() : snippet.channelTitle;
   const title = titleParts.length > 1 ? titleParts.slice(1).join(' - ').trim() : snippet.title;
   return {
-    id: item.id,
+    id: typedItem.id,
     title,
     artist,
     duration,
     thumbnail: snippet.thumbnails?.high?.url || snippet.thumbnails?.default?.url || '',
-    url: `https://www.youtube.com/watch?v=${item.id}`
+    url: `https://www.youtube.com/watch?v=${typedItem.id}`
   };
 }
 // Parse ISO 8601 duration to seconds
-function parseDuration(duration) {
+function parseDuration(duration: string): number {
   const match = duration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
   if (!match) return 0;
   const hours = parseInt(match[1] || '0', 10);
@@ -352,7 +379,7 @@ function parseDuration(duration) {
 }
 
 // Check if a video is embeddable in an iframe (for kiosk playback)
-async function isVideoEmbeddable(videoId) {
+async function isVideoEmbeddable(videoId: string): Promise<boolean> {
   try {
     const embedUrl = `https://www.youtube.com/embed/${videoId}`;
     const response = await fetch(embedUrl, {
@@ -365,13 +392,14 @@ async function isVideoEmbeddable(videoId) {
     return response.ok;
   } catch (err) {
     // On network errors, assume video is embeddable (fail open)
-    console.warn(`Failed to check embeddability for ${videoId}:`, err.message);
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    console.warn(`Failed to check embeddability for ${videoId}: ${errorMsg}`);
     return true;
   }
 }
 
 // Filter videos by embeddability (parallel checks)
-async function filterEmbeddableVideos(videos) {
+async function filterEmbeddableVideos(videos: Video[]): Promise<Video[]> {
   const embeddabilityChecks = videos.map(video =>
     isVideoEmbeddable(video.id)
       .then(isEmbeddable => ({ video, isEmbeddable }))
