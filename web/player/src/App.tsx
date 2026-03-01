@@ -58,6 +58,8 @@ function App() {
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
+  const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
+  const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -361,6 +363,7 @@ function App() {
     if (event.data === 1) {
       // PLAYING
       console.log('[Player] Video PLAYING');
+      videoHasPlayedRef.current = true; // Video confirmed playing — any subsequent pause is user-initiated
       reportStatus('playing');
 
       // If we're at volume 0 (after skip), fade in
@@ -402,24 +405,22 @@ function App() {
     }
   }, [reportStatus, reportEndedAndNext, fadeIn]);
 
-  // Handle playback errors (unavailable videos, embedding disabled, etc.)
+  // Handle playback errors — any YouTube player error skips immediately to the next video.
+  // Error codes:
+  //   2   = Invalid parameter (age-restricted or bad video ID)
+  //   5   = HTML5 player error (network, decoding)
+  //   100 = Video not found or private  → also removes it from queue/playlists
+  //   101 = Embedding not allowed by owner
+  //   150 = Same as 101 (embedding not allowed by owner)
   const onPlayerError = useCallback(async (event: any) => {
     console.error('[Player] YouTube player error:', event.data);
 
-    // Error codes:
-    // 2   = Invalid parameter (could indicate age-restricted)
-    // 5   = HTML5 player error (network, decoding, etc)
-    // 100 = Video not found or private
-    // 101 = Embedding not allowed by owner
-    // 150 = Same as 101 (embedding not allowed)
-    // Note: These videos will stay in 'loading' state and be caught by the 4-second timeout
+    if (isSlavePlayer) return;
 
     if (event.data === 100) {
-      // ── Video not found / private — remove and skip ───────────────────────
-      console.error('[Player] Video not found or private (100) — removing and skipping');
-
+      // Video is gone — remove it from the queue and all playlists so it never comes up again.
       const unavailableMediaId = currentMediaIdRef.current;
-      if (unavailableMediaId && !isSlavePlayer) {
+      if (unavailableMediaId) {
         try {
           const { data: queueItem, error: queueError } = await supabase
             .from('queue')
@@ -446,15 +447,16 @@ function App() {
           console.error('[Player] Failed to remove unavailable video:', removeErr);
         }
       }
-
-      // Let the 4-second timeout handle advancing to next video
-      return;
     }
 
-    // Error codes 2, 5, and all others: Let the 4-second loading timeout handle them
-    // These videos will fail to load and stay in 'loading' state, triggering the timeout
-    console.error(`[Player] Playback error (${event.data}): Video failed to load — will auto-skip after 4 seconds if stuck`);
-  }, [isSlavePlayer]);
+    // Skip immediately for all error codes.
+    // Do not rely on the 4-second loading timeout: a YouTube PAUSED event often
+    // fires just before the error, causing the server status to land in 'paused'
+    // (via an async race between reportStatus calls), which cancels the timeout
+    // and leaves the player stuck indefinitely.
+    console.error(`[Player] Skipping video due to playback error (${event.data})`);
+    reportEndedAndNext(false);
+  }, [isSlavePlayer, reportEndedAndNext]);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -1010,6 +1012,7 @@ function App() {
       console.log('[Player] Loading new video in existing player:', youtubeId);
       currentMediaIdRef.current = currentMedia.id;
       currentYouTubeIdRef.current = youtubeId;
+      videoHasPlayedRef.current = false; // Reset — new video hasn't played yet
       
       // Check if this is loading after a skip
       const isAfterSkip = isSkipLoadingRef.current;
@@ -1055,6 +1058,7 @@ function App() {
     // First time setup - create new player
     currentMediaIdRef.current = currentMedia.id;
     currentYouTubeIdRef.current = youtubeId;
+    videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
     setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
@@ -1077,55 +1081,74 @@ function App() {
     });
   }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
 
-  // Auto-skip videos that stay in 'loading' status for 4+ seconds
-  // This catches age-restricted, geographically blocked, or other failed-to-load videos
+  // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
+  // 'paused' before the video has ever actually played (unexpected pause = error).
+  // This catches age-restricted, geographically blocked, embedding-blocked, or
+  // other failed-to-load videos regardless of which transient state they land in.
   useEffect(() => {
     if (!status) return;
 
-    // Clear any existing timeout
+    // ── Clear any existing timeouts ────────────────────────────────────────
     if (loadingTimeoutRef.current) {
       clearTimeout(loadingTimeoutRef.current);
       loadingTimeoutRef.current = null;
     }
+    if (unexpectedPauseTimeoutRef.current) {
+      clearTimeout(unexpectedPauseTimeoutRef.current);
+      unexpectedPauseTimeoutRef.current = null;
+    }
 
-    // If status is 'loading', set a 4-second timeout to skip if still loading
-    if (status.state === 'loading') {
-      console.log('[Player] Video entered loading state, setting 4-second timeout to load next if not loaded');
-      loadingTimeoutRef.current = window.setTimeout(async () => {
-        console.error('[Player] Video still in loading state after 4 seconds — loading next video');
-        loadingTimeoutRef.current = null;
-
-        // Video never started loading, just advance to next without skip/fade logic
-        try {
-          const result = await callPlayerControl({
-            player_id: PLAYER_ID,
-            state: 'idle',
-            progress: 1,
-            action: 'ended',
-          });
-
-          if (result?.next_item) {
-            const nextMedia: MediaItem = {
-              id: result.next_item.media_item_id,
-              title: result.next_item.title || 'Unknown',
-              artist: 'Unknown',
-              url: result.next_item.url,
-              duration: result.next_item.duration || 0,
-              source_id: '',
-              source_type: 'youtube',
-              thumbnail: null,
-              fetched_at: new Date().toISOString(),
-              metadata: {},
-            };
-            console.log('[Player] Loading next media after loading timeout:', nextMedia);
-            setCurrentMedia(nextMedia);
-          }
-        } catch (error) {
-          console.error('[Player] Failed to advance after loading timeout:', error);
+    const advanceToNext = async (reason: string) => {
+      console.error(`[Player] ${reason} — advancing to next video`);
+      try {
+        const result = await callPlayerControl({
+          player_id: PLAYER_ID,
+          state: 'idle',
+          progress: 1,
+          action: 'ended',
+        });
+        if (result?.next_item) {
+          const nextMedia: MediaItem = {
+            id: result.next_item.media_item_id,
+            title: result.next_item.title || 'Unknown',
+            artist: 'Unknown',
+            url: result.next_item.url,
+            duration: result.next_item.duration || 0,
+            source_id: '',
+            source_type: 'youtube',
+            thumbnail: null,
+            fetched_at: new Date().toISOString(),
+            metadata: {},
+          };
+          setCurrentMedia(nextMedia);
         }
+      } catch (error) {
+        console.error('[Player] Failed to advance after auto-skip:', error);
+      }
+    };
+
+    if (status.state === 'loading') {
+      // ── 4-second loading timeout ──────────────────────────────────────────
+      console.log('[Player] Video entered loading state, setting 4-second timeout to load next if not loaded');
+      loadingTimeoutRef.current = window.setTimeout(() => {
+        loadingTimeoutRef.current = null;
+        advanceToNext('Video still in loading state after 4 seconds');
       }, 4000);
-    } else {
-      // Status changed away from 'loading', clear the timeout
+
+    } else if (status.state === 'paused' && !videoHasPlayedRef.current) {
+      // ── Unexpected pause: video paused before it ever played ──────────────
+      // This fires when an error (e.g. embedding block, network issue) causes the
+      // player to land in 'paused' rather than 'loading'. Since the video has
+      // never entered 'playing' state, this is not a user-initiated pause —
+      // auto-advance after 3 seconds.
+      console.warn('[Player] Video paused before it ever played — unexpected pause, will auto-advance in 3s');
+      unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
+        unexpectedPauseTimeoutRef.current = null;
+        advanceToNext('Video paused before playing (unexpected pause)');
+      }, 3000);
+
+    } else if (status.state !== 'paused') {
+      // Status changed to something other than paused/loading — log the transition
       console.log('[Player] Status changed from loading to:', status.state);
     }
 
@@ -1133,6 +1156,10 @@ function App() {
       if (loadingTimeoutRef.current) {
         clearTimeout(loadingTimeoutRef.current);
         loadingTimeoutRef.current = null;
+      }
+      if (unexpectedPauseTimeoutRef.current) {
+        clearTimeout(unexpectedPauseTimeoutRef.current);
+        unexpectedPauseTimeoutRef.current = null;
       }
     };
   }, [status?.state]);

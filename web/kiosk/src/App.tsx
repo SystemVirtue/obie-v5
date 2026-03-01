@@ -251,7 +251,6 @@ function App() {
           setShowConfirm(false);
           return;
         }
-        alert('Video added to priority queue!');
       } catch (err) {
         alert('Failed to enqueue request via kiosk handler: ' + ((err as any)?.message || err));
         console.error('Failed to enqueue request via kiosk handler:', err);
