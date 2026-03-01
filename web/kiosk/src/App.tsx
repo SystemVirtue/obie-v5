@@ -181,7 +181,14 @@ function App() {
       try {
         setIsSearching(true);
         setSearchResults([]);
-        const result = await callKioskHandler({ action: 'search', query }) as { videos?: any[] };
+
+        // Append karaoke search term if karaoke option is enabled
+        let searchQuery = query;
+        if (includeKaraoke) {
+          searchQuery = query + ' Lyric Video Karaoke';
+        }
+
+        const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
         const videos = result?.videos || [];
         setSearchResults(videos);
         setShowSearchResults(true);

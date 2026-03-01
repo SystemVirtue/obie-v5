@@ -31,17 +31,8 @@ export const SearchKeyboard: React.FC<SearchKeyboardProps> = ({
   const handleKaraokeToggle = (checked: boolean) => {
     if (!onIncludeKaraokeChange) return;
 
-    if (checked) {
-      // Append " KARAOKE" to search query if not already present
-      if (!searchQuery.toUpperCase().includes(" KARAOKE")) {
-        onSearchQueryChange(searchQuery + " KARAOKE");
-      }
-    } else {
-      // Remove " KARAOKE" from search query (case insensitive)
-      const updatedQuery = searchQuery.replace(/ KARAOKE$/i, "");
-      onSearchQueryChange(updatedQuery);
-    }
-
+    // Don't modify the search query - just update the karaoke flag
+    // The search backend will add " Lyric Video Karaoke" to the query when needed
     onIncludeKaraokeChange(checked);
   };
 
