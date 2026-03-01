@@ -186,11 +186,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
       throw new Error(`All API keys exhausted: ${lastError.message}`);
     }
 
-    // Filter out videos that are not embeddable in iframes (for kiosk playback)
-    if (videos.length > 0) {
-      videos = await filterEmbeddableVideos(videos);
-    }
-
     return new Response(JSON.stringify({
       videos,
       count: videos.length
@@ -376,45 +371,4 @@ function parseDuration(duration: string): number {
   const minutes = parseInt(match[2] || '0', 10);
   const seconds = parseInt(match[3] || '0', 10);
   return hours * 3600 + minutes * 60 + seconds;
-}
-
-// Check if a video is embeddable in an iframe (for kiosk playback)
-async function isVideoEmbeddable(videoId: string): Promise<boolean> {
-  try {
-    const embedUrl = `https://www.youtube.com/embed/${videoId}`;
-    const response = await fetch(embedUrl, {
-      method: 'HEAD',
-      redirect: 'follow'
-    });
-
-    // If we get a 200-399 status, video is embeddable
-    // 4xx or 5xx means it's restricted
-    return response.ok;
-  } catch (err) {
-    // On network errors, assume video is embeddable (fail open)
-    const errorMsg = err instanceof Error ? err.message : String(err);
-    console.warn(`Failed to check embeddability for ${videoId}: ${errorMsg}`);
-    return true;
-  }
-}
-
-// Filter videos by embeddability (parallel checks)
-async function filterEmbeddableVideos(videos: Video[]): Promise<Video[]> {
-  const embeddabilityChecks = videos.map(video =>
-    isVideoEmbeddable(video.id)
-      .then(isEmbeddable => ({ video, isEmbeddable }))
-      .catch(() => ({ video, isEmbeddable: true })) // Default to true on error
-  );
-
-  const results = await Promise.all(embeddabilityChecks);
-  const embeddableVideos = results
-    .filter(result => result.isEmbeddable)
-    .map(result => result.video);
-
-  const filteredCount = videos.length - embeddableVideos.length;
-  if (filteredCount > 0) {
-    console.log(`Filtered out ${filteredCount} non-embeddable video(s)`);
-  }
-
-  return embeddableVideos;
 }
