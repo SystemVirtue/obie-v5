@@ -473,13 +473,23 @@ function App() {
               <div className="marquee">
                 <div className="marquee-track flex items-center whitespace-nowrap gap-8 text-yellow-400 font-semibold text-sm drop-shadow-lg">
                   {queue.length > 0 ? (
-                    queue.map((q, index) => (
-                      <div key={q.id} className="px-6 flex items-center gap-2">
-                        {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
-                        <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
-                        {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
-                      </div>
-                    ))
+                    <>
+                      {queue.map((q, index) => (
+                        <div key={`${q.id}-1`} className="px-6 flex items-center gap-2">
+                          {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
+                          <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
+                          {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
+                        </div>
+                      ))}
+                      {/* Duplicate content for seamless loop */}
+                      {queue.map((q, index) => (
+                        <div key={`${q.id}-2`} className="px-6 flex items-center gap-2">
+                          {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
+                          <span>{(q.media_item as any)?.title || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{(q.media_item as any)?.artist?.replace(/\s*-\s*Topic$/i, '') || 'Unknown'}</span></span>
+                          {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
+                        </div>
+                      ))}
+                    </>
                   ) : (
                     <div className="px-6 drop-shadow-lg">Coming Up: No items</div>
                   )}
