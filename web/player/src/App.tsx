@@ -10,7 +10,6 @@ import {
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
-  callDownloadVideo,
   initializePlayerPlaylist,
   type PlayerStatus,
   type MediaItem,
@@ -62,10 +61,8 @@ function App() {
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  // Tracks the YouTube ID of the currently-loaded video for the download fallback
+  // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
-  // Prevents duplicate download-video calls when onPlayerError fires multiple times
-  const isDownloadingRef = useRef(false);
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
@@ -422,46 +419,9 @@ function App() {
     // 150 = Same as 101 (embedding not allowed)
 
     if (event.data === 101 || event.data === 150) {
-      // ── yt-dlp download fallback ──────────────────────────────────────────
-      console.error('[Player] Embedding disabled (101/150) — attempting yt-dlp fallback download');
-
-      if (isSlavePlayer) {
-        console.log('[Slave Player] Skipping download fallback');
-        return;
-      }
-
-      if (isDownloadingRef.current) {
-        console.log('[Player] Download already in progress, ignoring duplicate error event');
-        return;
-      }
-
-      const videoId = currentYouTubeIdRef.current;
-      if (!videoId) {
-        console.error('[Player] No YouTube ID available for fallback — skipping to next');
-        await reportEndedAndNext(false);
-        return;
-      }
-
-      isDownloadingRef.current = true;
-      const dlStart = performance.now();
-      console.log(`[Player][download-video] ▶ START videoId=${videoId}  player_id=${PLAYER_ID}  t=+0.00s`);
-
-      try {
-        const result = await callDownloadVideo({ videoId, player_id: PLAYER_ID });
-        const dlSecs = ((performance.now() - dlStart) / 1000).toFixed(2);
-        // Success: the edge function updated player_status with source='local'.
-        // The realtime subscription will fire, set localPlaybackUrl, and the
-        // <video> element will start playing.  Nothing more to do here.
-        console.log(`[Player][download-video] ✓ DONE  took=${dlSecs}s  publicUrl=${(result as any)?.publicUrl ?? '(awaiting realtime)'}  fileSizeBytes=${(result as any)?.fileSizeBytes ?? '?'}`);
-        console.log('[Player][download-video] Waiting for Realtime player_status update to activate local <video>');
-      } catch (downloadErr) {
-        const dlSecs = ((performance.now() - dlStart) / 1000).toFixed(2);
-        console.error(`[Player][download-video] ✖ FAILED  took=${dlSecs}s`, downloadErr);
-        isDownloadingRef.current = false;
-        // Fall back to skipping the video
-        console.log('[Player] Fallback download failed — skipping to next video');
-        await reportEndedAndNext(false);
-      }
+      // ── Embedding disabled — skip to next ──────────────────────────────────
+      console.error('[Player] Embedding disabled (101/150) — skipping to next video');
+      await reportEndedAndNext(false);
       return;
     }
 
@@ -665,7 +625,6 @@ function App() {
         // New song started — always return to YouTube iframe mode
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} new media_id=${newMediaId} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
-        isDownloadingRef.current = false;
       }
 
       if (newMediaId && newMediaId !== oldMediaId) {
