@@ -1,24 +1,27 @@
 // YouTube Scraper Edge Function
 // Fetches metadata from YouTube videos and playlists using YouTube Data API v3
 import { corsHeaders } from '../_shared/cors.ts';
-// API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets first,
-// falls back to the hardcoded values so the function still works without secrets set.
-const _FALLBACK_KEYS = [
-  "AIzaSyC12QKbzGaKZw9VD3-ulxU_mrd0htZBiI4",
-  "AIzaSyDQ_Jx4Dwje2snQisj7hEFVK9lJJ0tptcc",
-  "AIzaSyDy6_QI9SP5nOZRVoNa5xghSHtY3YWX5kU",
-  "AIzaSyCKHHGkaztp8tfs2BVxiny0InE_z-kGDtY",
-  "AIzaSyBGcwaCm70o4ir0CKcNIJ0V_7TeyY2cwdA",
-  "AIzaSyD6lYWv9Jww_r_RCpO-EKZEyrK4vNd9FeQ",
-  "AIzaSyD3kfo9uNdHluv_U4fRPRdQ-sUowK4HmXo",
-  "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8",
-];
-const API_KEYS = Array.from({ length: 8 }, (_, i) => ({
-  key:  Deno.env.get(`YOUTUBE_API_KEY_${i + 1}`) || _FALLBACK_KEYS[i],
-  name: `Key ${i + 1}`,
-})).filter(k => k.key);
+
+// API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets
+// These must be configured in your Supabase project settings
+const API_KEYS = Array.from({ length: 8 }, (_, i) => {
+  const key = Deno.env.get(`YOUTUBE_API_KEY_${i + 1}`);
+  if (key) {
+    return {
+      key,
+      name: `Key ${i + 1}`,
+    };
+  }
+  return null;
+}).filter((k) => k !== null);
 let currentKeyIndex = 0;
 const failedKeys = new Set();
+
+// Validate that at least one API key is configured
+if (API_KEYS.length === 0) {
+  console.error('ERROR: No YouTube API keys configured. Set YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_8 in Supabase secrets.');
+}
+
 function getNextApiKey() {
   // Find next valid key (not in failed list) from the rotation pool
   const startIndex = currentKeyIndex;
@@ -54,6 +57,19 @@ Deno.serve(async (req)=>{
     });
   }
   try {
+    // Check if API keys are configured
+    if (API_KEYS.length === 0) {
+      return new Response(JSON.stringify({
+        error: 'YouTube API keys not configured. Contact administrator.'
+      }), {
+        status: 500,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
     let videos = [];
     let lastError = null;
     const maxRetries = API_KEYS.length; // Try all keys if needed
