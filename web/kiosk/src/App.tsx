@@ -251,10 +251,6 @@ function App() {
           setShowConfirm(false);
           return;
         }
-        // Optionally, refresh the queue immediately
-        if (typeof subscribeToQueue === 'function') {
-          subscribeToQueue(PLAYER_ID, setQueue);
-        }
         alert('Video added to priority queue!');
       } catch (err) {
         alert('Failed to enqueue request via kiosk handler: ' + ((err as any)?.message || err));
