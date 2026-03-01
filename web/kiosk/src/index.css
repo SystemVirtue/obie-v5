@@ -41,7 +41,7 @@ body {
   flex-wrap: nowrap;
   align-items: center;
   gap: 2rem;
-  animation: marquee 60s linear infinite;
+  animation: marquee 30s linear infinite;
   white-space: nowrap;
   will-change: transform;
 }

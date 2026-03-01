@@ -146,17 +146,18 @@ function App() {
         // Filter out currently playing item
         const currentMediaId = playerStatus?.current_media_id || playerStatus?.current_media?.id || null;
         const upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
-        
+
         // Separate priority and normal items
         const priorityItems = upcomingItems.filter(item => item.type === 'priority');
         const normalItems = upcomingItems.filter(item => item.type === 'normal');
-        
-        // Limit normal items to max 4 for marquee display
-        const limitedNormalItems = normalItems.slice(0, 4);
-        
-        // Combine for display: all priority + up to 4 normal
-        const displayItems = [...priorityItems, ...limitedNormalItems];
-        
+
+        // Limit to max 5 total items: all priority items + remaining slots filled with normal items
+        const maxMarqueeItems = 5;
+        const displayItems = [
+          ...priorityItems.slice(0, maxMarqueeItems),
+          ...normalItems.slice(0, Math.max(0, maxMarqueeItems - priorityItems.length))
+        ];
+
         setQueue(displayItems);
       });
       return () => sub.unsubscribe();
