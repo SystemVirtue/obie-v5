@@ -28,6 +28,14 @@ function App() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [queue, setQueue] = useState<QueueItem[]>([]);
+
+  // Log queue state changes
+  useEffect(() => {
+    console.log('[Queue State] Queue state updated to:', queue.length, 'items');
+    if (queue.length > 5) {
+      console.warn('[Queue State] ⚠️ WARNING: Queue has more than 5 items!', queue.length);
+    }
+  }, [queue]);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
@@ -45,6 +53,7 @@ function App() {
   // These refs avoid stale closures in the async serial reader loop
   const sessionRef = useRef<KioskSession | null>(null);
   const settingsRef = useRef<PlayerSettings | null>(null);
+  const playerStatusRef = useRef<PlayerStatus | null>(null);
 
     // Initialize session
     useEffect(() => {
@@ -67,6 +76,7 @@ function App() {
     // Keep refs in sync so the async serial reader always has current session + settings
     useEffect(() => { sessionRef.current = session; }, [session]);
     useEffect(() => { settingsRef.current = settings; }, [settings]);
+    useEffect(() => { playerStatusRef.current = playerStatus; }, [playerStatus]);
 
     // Subscribe to session updates (for credits) and to any kiosk_sessions changes for this player
     // Replace polling with realtime subscription: when any kiosk_sessions row for the player
@@ -143,25 +153,47 @@ function App() {
     // Subscribe to queue for marquee / upcoming list
     useEffect(() => {
       const sub = subscribeToQueue(PLAYER_ID, (items) => {
-        // Filter out currently playing item
-        const currentMediaId = playerStatus?.current_media_id || playerStatus?.current_media?.id || null;
-        const upcomingItems = items.filter(item => item.media_item_id !== currentMediaId);
+        console.log('[Queue Callback] ===== START QUEUE PROCESSING =====');
+        console.log('[Queue Callback] Received items from subscription:', items.length);
+
+        // Use ref to get latest playerStatus (avoids stale closure)
+        const currentPlayerStatus = playerStatusRef.current;
+        const currentMediaId = currentPlayerStatus?.current_media_id || currentPlayerStatus?.current_media?.id || null;
+        console.log('[Queue Callback] Current media ID:', currentMediaId);
+        console.log('[Queue Callback] PlayerStatus exists:', !!currentPlayerStatus);
+
+        // Filter to only upcoming items (not currently playing)
+        let upcomingItems = items;
+        if (currentMediaId) {
+          upcomingItems = items.filter(item => {
+            const matches = item.media_item_id === currentMediaId;
+            if (matches) console.log('[Queue Callback] Filtering out current item:', item.id);
+            return !matches;
+          });
+        }
+        console.log('[Queue Callback] After filtering current item:', upcomingItems.length);
 
         // Separate priority and normal items
         const priorityItems = upcomingItems.filter(item => item.type === 'priority');
         const normalItems = upcomingItems.filter(item => item.type === 'normal');
+        console.log('[Queue Callback] Priority items:', priorityItems.length, 'Normal items:', normalItems.length);
 
         // Limit to max 5 total items: all priority items + remaining slots filled with normal items
         const maxMarqueeItems = 5;
-        const displayItems = [
-          ...priorityItems.slice(0, maxMarqueeItems),
-          ...normalItems.slice(0, Math.max(0, maxMarqueeItems - priorityItems.length))
-        ];
+        const prioritySliced = priorityItems.slice(0, maxMarqueeItems);
+        const remainingSlots = Math.max(0, maxMarqueeItems - prioritySliced.length);
+        const normalSliced = normalItems.slice(0, remainingSlots);
+        const displayItems = [...prioritySliced, ...normalSliced];
+
+        console.log('[Queue Callback] Priority sliced:', prioritySliced.length, 'Normal sliced:', normalSliced.length);
+        console.log('[Queue Callback] After limiting to 5 items:', displayItems.length);
+        console.log('[Queue Callback] Display item IDs:', displayItems.map(item => item.id));
+        console.log('[Queue Callback] ===== END QUEUE PROCESSING =====');
 
         setQueue(displayItems);
       });
       return () => sub.unsubscribe();
-    }, [playerStatus?.current_media_id, playerStatus?.current_media?.id]);
+    }, []);
 
     // Debounced search
     useEffect(() => {
