@@ -92,6 +92,8 @@ export interface PlayerSettings {
   kiosk_coin_acceptor_connected?: boolean;
   kiosk_coin_acceptor_device_id?: string | null;
   kiosk_show_virtual_coin_button?: boolean;
+  local_media_enabled?: boolean;
+  local_media_path?: string | null;
 }
 
 export interface KioskSession {
