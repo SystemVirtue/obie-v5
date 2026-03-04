@@ -990,7 +990,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   const wrap = (title: string, subtitle: string, content: React.ReactNode, onSave: () => Promise<void>) => (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title={title} subtitle={subtitle} />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+      <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
         <div style={{ maxWidth: 480 }}>{errBlock}{content}<div style={{ marginTop: 20 }}><SaveBtn onSave={onSave} loading={saving} /></div></div>
       </div>
     </div>
@@ -1020,7 +1020,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   if (view === 'settings-kiosk') return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Kiosk Settings" subtitle="Request, credits and coin acceptor configuration" />
-      <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
+      <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
         <div style={{ maxWidth: 480 }}>{errBlock}
           <SettingsRow label="Free Play"              desc="Allow requests without credits"><Toggle checked={!!local.freeplay}        onChange={() => handleToggle('freeplay')} /></SettingsRow>
           <SettingsRow label="Search Enabled"         desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled}  onChange={() => handleToggle('search_enabled')} /></SettingsRow>
