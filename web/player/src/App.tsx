@@ -2,7 +2,6 @@
 // Uses YouTube IFrame Player API for reliable event handling
 
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { cleanDisplayText } from '../../shared/media-utils';
 import { io } from 'socket.io-client';
 import {
   supabase,
