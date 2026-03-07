@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Global Console Styles ──────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a3a #0a0a0f;
+}
+
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: #0a0a0f; }
+*::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 3px; }
+*::-webkit-scrollbar-thumb:hover { background: #3a3a4a; }
+
+/* ── Fader Track ────────────────────────────────────────── */
+
+input[type="range"].fader-input {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+  writing-mode: vertical-lr;
+  direction: rtl;
+}
+
+input[type="range"].fader-input::-webkit-slider-track {
+  width: 4px;
+  background: linear-gradient(to top, #1a1a25, #2a2a3a);
+  border-radius: 2px;
+}
+
+input[type="range"].fader-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 28px;
+  height: 14px;
+  background: linear-gradient(to bottom, #555, #333);
+  border: 1px solid #666;
+  border-radius: 2px;
+  box-shadow: 0 0 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.15);
+  margin-left: -12px;
+}
+
+input[type="range"].fader-input::-moz-range-track {
+  width: 4px;
+  background: linear-gradient(to top, #1a1a25, #2a2a3a);
+  border-radius: 2px;
+}
+
+input[type="range"].fader-input::-moz-range-thumb {
+  width: 28px;
+  height: 14px;
+  background: linear-gradient(to bottom, #555, #333);
+  border: 1px solid #666;
+  border-radius: 2px;
+  box-shadow: 0 0 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.15);
+}
+
+/* ── EQ Knob ────────────────────────────────────────────── */
+
+input[type="range"].knob-input {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type="range"].knob-input::-webkit-slider-track {
+  height: 3px;
+  background: #2a2a3a;
+  border-radius: 2px;
+}
+
+input[type="range"].knob-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  background: radial-gradient(circle at 40% 35%, #666, #333);
+  border: 1px solid #555;
+  border-radius: 50%;
+  margin-top: -5px;
+  box-shadow: 0 0 3px rgba(0,0,0,0.5);
+}
+
+input[type="range"].knob-input::-moz-range-track {
+  height: 3px;
+  background: #2a2a3a;
+  border-radius: 2px;
+}
+
+input[type="range"].knob-input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  background: radial-gradient(circle at 40% 35%, #666, #333);
+  border: 1px solid #555;
+  border-radius: 50%;
+  box-shadow: 0 0 3px rgba(0,0,0,0.5);
+}
+
+/* ── Meter Segments ─────────────────────────────────────── */
+
+@keyframes meter-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.meter-clip { animation: meter-pulse 0.5s ease-in-out infinite; }
+
+/* ── Panel Styling ──────────────────────────────────────── */
+
+.panel-inset {
+  box-shadow: inset 0 1px 3px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.panel-raised {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+/* ── Button States ──────────────────────────────────────── */
+
+.btn-mute {
+  transition: all 0.1s ease;
+}
+.btn-mute.active {
+  background: #ff2244;
+  color: white;
+  box-shadow: 0 0 12px rgba(255, 34, 68, 0.5);
+}
+
+.btn-solo {
+  transition: all 0.1s ease;
+}
+.btn-solo.active {
+  background: #ffdd00;
+  color: black;
+  box-shadow: 0 0 12px rgba(255, 221, 0, 0.5);
+}
