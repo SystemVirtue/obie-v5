@@ -2,7 +2,7 @@
 -- Mirrors the R2 bucket contents for browsing/searching from the kiosk
 
 CREATE TABLE IF NOT EXISTS r2_files (
-  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   bucket_name TEXT NOT NULL,
   object_key TEXT NOT NULL,
   file_name TEXT NOT NULL,

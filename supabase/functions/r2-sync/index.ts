@@ -26,10 +26,16 @@ async function signS3Request(
     .map(k => `${k.toLowerCase()}:${headers[k].trim()}`)
     .join('\n') + '\n';
 
+  // Build canonical query string: sort params, URI-encode keys and values per SigV4 spec
+  const canonicalQueryString = Array.from(urlObj.searchParams.entries())
+    .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&');
+
   const canonicalRequest = [
     method,
     urlObj.pathname,
-    urlObj.search.replace('?', ''),
+    canonicalQueryString,
     canonicalHeaders,
     signedHeaders,
     'UNSIGNED-PAYLOAD',
@@ -258,42 +264,41 @@ Deno.serve(async (req) => {
         thumbnailMap.set(base, `${publicUrl}/${img.key}`);
       }
 
-      // Upsert video files into r2_files
-      let addedCount = 0;
-      let updatedCount = 0;
+      // Fetch all existing records for this bucket in one query
+      const { data: existingFiles } = await supabase
+        .from('r2_files')
+        .select('id, object_key, etag, thumbnail')
+        .eq('bucket_name', bucketName);
+
+      const existingMap = new Map<string, { id: string; etag: string; thumbnail: string | null }>();
+      for (const f of existingFiles ?? []) {
+        existingMap.set(f.object_key, { id: f.id, etag: f.etag, thumbnail: f.thumbnail });
+      }
+
+      const toInsert: object[] = [];
+      const toUpdate: { id: string; patch: object }[] = [];
+      const bucketKeys = new Set(videoObjects.map(o => o.key));
 
       for (const obj of videoObjects) {
         const fileName = obj.key.split('/').pop() || obj.key;
         const { title, artist } = extractTitleFromFilename(fileName);
         const filePublicUrl = `${publicUrl}/${obj.key}`;
         const thumbnailUrl = thumbnailMap.get(baseName(obj.key)) || null;
-
-        const { data: existing } = await supabase
-          .from('r2_files')
-          .select('id, etag')
-          .eq('bucket_name', bucketName)
-          .eq('object_key', obj.key)
-          .single();
+        const existing = existingMap.get(obj.key);
 
         if (existing) {
-          if (existing.etag !== obj.etag) {
-            await supabase.from('r2_files').update({
+          if (existing.etag !== obj.etag || existing.thumbnail !== thumbnailUrl) {
+            toUpdate.push({ id: existing.id, patch: {
               etag: obj.etag,
               size_bytes: obj.size,
               last_modified: obj.lastModified,
               public_url: filePublicUrl,
               thumbnail: thumbnailUrl,
               synced_at: new Date().toISOString(),
-            }).eq('id', existing.id);
-            updatedCount++;
-          } else {
-            // Even if video unchanged, update thumbnail if it was added/changed
-            await supabase.from('r2_files').update({
-              thumbnail: thumbnailUrl,
-            }).eq('id', existing.id);
+            }});
           }
         } else {
-          await supabase.from('r2_files').insert({
+          toInsert.push({
             bucket_name: bucketName,
             object_key: obj.key,
             file_name: fileName,
@@ -306,25 +311,33 @@ Deno.serve(async (req) => {
             artist,
             thumbnail: thumbnailUrl,
           });
-          addedCount++;
         }
       }
 
-      // Delete r2_files rows that no longer exist in the bucket
-      const bucketKeys = videoObjects.map(o => o.key);
-      const { data: existingFiles } = await supabase
-        .from('r2_files')
-        .select('id, object_key')
-        .eq('bucket_name', bucketName);
+      // Batch insert new records (chunks of 500)
+      const CHUNK = 500;
+      for (let i = 0; i < toInsert.length; i += CHUNK) {
+        await supabase.from('r2_files').insert(toInsert.slice(i, i + CHUNK));
+      }
 
+      // Batch updates — upsert by id
+      for (let i = 0; i < toUpdate.length; i += CHUNK) {
+        const chunk = toUpdate.slice(i, i + CHUNK);
+        await supabase.from('r2_files').upsert(
+          chunk.map(u => ({ id: u.id, ...u.patch }))
+        );
+      }
+
+      // Delete rows no longer in bucket
+      const toDelete = (existingFiles ?? []).filter(f => !bucketKeys.has(f.object_key));
       let deletedCount = 0;
-      if (existingFiles) {
-        const toDelete = existingFiles.filter(f => !bucketKeys.includes(f.object_key));
-        if (toDelete.length > 0) {
-          await supabase.from('r2_files').delete().in('id', toDelete.map(f => f.id));
-          deletedCount = toDelete.length;
-        }
+      for (let i = 0; i < toDelete.length; i += CHUNK) {
+        await supabase.from('r2_files').delete().in('id', toDelete.slice(i, i + CHUNK).map(f => f.id));
+        deletedCount += toDelete.slice(i, i + CHUNK).length;
       }
+
+      const addedCount = toInsert.length;
+      const updatedCount = toUpdate.length;
 
       return new Response(JSON.stringify({
         success: true,
