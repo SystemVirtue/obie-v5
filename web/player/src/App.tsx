@@ -595,11 +595,11 @@ function App() {
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
 
-      // ── Local-source fallback (yt-dlp download complete) ─────────────────
-      if (newStatus.source === 'local' && newStatus.local_url) {
+      // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
+      if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url) {
         // Only activate when the local_url is actually new (avoid redundant sets)
         if (newStatus.local_url !== localPlaybackUrl) {
-          console.log(`[Player][realtime] source=local → activating local <video>`);
+          console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
           console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
         }

@@ -46,6 +46,7 @@ function App() {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [includeKaraoke, setIncludeKaraoke] = useState(false);
   const [isConfirming, setIsConfirming] = useState(false);
+  const [searchSource, setSearchSource] = useState<'youtube' | 'cloudflare'>('youtube');
 
   // Serial connection refs
   const serialPortRef = useRef<any>(null);
@@ -213,15 +214,22 @@ function App() {
         setIsSearching(true);
         setSearchResults([]);
 
-        // Append karaoke search term if karaoke option is enabled
-        let searchQuery = query;
-        if (includeKaraoke) {
-          searchQuery = query + ' Lyric Video Karaoke';
+        if (searchSource === 'cloudflare') {
+          // Search R2 files via kiosk-handler
+          const result = await callKioskHandler({ action: 'search_r2', query }) as { videos?: any[] };
+          const videos = result?.videos || [];
+          setSearchResults(videos);
+        } else {
+          // YouTube search
+          let searchQuery = query;
+          if (includeKaraoke) {
+            searchQuery = query + ' Lyric Video Karaoke';
+          }
+          const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
+          const videos = result?.videos || [];
+          setSearchResults(videos);
         }
 
-        const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
-        const videos = result?.videos || [];
-        setSearchResults(videos);
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {
@@ -243,8 +251,19 @@ function App() {
 
       setIsConfirming(true);
       try {
-        // Add directly to queue (search results are pre-filtered for embeddability)
-        const res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
+        let res: any;
+        if (selectedResult.source === 'cloudflare') {
+          // R2 video — use request_r2 action with the r2_file_id
+          res = await callKioskHandler({
+            session_id: session.session_id,
+            action: 'request_r2',
+            r2_file_id: selectedResult.id,
+            player_id: PLAYER_ID,
+          });
+        } else {
+          // YouTube video — use existing request action
+          res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
+        }
         if (res?.error) {
           alert('Failed to add to priority queue: ' + (res.error.message || res.error));
           console.error('Server failed to enqueue request:', res.error);
@@ -493,6 +512,9 @@ function App() {
             includeKaraoke={includeKaraoke}
             onIncludeKaraokeChange={setIncludeKaraoke}
             bypassCreditCheck={settings?.freeplay}
+            searchSource={searchSource}
+            onSearchSourceChange={setSearchSource}
+            cloudflareEnabled={settings?.cloudflare_enabled ?? false}
           />
 
           {/* Bottom marquee of upcoming songs */}
