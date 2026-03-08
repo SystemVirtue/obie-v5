@@ -66,6 +66,7 @@ function App() {
   // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
   const localVideoLastReportRef = useRef<number>(0); // Throttle local video progress reports
+  const localPlaybackUrlRef = useRef<string | null>(null); // Mirror of localPlaybackUrl for use inside callbacks
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
@@ -351,6 +352,11 @@ function App() {
   }, []);
 
   const onPlayerStateChange = useCallback((event: any) => {
+    // Ignore YouTube events when a Cloudflare/local video is active
+    if (localPlaybackUrlRef.current) {
+      console.log('[Player] YouTube state change ignored (local/Cloudflare video active):', event.data);
+      return;
+    }
     console.log('[Player] YouTube state change:', event.data);
 
     // YouTube Player States:
@@ -414,6 +420,11 @@ function App() {
   //   101 = Embedding not allowed by owner
   //   150 = Same as 101 (embedding not allowed by owner)
   const onPlayerError = useCallback(async (event: any) => {
+    // Ignore YouTube errors when a Cloudflare/local video is active
+    if (localPlaybackUrlRef.current) {
+      console.log('[Player] YouTube error ignored (local/Cloudflare video active):', event.data);
+      return;
+    }
     console.error('[Player] YouTube player error:', event.data);
 
     if (isSlavePlayer) return;
@@ -571,6 +582,10 @@ function App() {
             ytmAdminPausedRef.current = true;
             setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
+          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
+            // Cloudflare/local: pause the <video> element
+            console.log('[Player] Pausing local/Cloudflare video...');
+            localVideoRef.current.pause();
           } else if (playerRef.current) {
             // Fade out when pausing
             console.log('[Player] Pausing - fading out...');
@@ -580,6 +595,10 @@ function App() {
         } else if (newState === 'playing' && prevState === 'paused') {
           if (playerModeRef.current === 'ytm_desktop') {
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
+          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
+            // Cloudflare/local: resume the <video> element
+            console.log('[Player] Resuming local/Cloudflare video...');
+            localVideoRef.current.play().catch(() => {});
           } else if (playerRef.current) {
             // Fade in when resuming
             console.log('[Player] Resuming - fading in...');
@@ -647,6 +666,7 @@ function App() {
   useEffect(() => {
     playerModeRef.current = settings?.player_mode ?? 'iframe';
   }, [settings?.player_mode]);
+  useEffect(() => { localPlaybackUrlRef.current = localPlaybackUrl; }, [localPlaybackUrl]);
 
   // ── YTM Desktop auth ──────────────────────────────────────────────────────
   const ytmRequestAuth = useCallback(async () => {
@@ -1197,6 +1217,11 @@ function App() {
     }
 
     if (!playerRef.current || !playerRef.current.playVideo) return;
+
+    // Don't send commands to the YouTube iframe when a local/Cloudflare video is active —
+    // the <video> element controls its own playback state.
+    if (localPlaybackUrl) return;
+
     const player = playerRef.current;
 
     // Send commands to YouTube player based on server state
@@ -1205,7 +1230,7 @@ function App() {
     } else if (status.state === 'paused') {
       player.pauseVideo();
     }
-  }, [status?.state]);
+  }, [status?.state, localPlaybackUrl]);
 
   return (
     <div className="relative w-screen h-screen bg-black">
