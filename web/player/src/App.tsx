@@ -281,6 +281,7 @@ function App() {
         state: 'idle',
         progress: 1,
         action: 'ended', // Always use 'ended' after fade completes to trigger queue_next
+        current_media_id: currentMediaIdRef.current || undefined, // Idempotency: server skips if already advanced
       });
       console.log('[Player] Queue_next full result:', JSON.stringify(result, null, 2));
       
@@ -332,14 +333,20 @@ function App() {
     } catch (error) {
       console.error('[Player] Failed to call queue_next:', error);
     } finally {
-      // Hold the guard for 1000ms after completion.
-      // A second Realtime state='idle' event (caused by the progress=1 write in player-control)
-      // can arrive right after the first call returns. Without this cooldown, prevStateRef
-      // still shows 'playing' (updated only after the await resolves), so the subscription
-      // would trigger a second reportEndedAndNext and a second queue_next, skipping a song.
+      // Do NOT reset isEndingRef on a short timer.  Instead, keep the guard active
+      // until the next video actually starts PLAYING (reset in onPlayerStateChange
+      // PLAYING handler and local-video onPlay).  A 10-second fallback covers edge
+      // cases where the next video never reaches PLAYING (e.g. unplayable/error).
+      //
+      // The old 1-second cooldown was too short — YouTube fires stale ENDED events
+      // 2-3 seconds after loadVideoById, slipping past the guard and causing a
+      // double queue_next that desyncs "now playing" from the actual playback.
       setTimeout(() => {
-        isEndingRef.current = false;
-      }, 1000);
+        if (isEndingRef.current) {
+          console.warn('[Player] isEndingRef fallback reset after 10s (next video never reached PLAYING)');
+          isEndingRef.current = false;
+        }
+      }, 10000);
     }
   }, [fadeOut, fadeOutYtm]);
 
@@ -371,6 +378,13 @@ function App() {
       // PLAYING
       console.log('[Player] Video PLAYING');
       videoHasPlayedRef.current = true; // Video confirmed playing — any subsequent pause is user-initiated
+      // Clear the ending guard — the new video has started playing, so it's now
+      // safe to accept future ENDED events.  This replaces the old 1-second timer
+      // and prevents double queue_next from stale YouTube events during load.
+      if (isEndingRef.current) {
+        console.log('[Player] Clearing isEndingRef — new video confirmed PLAYING');
+        isEndingRef.current = false;
+      }
       reportStatus('playing');
 
       // If we're at volume 0 (after skip), fade in
@@ -1131,6 +1145,13 @@ function App() {
     }
 
     const advanceToNext = async (reason: string) => {
+      // Respect the same ending guard used by reportEndedAndNext —
+      // if a queue advance is already in-flight, don't fire a second one.
+      if (isEndingRef.current) {
+        console.log(`[Player] ${reason} — skipping auto-advance (isEndingRef active, queue advance already in-flight)`);
+        return;
+      }
+      isEndingRef.current = true;
       console.error(`[Player] ${reason} — advancing to next video`);
       try {
         const result = await callPlayerControl({
@@ -1138,6 +1159,7 @@ function App() {
           state: 'idle',
           progress: 1,
           action: 'ended',
+          current_media_id: currentMediaIdRef.current || undefined,
         });
         if (result?.next_item) {
           const nextMedia: MediaItem = {
@@ -1156,6 +1178,14 @@ function App() {
         }
       } catch (error) {
         console.error('[Player] Failed to advance after auto-skip:', error);
+      } finally {
+        // Same 10-second fallback as reportEndedAndNext
+        setTimeout(() => {
+          if (isEndingRef.current) {
+            console.warn('[Player] isEndingRef fallback reset after 10s (auto-skip path)');
+            isEndingRef.current = false;
+          }
+        }, 10000);
       }
     };
 
@@ -1255,6 +1285,11 @@ function App() {
             const v = localVideoRef.current;
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
             videoHasPlayedRef.current = true;
+            // Clear ending guard — local/Cloudflare video confirmed playing
+            if (isEndingRef.current) {
+              console.log('[Player] Clearing isEndingRef — local/Cloudflare video confirmed PLAYING');
+              isEndingRef.current = false;
+            }
             reportStatus('playing');
           }}
           onTimeUpdate={() => {
