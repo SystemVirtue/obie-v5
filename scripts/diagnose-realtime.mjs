@@ -13,9 +13,9 @@
 import { createClient } from '@supabase/supabase-js';
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const SUPABASE_URL  = 'https://syccqoextpxifmumvxqw.supabase.co';
-const ANON_KEY      = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5Y2Nxb2V4dHB4aWZtdW12eHF3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI0MTA4ODQsImV4cCI6MjA3Nzk4Njg4NH0.6V9vWdwYQ1blpI8kGUcBEPLrMpUGYi7tlT_fehW-Hp4';
-const SERVICE_KEY   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN5Y2Nxb2V4dHB4aWZtdW12eHF3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2MjQxMDg4NCwiZXhwIjoyMDc3OTg2ODg0fQ.wC5V3TOJRYKaQ9YyOV9ibZ8MzYEVwpGU4ZhwO4H8K_s';
+const SUPABASE_URL  = 'https://fcabzrkcsfjimpxxnvco.supabase.co';
+const ANON_KEY      = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZjYWJ6cmtjc2ZqaW1weHhudmNvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwNjM3ODcsImV4cCI6MjA4ODYzOTc4N30.Tu7qohJWyHMxieJ-LJZkjMA9HKfrysTXOV4lkSxEJ4c';
+const SERVICE_KEY   = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZjYWJ6cmtjc2ZqaW1weHhudmNvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MzA2Mzc4NywiZXhwIjoyMDg4NjM5Nzg3fQ.fn0P-FvWbUkJMe6Ji-5EFwqwqDeJHWk9vu-JWF-SQvY';
 const EMAIL         = 'admin@djamms.app';
 const PASSWORD      = 'JungleFly69!';
 const PLAYER_ID     = '00000000-0000-0000-0000-000000000001';
