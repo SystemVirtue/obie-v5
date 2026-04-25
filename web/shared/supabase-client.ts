@@ -565,13 +565,15 @@ export async function createAdminBroadcast(params: {
   payload?: Record<string, any>;
   created_by?: string;
 }) {
-  const { data, error } = await supabase
-    .from('admin_broadcasts')
-    .insert({
-      event_type: params.event_type,
-      payload: params.payload ?? {},
-      ...(params.created_by ? { created_by: params.created_by } : {}),
-    })
+  const insertPayload: Database['public']['Tables']['admin_broadcasts']['Insert'] = {
+    event_type: params.event_type,
+    payload: params.payload ?? {},
+    ...(params.created_by ? { created_by: params.created_by } : {}),
+  };
+
+  const { data, error } = await (supabase
+    .from('admin_broadcasts') as any)
+    .insert(insertPayload)
     .select()
     .single();
 
