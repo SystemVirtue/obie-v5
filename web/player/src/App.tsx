@@ -59,6 +59,7 @@ function App() {
   const fadeIntervalRef = useRef<number | null>(null);
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
+  const mediaLoadStartedAtRef = useRef(0); // Timestamp of the current YouTube media load/startup window
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
@@ -624,6 +625,16 @@ function App() {
       }
     } else if (event.data === 0) {
       // ENDED - trigger queue progression
+      const msSinceLoad = Date.now() - mediaLoadStartedAtRef.current;
+      if (!videoHasPlayedRef.current || msSinceLoad < 4000) {
+        console.warn('[Player] Ignoring stale ENDED during startup window', {
+          videoHasPlayed: videoHasPlayedRef.current,
+          msSinceLoad,
+          mediaId: currentMediaIdRef.current,
+          youtubeId: currentYouTubeIdRef.current,
+        });
+        return;
+      }
       console.log('[Player] Video ENDED - calling queue_next');
       reportEndedAndNext();
     } else if (event.data === 3) {
@@ -1328,6 +1339,7 @@ function App() {
       currentMediaIdRef.current = currentMedia.id;
       currentYouTubeIdRef.current = youtubeId;
       videoHasPlayedRef.current = false; // Reset — new video hasn't played yet
+      mediaLoadStartedAtRef.current = Date.now();
       
       // Check if this is loading after a skip
       const isAfterSkip = isSkipLoadingRef.current;
@@ -1374,6 +1386,7 @@ function App() {
       currentMediaIdRef.current = currentMedia.id;
       currentYouTubeIdRef.current = youtubeId;
       videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
+      mediaLoadStartedAtRef.current = Date.now();
       setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
