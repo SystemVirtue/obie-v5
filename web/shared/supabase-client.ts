@@ -99,6 +99,10 @@ export interface PlayerSettings {
   player_mode?: 'iframe' | 'ytm_desktop';
   cloudflare_enabled?: boolean;
   cloudflare_r2_public_url?: string | null;
+  silence_skip_enabled?: boolean;
+  silence_skip_tail_seconds?: number;
+  silence_skip_duration_ms?: number;
+  silence_skip_threshold?: number;
 }
 
 export interface KioskSession {
@@ -124,6 +128,7 @@ export interface R2File {
   id: string;
   bucket_name: string;
   object_key: string;
+  youtube_id?: string | null;
   file_name: string;
   content_type: string | null;
   size_bytes: number | null;
@@ -527,9 +532,14 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect';
   session_id?: string;
   stored_player_id?: string;
+  initiator?: string;
+  reason?: string;
+  event_name?: string;
+  severity?: 'debug' | 'info' | 'warn' | 'error';
+  payload?: Record<string, any>;
 }) {
   const { data, error } = await supabase.functions.invoke('player-control', {
     body: params
@@ -563,6 +573,22 @@ export async function createAdminBroadcast(params: {
   }
 
   return data as AdminBroadcast;
+}
+
+export async function callRadioGenerator(params: {
+  player_id: string;
+  action: 'generate';
+  source: 'now_playing' | 'history' | 'playlist';
+}) {
+  const { data, error } = await supabase.functions.invoke('radio-generator', {
+    body: params
+  });
+
+  if (error) {
+    throw new Error(error.message || JSON.stringify(error));
+  }
+
+  return data;
 }
 
 /**

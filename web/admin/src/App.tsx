@@ -15,6 +15,7 @@ import {
   callPlaylistManager,
   callKioskHandler,
   createAdminBroadcast,
+  callRadioGenerator,
   getPlaylists,
   getPlaylistItems,
   getTotalCredits,
@@ -27,6 +28,7 @@ import {
   type PlayerSettings,
   type MediaItem,
   type AdminBroadcast,
+  type R2File,
   signIn,
   signOut,
   getCurrentUser,
@@ -494,6 +496,7 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
 
 type ViewId =
   | 'search'
+  | 'library'
   | 'queue'
   | 'playlists-all' | 'playlists-import'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
@@ -501,6 +504,7 @@ type ViewId =
 
 const NAV = [
   { id: 'search',    icon: '🔍', label: 'Search',    children: [] as { id: ViewId; label: string }[] },
+  { id: 'library',   icon: '💾', label: 'Browse Library', children: [] as { id: ViewId; label: string }[] },
   { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
   { id: 'playlists', icon: '📋', label: 'Playlists', children: [
     { id: 'playlists-all'    as ViewId, label: 'All Playlists' },
@@ -611,6 +615,10 @@ interface AdminSearchResult {
   thumbnailUrl?: string;
   url: string;
   source?: string;
+}
+
+interface LibraryBrowseItem extends R2File {
+  source?: 'cloudflare';
 }
 
 function SearchPanel() {
@@ -878,6 +886,264 @@ function SearchPanel() {
   );
 }
 
+function BrowseLibraryPanel() {
+  const [query, setQuery] = useState('');
+  const [karaokeMode, setKaraokeMode] = useState<'all' | 'include' | 'exclude'>('exclude');
+  const [items, setItems] = useState<LibraryBrowseItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistPickerFor, setPlaylistPickerFor] = useState<LibraryBrowseItem | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
+  const [addingToQueue, setAddingToQueue] = useState<string | null>(null);
+  const [addingToPlaylist, setAddingToPlaylist] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  useEffect(() => {
+    getPlaylists(PLAYER_ID)
+      .then((data) => {
+        setPlaylists(data);
+        const active = data.find((p) => p.is_active);
+        setSelectedPlaylistId(active?.id ?? data[0]?.id ?? '');
+      })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setIsLoading(true);
+      try {
+        let req = supabase
+          .from('r2_files')
+          .select('*')
+          .order('title', { ascending: true })
+          .limit(500);
+
+        const trimmed = query.trim().replace(/[%(),]/g, ' ');
+        if (trimmed) {
+          req = req.or(`title.ilike.%${trimmed}%,file_name.ilike.%${trimmed}%,artist.ilike.%${trimmed}%,object_key.ilike.%${trimmed}%`);
+        }
+        if (karaokeMode === 'include') {
+          req = req.ilike('object_key', '%karaoke%');
+        } else if (karaokeMode === 'exclude') {
+          req = req.not('object_key', 'ilike', '%karaoke%');
+        }
+
+        const { data, error } = await req;
+        if (error) throw error;
+        if (!cancelled) {
+          setItems(((data ?? []) as LibraryBrowseItem[]).map((item) => ({ ...item, source: 'cloudflare' as const })));
+        }
+      } catch (error) {
+        console.error('[BrowseLibrary] Failed to load R2 files:', error);
+        if (!cancelled) setItems([]);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    load();
+    const sub = subscribeToTable<R2File>('r2_files', null, () => { load().catch(() => {}); });
+    return () => { cancelled = true; sub.unsubscribe(); };
+  }, [query, karaokeMode]);
+
+  const showStatus = (text: string, ok: boolean) => {
+    setStatusMsg({ text, ok });
+    window.setTimeout(() => setStatusMsg(null), 3500);
+  };
+
+  const handleAddToQueue = async (item: LibraryBrowseItem) => {
+    setAddingToQueue(item.id);
+    try {
+      const res = await callKioskHandler({
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        add_to_queue: true,
+        r2_file_id: item.id,
+      }) as { queue_id?: string; error?: string };
+      if (res?.error) throw new Error(res.error);
+      showStatus(`Added "${cleanDisplayText(item.title || item.file_name)}" to Priority Queue`, true);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to add to queue', false);
+    } finally {
+      setAddingToQueue(null);
+    }
+  };
+
+  const handleAddToPlaylist = async () => {
+    if (!playlistPickerFor || !selectedPlaylistId) return;
+    setAddingToPlaylist(playlistPickerFor.id);
+    try {
+      const res = await callKioskHandler({
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        add_to_queue: false,
+        r2_file_id: playlistPickerFor.id,
+      }) as { media_item_id?: string; error?: string };
+      if (res?.error) throw new Error(res.error);
+      if (!res.media_item_id) throw new Error('No media item returned');
+      await callPlaylistManager({
+        action: 'add_item',
+        playlist_id: selectedPlaylistId,
+        media_item_id: res.media_item_id,
+      });
+      const playlist = playlists.find((p) => p.id === selectedPlaylistId);
+      showStatus(`Added to "${playlist?.name ?? 'playlist'}"`, true);
+      setPlaylistPickerFor(null);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to add to playlist', false);
+    } finally {
+      setAddingToPlaylist(null);
+    }
+  };
+
+  const sortedPlaylists = [
+    ...playlists.filter((p) => p.is_active),
+    ...playlists.filter((p) => !p.is_active).sort((a, b) => a.name.localeCompare(b.name)),
+  ];
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="Browse Library" subtitle="Explore Cloudflare R2 media and add items directly to queue or playlists" />
+
+      <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search title, artist, folder..."
+          style={{
+            flex: 1,
+            minWidth: 240,
+            padding: '9px 14px',
+            borderRadius: 10,
+            background: '#0d0d0d',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: '#fff',
+            fontFamily: 'var(--font-display)',
+            fontSize: 14,
+            outline: 'none',
+          }}
+        />
+        {([
+          ['exclude', 'Exclude Karaoke'],
+          ['include', 'Karaoke Only'],
+          ['all', 'All Files'],
+        ] as const).map(([mode, label]) => (
+          <Btn
+            key={mode}
+            variant={karaokeMode === mode ? 'accent' : 'ghost'}
+            onClick={() => setKaraokeMode(mode)}
+          >
+            {label}
+          </Btn>
+        ))}
+      </div>
+
+      {statusMsg && (
+        <div style={{
+          margin: '8px 24px 0',
+          padding: '8px 12px',
+          borderRadius: 8,
+          background: statusMsg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          color: statusMsg.ok ? '#4ade80' : '#f87171',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+        }}>
+          {statusMsg.text}
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 24px' }}>
+        {isLoading && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            <Spinner size={16} /> Loading library...
+          </div>
+        )}
+
+        {!isLoading && items.length === 0 && (
+          <div style={{ padding: '24px 0', color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            No library items matched the current filters.
+          </div>
+        )}
+
+        {items.map((item) => {
+          const title = cleanDisplayText(item.title || item.file_name) || 'Unknown Title';
+          const artist = item.artist ? cleanDisplayText(item.artist) : null;
+          const isHovered = hoveredId === item.id;
+          const folderHint = item.object_key.split('/').slice(0, -1).join(' / ') || 'Library';
+
+          return (
+            <div
+              key={item.id}
+              onMouseEnter={() => setHoveredId(item.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '7px 10px',
+                borderRadius: 10,
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                background: isHovered ? 'rgba(255,255,255,0.04)' : 'transparent',
+                transition: 'background 0.12s',
+              }}
+            >
+              <div style={{ width: 48, height: 36, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>
+                {item.thumbnail ? (
+                  <img src={item.thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>💾</div>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {artist ? `${artist} - ${title}` : title}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.35)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {folderHint}
+                </div>
+              </div>
+
+              {isHovered && (
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <Btn variant="accent" disabled={addingToQueue === item.id} onClick={() => handleAddToQueue(item)}>
+                    {addingToQueue === item.id ? <><Spinner size={12} /> Adding...</> : '+ Priority Queue'}
+                  </Btn>
+                  <Btn variant="ghost" disabled={addingToPlaylist === item.id} onClick={() => setPlaylistPickerFor(item)}>
+                    + Playlist
+                  </Btn>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {playlistPickerFor && (
+        <div style={{ padding: '16px 24px 20px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', minWidth: 72 }}>Playlist</div>
+          <select
+            value={selectedPlaylistId}
+            onChange={(e) => setSelectedPlaylistId(e.target.value)}
+            style={{ minWidth: 240, padding: '9px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none' }}
+          >
+            {sortedPlaylists.map((playlist) => (
+              <option key={playlist.id} value={playlist.id}>
+                {playlist.is_active ? 'Active: ' : ''}{playlist.name}
+              </option>
+            ))}
+          </select>
+          <Btn variant="accent" disabled={!selectedPlaylistId || addingToPlaylist === playlistPickerFor.id} onClick={handleAddToPlaylist}>
+            {addingToPlaylist === playlistPickerFor.id ? <><Spinner size={12} /> Adding...</> : 'Confirm'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => setPlaylistPickerFor(null)} disabled={addingToPlaylist === playlistPickerFor.id}>Cancel</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // QUEUE PANEL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -903,10 +1169,12 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   );
 }
 
-function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling }: {
+function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling, onStartRadio, isGeneratingRadio }: {
   queue: QueueItem[]; status: PlayerStatus | null;
   onRemove: (id: string) => void; onReorder: (e: DragEndEvent) => void;
   onShuffle: () => void; isShuffling: boolean;
+  onStartRadio: (source: 'now_playing' | 'history' | 'playlist') => void;
+  isGeneratingRadio: boolean;
 }) {
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const normalQ   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
@@ -916,7 +1184,18 @@ function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Queue" subtitle={`${totalCount} song${totalCount !== 1 ? 's' : ''}`}
-        actions={<Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>{isShuffling ? <><Spinner size={12} /> Shuffling…</> : '🔀 Shuffle'}</Btn>}
+        actions={<>
+          <Btn variant="ghost" onClick={() => onStartRadio('now_playing')} disabled={isGeneratingRadio || !status?.current_media_id}>
+            {isGeneratingRadio ? <><Spinner size={12} /> Building…</> : 'Radio: Now Playing'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => onStartRadio('history')} disabled={isGeneratingRadio}>
+            {isGeneratingRadio ? <><Spinner size={12} /> Building…</> : 'Radio: History'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => onStartRadio('playlist')} disabled={isGeneratingRadio}>
+            {isGeneratingRadio ? <><Spinner size={12} /> Building…</> : 'Radio: Playlist'}
+          </Btn>
+          <Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>{isShuffling ? <><Spinner size={12} /> Shuffling…</> : '🔀 Shuffle'}</Btn>
+        </>}
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px' }}>
@@ -1207,7 +1486,17 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     finally { setSaving(false); }
   };
 
-  const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode, player_mode: local.player_mode }) : Promise.resolve();
+  const handleSavePlayback = () => local ? saveFields({
+    shuffle: local.shuffle,
+    loop: local.loop,
+    volume: local.volume,
+    karaoke_mode: local.karaoke_mode,
+    player_mode: local.player_mode,
+    silence_skip_enabled: local.silence_skip_enabled ?? false,
+    silence_skip_tail_seconds: local.silence_skip_tail_seconds ?? 20,
+    silence_skip_duration_ms: local.silence_skip_duration_ms ?? 3000,
+    silence_skip_threshold: local.silence_skip_threshold ?? 0.01,
+  }) : Promise.resolve();
   const handleSaveKiosk    = () => local ? saveFields({
     freeplay: local.freeplay,
     coin_per_song: local.coin_per_song,
@@ -1241,7 +1530,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleResetPriorityPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
+    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority', initiator: 'admin_ui' }); }
     catch (e) { console.error(e); }
   };
 
@@ -1305,6 +1594,49 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
           <option value="ytm_desktop">ytm_desktop API</option>
         </select>
       </SettingsRow>
+    )}
+    {'silence_skip_enabled' in local && (
+      <>
+        <SettingsRow label="Silence Detection" desc="For Cloudflare/local media, skip long silent tails near the end of a track">
+          <Toggle checked={!!local.silence_skip_enabled} onChange={() => handleToggle('silence_skip_enabled' as keyof PlayerSettings)} />
+        </SettingsRow>
+        {local.silence_skip_enabled && (
+          <>
+            <SettingsRow label="Silence Tail Window" desc="Only monitor audio during the final N seconds">
+              <input
+                type="number"
+                min={5}
+                max={120}
+                value={local.silence_skip_tail_seconds ?? 20}
+                onChange={e => set('silence_skip_tail_seconds', Number(e.target.value))}
+                style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+              />
+            </SettingsRow>
+            <SettingsRow label="Silence Duration (ms)" desc="Continuous silence required before auto-skip">
+              <input
+                type="number"
+                min={500}
+                max={10000}
+                step={100}
+                value={local.silence_skip_duration_ms ?? 3000}
+                onChange={e => set('silence_skip_duration_ms', Number(e.target.value))}
+                style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+              />
+            </SettingsRow>
+            <SettingsRow label="Silence Threshold" desc="Lower values are stricter; 0.01 is a conservative starting point">
+              <input
+                type="number"
+                min={0.001}
+                max={0.1}
+                step={0.001}
+                value={local.silence_skip_threshold ?? 0.01}
+                onChange={e => set('silence_skip_threshold', Number(e.target.value))}
+                style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+              />
+            </SettingsRow>
+          </>
+        )}
+      </>
     )}
   </>, handleSavePlayback);
 
@@ -1911,6 +2243,7 @@ function App() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
   const [isSkipping,  setIsSkipping]  = useState(false);
+  const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
   const isSkippingRef = useRef(false);
   const adminSessionStartedAtRef = useRef(new Date().toISOString());
@@ -1991,16 +2324,39 @@ function App() {
   const handlePlayPause = async () => {
     try {
       const newState = status?.state === 'playing' ? 'paused' : 'playing';
-      await callPlayerControl({ player_id: PLAYER_ID, state: newState, action: 'update' });
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        state: newState,
+        action: 'update',
+        initiator: 'admin_ui',
+        reason: newState === 'playing' ? 'admin_play_button' : 'admin_pause_button',
+      });
     } catch (e) { console.error(e); }
   };
 
   const handleSkip = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
-    try { await callPlayerControl({ player_id: PLAYER_ID, state: 'idle', action: 'skip' }); }
+    try { await callPlayerControl({ player_id: PLAYER_ID, state: 'idle', action: 'skip', initiator: 'admin_ui', reason: 'admin_skip_button' }); }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000); // failsafe
+  };
+
+  const handleStartRadio = async (source: 'now_playing' | 'history' | 'playlist') => {
+    setIsGeneratingRadio(true);
+    try {
+      const result = await callRadioGenerator({
+        player_id: PLAYER_ID,
+        action: 'generate',
+        source,
+      });
+      console.log('[Radio] Generated:', result);
+      setView('queue');
+    } catch (error) {
+      console.error('[Radio] Failed:', error);
+    } finally {
+      setIsGeneratingRadio(false);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -2014,6 +2370,7 @@ function App() {
   if (!user) return <LoginForm onSignIn={setUser} />;
 
   const isSearchView    = view === 'search';
+  const isLibraryView   = view === 'library';
   const isQueueView     = view.startsWith('queue');
   const isPlaylistView  = view.startsWith('playlists');
   const isSettingsView  = view.startsWith('settings');
@@ -2038,10 +2395,12 @@ function App() {
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
           {isSearchView && <SearchPanel />}
+          {isLibraryView && <BrowseLibraryPanel />}
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
-              onShuffle={handleShuffle} isShuffling={isShuffling} />
+              onShuffle={handleShuffle} isShuffling={isShuffling}
+              onStartRadio={handleStartRadio} isGeneratingRadio={isGeneratingRadio} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} />}
           {isScriptsView  && <ScriptsPanel user={user} />}

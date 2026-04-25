@@ -2,6 +2,19 @@
 // Handles player status updates and heartbeat
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+
+async function logSystemEvent(supabase, playerId, event, severity = 'info', payload = {}) {
+  const { error } = await supabase.from('system_logs').insert({
+    player_id: playerId,
+    event,
+    severity,
+    payload,
+  });
+  if (error) {
+    console.error('[player-control] Failed to log system event:', event, error);
+  }
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -14,7 +27,7 @@ Deno.serve(async (req)=>{
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
     // Parse request body
     const body = await req.json();
-    const { player_id, state, progress, action = 'update', session_id, stored_player_id } = body;
+    const { player_id, state, progress, action = 'update', session_id, stored_player_id, initiator, reason, event_name, severity, payload } = body;
     if (!player_id) {
       return new Response(JSON.stringify({
         error: 'player_id is required'
@@ -35,6 +48,41 @@ Deno.serve(async (req)=>{
       return new Response(JSON.stringify({
         success: true
       }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    if (action === 'client_log') {
+      await logSystemEvent(
+        supabase,
+        player_id,
+        typeof event_name === 'string' && event_name ? event_name : 'client_log',
+        severity === 'debug' || severity === 'warn' || severity === 'error' ? severity : 'info',
+        {
+          source: initiator || 'player_client',
+          reason: reason || null,
+          ...(payload && typeof payload === 'object' ? payload : {}),
+        },
+      );
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    if (action === 'disconnect') {
+      await logSystemEvent(supabase, player_id, 'player_disconnected', 'warn', {
+        source: initiator || 'player_client',
+        reason: reason || 'window_unload',
+      });
+      return new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: {
           ...corsHeaders,
@@ -66,6 +114,12 @@ Deno.serve(async (req)=>{
           .eq('id', player_id);
 
         if (updateError) throw updateError;
+        await logSystemEvent(supabase, player_id, 'priority_player_assigned', 'info', {
+          session_id,
+          role: 'priority',
+          restored: true,
+          source: 'register_session',
+        });
 
         console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
         return new Response(JSON.stringify({
@@ -103,6 +157,12 @@ Deno.serve(async (req)=>{
             .eq('id', player_id);
 
           if (updateError) throw updateError;
+          await logSystemEvent(supabase, player_id, 'priority_player_assigned', 'info', {
+            session_id,
+            role: 'priority',
+            restored: false,
+            source: 'register_session',
+          });
 
           console.log(`[player-control] Player ${player_id} registered as priority player (no players playing, session: ${session_id})`);
           return new Response(JSON.stringify({
@@ -117,6 +177,12 @@ Deno.serve(async (req)=>{
           });
         } else {
           // Players are playing - this becomes a slave
+          await logSystemEvent(supabase, player_id, 'priority_player_waiting_assignment', 'info', {
+            session_id,
+            role: 'slave',
+            source: 'register_session',
+            reason: 'other_players_playing',
+          });
           console.log(`[player-control] Player ${player_id} registered as slave player (other players playing, session: ${session_id})`);
           return new Response(JSON.stringify({
             success: true,
@@ -130,6 +196,12 @@ Deno.serve(async (req)=>{
           });
         }
       } else {
+        await logSystemEvent(supabase, player_id, 'player_connected', 'info', {
+          session_id,
+          role: 'slave',
+          source: 'register_session',
+          reason: 'priority_exists',
+        });
         console.log(`[player-control] Player ${player_id} registered as slave player (priority exists, session: ${session_id})`);
         return new Response(JSON.stringify({
           success: true,
@@ -151,6 +223,9 @@ Deno.serve(async (req)=>{
         .eq('id', player_id);
 
       if (resetError) throw resetError;
+      await logSystemEvent(supabase, player_id, 'priority_player_reset', 'warn', {
+        source: initiator || 'admin_ui',
+      });
 
       console.log(`[player-control] Priority player reset for player ${player_id}`);
       return new Response(JSON.stringify({
@@ -194,6 +269,22 @@ Deno.serve(async (req)=>{
       }
       const { error: updateError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
       if (updateError) throw updateError;
+      if (initiator === 'admin_ui') {
+        if (action === 'skip') {
+          await logSystemEvent(supabase, player_id, 'admin_skip', 'warn', {
+            source: 'admin_ui',
+            state,
+            reason: reason || null,
+            pre_update_state: preUpdateState,
+          });
+        } else if (action === 'update' && (state === 'playing' || state === 'paused')) {
+          await logSystemEvent(supabase, player_id, state === 'playing' ? 'admin_play' : 'admin_pause', 'info', {
+            source: 'admin_ui',
+            state,
+            reason: reason || null,
+          });
+        }
+      }
       // If action is 'skip' from Admin, check if player was already idle.
       // If idle: call queue_next directly (no fade needed, nothing is playing).
       // If playing/paused: let the Player handle the fade and then call queue_next.

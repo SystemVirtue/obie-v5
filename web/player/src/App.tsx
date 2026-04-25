@@ -23,6 +23,8 @@ const YTM_BASE = 'http://localhost:9863';
 const YTM_APP_ID = 'obie-jukebox';
 const getYtmToken = () => localStorage.getItem('ytm_auth_token');
 const saveYtmToken = (token: string) => localStorage.setItem('ytm_auth_token', token);
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 async function ytmFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getYtmToken();
@@ -63,6 +65,13 @@ function App() {
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localAudioContextRef = useRef<AudioContext | null>(null);
+  const localAudioSourceRef = useRef<MediaElementAudioSourceNode | null>(null);
+  const localAnalyserRef = useRef<AnalyserNode | null>(null);
+  const localAudioElementRef = useRef<HTMLVideoElement | null>(null);
+  const localWaveformRef = useRef<Uint8Array | null>(null);
+  const silenceStartedAtRef = useRef<number | null>(null);
+  const silenceTriggeredForRef = useRef<string | null>(null);
   // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
   const localVideoLastReportRef = useRef<number>(0); // Throttle local video progress reports
@@ -217,6 +226,81 @@ function App() {
     return match ? match[1] : null;
   };
 
+  const resetSilenceTracking = useCallback((resetTriggered = false) => {
+    silenceStartedAtRef.current = null;
+    if (resetTriggered) silenceTriggeredForRef.current = null;
+  }, []);
+
+  const teardownLocalAudioAnalyser = useCallback(() => {
+    localAudioSourceRef.current?.disconnect();
+    localAnalyserRef.current?.disconnect();
+    localAudioSourceRef.current = null;
+    localAnalyserRef.current = null;
+    localAudioElementRef.current = null;
+    localWaveformRef.current = null;
+    if (localAudioContextRef.current) {
+      localAudioContextRef.current.close().catch(() => {});
+      localAudioContextRef.current = null;
+    }
+  }, []);
+
+  const ensureLocalAudioAnalyser = useCallback(async () => {
+    if (!settings?.silence_skip_enabled) return false;
+    const video = localVideoRef.current;
+    if (!video) return false;
+
+    if (localAudioElementRef.current === video && localAnalyserRef.current && localWaveformRef.current) {
+      if (localAudioContextRef.current?.state === 'suspended') {
+        await localAudioContextRef.current.resume().catch(() => {});
+      }
+      return true;
+    }
+
+    teardownLocalAudioAnalyser();
+
+    const AudioContextCtor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextCtor) return false;
+
+    const audioContext = new AudioContextCtor();
+    const sourceNode = audioContext.createMediaElementSource(video);
+    const analyser = audioContext.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.85;
+
+    sourceNode.connect(analyser);
+    analyser.connect(audioContext.destination);
+
+    localAudioContextRef.current = audioContext;
+    localAudioSourceRef.current = sourceNode;
+    localAnalyserRef.current = analyser;
+    localAudioElementRef.current = video;
+    localWaveformRef.current = new Uint8Array(analyser.fftSize);
+
+    await audioContext.resume().catch(() => {});
+    return true;
+  }, [settings?.silence_skip_enabled, teardownLocalAudioAnalyser]);
+
+  const logPlayerEvent = useCallback(async (
+    eventName: string,
+    severity: 'debug' | 'info' | 'warn' | 'error' = 'info',
+    details: Record<string, unknown> = {},
+    reason?: string,
+  ) => {
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'client_log',
+        initiator: 'player_client',
+        event_name: eventName,
+        severity,
+        reason,
+        payload: details,
+      });
+    } catch (error) {
+      console.error('[Player] Failed to write system log:', eventName, error);
+    }
+  }, []);
+
   // Report playback events to server (disabled for slave players)
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
     // Slave players do not send status updates to server
@@ -330,6 +414,10 @@ function App() {
         setCurrentMedia(null);
       }
     } catch (error) {
+      logPlayerEvent('queue_advance_failed', 'error', {
+        is_skip: isSkip,
+        message: error instanceof Error ? error.message : String(error),
+      }, 'queue_next_failed').catch(() => {});
       console.error('[Player] Failed to call queue_next:', error);
     } finally {
       // Hold the guard for 1000ms after completion.
@@ -341,7 +429,84 @@ function App() {
         isEndingRef.current = false;
       }, 1000);
     }
-  }, [fadeOut, fadeOutYtm]);
+  }, [fadeOut, fadeOutYtm, logPlayerEvent]);
+
+  const evaluateTailSilence = useCallback(() => {
+    if (!settings?.silence_skip_enabled) return;
+    const video = localVideoRef.current;
+    const analyser = localAnalyserRef.current;
+    const waveform = localWaveformRef.current;
+    if (!video || !analyser || !waveform) return;
+    if (!isFinite(video.duration) || video.duration <= 0) return;
+    if (video.paused || video.ended || status?.state === 'paused') {
+      resetSilenceTracking(false);
+      return;
+    }
+
+    const tailWindowSeconds = settings.silence_skip_tail_seconds ?? 20;
+    if (video.duration - video.currentTime > tailWindowSeconds) {
+      resetSilenceTracking(false);
+      return;
+    }
+
+    analyser.getByteTimeDomainData(waveform);
+    let sumSquares = 0;
+    for (let i = 0; i < waveform.length; i++) {
+      const normalized = (waveform[i] - 128) / 128;
+      sumSquares += normalized * normalized;
+    }
+    const rms = Math.sqrt(sumSquares / waveform.length);
+    const threshold = settings.silence_skip_threshold ?? 0.01;
+    const now = Date.now();
+
+    if (rms < threshold) {
+      if (silenceStartedAtRef.current === null) {
+        silenceStartedAtRef.current = now;
+        return;
+      }
+
+      const silenceDurationMs = now - silenceStartedAtRef.current;
+      const requiredDurationMs = settings.silence_skip_duration_ms ?? 3000;
+      const currentMediaId = currentMediaIdRef.current;
+      if (silenceDurationMs >= requiredDurationMs && currentMediaId && silenceTriggeredForRef.current !== currentMediaId) {
+        silenceTriggeredForRef.current = currentMediaId;
+        console.log('[Player][silence-skip] Tail silence detected — triggering queue_next', {
+          currentTime: video.currentTime,
+          duration: video.duration,
+          rms,
+          threshold,
+          silenceDurationMs,
+        });
+        callPlayerControl({
+          player_id: PLAYER_ID,
+          action: 'client_log',
+          initiator: 'player_client',
+          event_name: 'tail_silence_detected',
+          severity: 'warn',
+          reason: 'cloudflare_tail_silence',
+          payload: {
+            current_time: video.currentTime,
+            duration: video.duration,
+            silence_duration_ms: silenceDurationMs,
+            threshold,
+            rms,
+          },
+        }).catch(() => {});
+        reportEndedAndNext(false);
+      }
+      return;
+    }
+
+    resetSilenceTracking(false);
+  }, [
+    settings?.silence_skip_enabled,
+    settings?.silence_skip_tail_seconds,
+    settings?.silence_skip_duration_ms,
+    settings?.silence_skip_threshold,
+    status?.state,
+    reportEndedAndNext,
+    resetSilenceTracking,
+  ]);
 
   // YouTube Player event handlers
   const onPlayerReady = useCallback((_event: any) => {
@@ -426,6 +591,11 @@ function App() {
       return;
     }
     console.error('[Player] YouTube player error:', event.data);
+    logPlayerEvent('youtube_playback_error', 'error', {
+      error_code: event.data,
+      media_item_id: currentMediaIdRef.current,
+      youtube_id: currentYouTubeIdRef.current,
+    }, 'youtube_player_error').catch(() => {});
 
     if (isSlavePlayer) return;
 
@@ -468,7 +638,7 @@ function App() {
     // and leaves the player stuck indefinitely.
     console.error(`[Player] Skipping video due to playback error (${event.data})`);
     reportEndedAndNext(false);
-  }, [isSlavePlayer, reportEndedAndNext]);
+  }, [isSlavePlayer, reportEndedAndNext, logPlayerEvent]);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -667,6 +837,38 @@ function App() {
     playerModeRef.current = settings?.player_mode ?? 'iframe';
   }, [settings?.player_mode]);
   useEffect(() => { localPlaybackUrlRef.current = localPlaybackUrl; }, [localPlaybackUrl]);
+  useEffect(() => {
+    resetSilenceTracking(true);
+    return () => {
+      resetSilenceTracking(true);
+      teardownLocalAudioAnalyser();
+    };
+  }, [localPlaybackUrl, currentMedia?.id, resetSilenceTracking, teardownLocalAudioAnalyser]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+      const body = JSON.stringify({
+        player_id: PLAYER_ID,
+        action: 'disconnect',
+        initiator: 'player_client',
+        reason: 'window_unload',
+      });
+      fetch(`${SUPABASE_URL}/functions/v1/player-control`, {
+        method: 'POST',
+        keepalive: true,
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body,
+      }).catch(() => {});
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, []);
 
   // ── YTM Desktop auth ──────────────────────────────────────────────────────
   const ytmRequestAuth = useCallback(async () => {
@@ -1132,6 +1334,11 @@ function App() {
 
     const advanceToNext = async (reason: string) => {
       console.error(`[Player] ${reason} — advancing to next video`);
+      logPlayerEvent('player_recovery_triggered', 'warn', {
+        recovery_reason: reason,
+        source: status.source ?? 'youtube',
+        media_item_id: status.current_media_id,
+      }, reason).catch(() => {});
       try {
         const result = await callPlayerControl({
           player_id: PLAYER_ID,
@@ -1155,6 +1362,10 @@ function App() {
           setCurrentMedia(nextMedia);
         }
       } catch (error) {
+        logPlayerEvent('player_recovery_failed', 'error', {
+          recovery_reason: reason,
+          message: error instanceof Error ? error.message : String(error),
+        }, reason).catch(() => {});
         console.error('[Player] Failed to advance after auto-skip:', error);
       }
     };
@@ -1251,13 +1462,16 @@ function App() {
           autoPlay
           className="absolute inset-0 w-full h-full"
           style={{ objectFit: 'contain', background: 'black' }}
-          onPlay={() => {
+          onPlay={async () => {
             const v = localVideoRef.current;
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
             videoHasPlayedRef.current = true;
+            resetSilenceTracking(false);
+            await ensureLocalAudioAnalyser();
             reportStatus('playing');
           }}
           onTimeUpdate={() => {
+            evaluateTailSilence();
             const now = Date.now();
             if (now - localVideoLastReportRef.current < 5000) return; // Throttle to every 5s
             localVideoLastReportRef.current = now;
@@ -1268,13 +1482,18 @@ function App() {
             }
           }}
           onEnded={() => {
+            resetSilenceTracking(true);
             console.log('[Player][local-video] ■ ENDED — triggering queue_next');
             reportEndedAndNext(false);
           }}
           onError={(e) => {
+            resetSilenceTracking(true);
             console.error('[Player][local-video] ✖ ERROR:', e);
             setLocalPlaybackUrl(null);
             reportEndedAndNext(false);
+          }}
+          onPause={() => {
+            resetSilenceTracking(false);
           }}
         />
       )}
