@@ -60,6 +60,8 @@ function App() {
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
   const mediaLoadStartedAtRef = useRef(0); // Timestamp of the current YouTube media load/startup window
+  const ignoreEndedUntilRef = useRef(0); // Ignore YouTube ENDED events until this timestamp for the current load
+  const firstPlayAtRef = useRef(0); // Timestamp of the first confirmed PLAYING state for the current load
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
@@ -247,6 +249,14 @@ function App() {
         }
       }, stepDuration);
     });
+  }, []);
+
+  const markYouTubeLoadStart = useCallback(() => {
+    const now = Date.now();
+    videoHasPlayedRef.current = false;
+    firstPlayAtRef.current = 0;
+    mediaLoadStartedAtRef.current = now;
+    ignoreEndedUntilRef.current = now + 4000;
   }, []);
 
   // Extract YouTube video ID from URL
@@ -576,7 +586,12 @@ function App() {
     if (event.data === 1) {
       // PLAYING
       console.log('[Player] Video PLAYING');
+      const now = Date.now();
       videoHasPlayedRef.current = true; // Video confirmed playing — any subsequent pause is user-initiated
+      if (firstPlayAtRef.current === 0) {
+        firstPlayAtRef.current = now;
+      }
+      ignoreEndedUntilRef.current = Math.max(ignoreEndedUntilRef.current, now + 1500);
       reportStatus('playing');
 
       // If we're at volume 0 (after skip), fade in
@@ -626,10 +641,13 @@ function App() {
     } else if (event.data === 0) {
       // ENDED - trigger queue progression
       const msSinceLoad = Date.now() - mediaLoadStartedAtRef.current;
-      if (!videoHasPlayedRef.current || msSinceLoad < 4000) {
+      const msUntilEndedAllowed = ignoreEndedUntilRef.current - Date.now();
+      if (!videoHasPlayedRef.current || msSinceLoad < 4000 || msUntilEndedAllowed > 0) {
         console.warn('[Player] Ignoring stale ENDED during startup window', {
           videoHasPlayed: videoHasPlayedRef.current,
           msSinceLoad,
+          msUntilEndedAllowed: Math.max(0, msUntilEndedAllowed),
+          firstPlayAt: firstPlayAtRef.current,
           mediaId: currentMediaIdRef.current,
           youtubeId: currentYouTubeIdRef.current,
         });
@@ -1338,8 +1356,7 @@ function App() {
       console.log('[Player] Loading new video in existing player:', youtubeId);
       currentMediaIdRef.current = currentMedia.id;
       currentYouTubeIdRef.current = youtubeId;
-      videoHasPlayedRef.current = false; // Reset — new video hasn't played yet
-      mediaLoadStartedAtRef.current = Date.now();
+      markYouTubeLoadStart();
       
       // Check if this is loading after a skip
       const isAfterSkip = isSkipLoadingRef.current;
@@ -1385,8 +1402,7 @@ function App() {
     // First time setup - create new player
       currentMediaIdRef.current = currentMedia.id;
       currentYouTubeIdRef.current = youtubeId;
-      videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
-      mediaLoadStartedAtRef.current = Date.now();
+      markYouTubeLoadStart();
       setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
@@ -1409,7 +1425,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, localPlaybackUrl, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
+  }, [currentMedia, localPlaybackUrl, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus, markYouTubeLoadStart]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
