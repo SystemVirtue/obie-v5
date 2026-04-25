@@ -1311,6 +1311,8 @@ function App() {
     playerRef.current = new window.YT.Player(playerDivRef.current, {
       videoId: youtubeId,
       playerVars: {
+        enablejsapi: 1,
+        origin: window.location.origin,
         autoplay: shouldAutoplayCurrentMediaRef.current ? 1 : 0,
         controls: 0,        // Hide controls to prevent accidental clicks
         disablekb: 1,       // Disable keyboard controls
