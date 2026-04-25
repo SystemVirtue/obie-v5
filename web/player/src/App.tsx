@@ -655,13 +655,22 @@ function App() {
   useEffect(() => {
     if (ytApiReady) return;
 
+    if (window.YT?.Player) {
+      console.log('[Player] YouTube IFrame API already present');
+      setYtApiReady(true);
+      return;
+    }
+
     console.log('[Player] Loading YouTube IFrame API...');
 
-    // Load the IFrame Player API code asynchronously
-    const tag = document.createElement('script');
-    tag.src = 'https://www.youtube.com/iframe_api';
-    const firstScriptTag = document.getElementsByTagName('script')[0];
-    firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    // Load the IFrame Player API code asynchronously, but only once.
+    const existingTag = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
+    if (!existingTag) {
+      const tag = document.createElement('script');
+      tag.src = 'https://www.youtube.com/iframe_api';
+      const firstScriptTag = document.getElementsByTagName('script')[0];
+      firstScriptTag.parentNode?.insertBefore(tag, firstScriptTag);
+    }
 
     // API will call this function when ready
     window.onYouTubeIframeAPIReady = () => {
@@ -669,6 +678,21 @@ function App() {
       setYtApiReady(true);
     };
   }, [ytApiReady]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        if (playerRef.current?.destroy) {
+          console.log('[Player] Destroying YouTube player instance');
+          playerRef.current.destroy();
+        }
+      } catch (error) {
+        console.warn('[Player] Failed to destroy YouTube player cleanly:', error);
+      } finally {
+        playerRef.current = null;
+      }
+    };
+  }, []);
 
   // Initialize player with default playlist
   useEffect(() => {
