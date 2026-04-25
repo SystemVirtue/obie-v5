@@ -1772,11 +1772,7 @@ function App() {
       {status?.state === 'idle' && !currentMedia && (
         <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-gray-900 to-black">
           <div className="text-center">
-            <div className="text-6xl font-bold text-white mb-4">Obie Jukebox</div>
-            <div className="text-xl text-gray-400">Waiting for next song...</div>
-            <div className="mt-8">
-              <div className="inline-block w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
-            </div>
+            <div className="inline-block w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
           </div>
         </div>
       )}
@@ -1804,7 +1800,7 @@ function App() {
       {/* Slave Player Debug Overlay */}
       {isSlavePlayer && (
         <div className="absolute bottom-0 left-0 right-0 flex justify-center items-end pb-4 pointer-events-none">
-          <div className="text-5xl font-bold text-white opacity-50" style={{ fontFamily: 'Arial, sans-serif' }}>
+          <div className="text-3xl font-semibold tracking-wide text-white opacity-[0.15]" style={{ fontFamily: 'Arial, sans-serif' }}>
             SLAVE
           </div>
         </div>
