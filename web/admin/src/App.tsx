@@ -290,9 +290,10 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
 // NOW PLAYING STAGE
 // ─────────────────────────────────────────────────────────────────────────────
 
-function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove }: {
+function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove, masterOfflineWarning }: {
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
+  masterOfflineWarning?: string | null;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -351,6 +352,22 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--accent-border),transparent)' }} />
 
       <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '16px 22px 0' }}>
+        {masterOfflineWarning && (
+          <div style={{
+            marginBottom: 10,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: 'rgba(239,68,68,0.14)',
+            border: '1px solid rgba(248,113,113,0.35)',
+            color: '#fca5a5',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase'
+          }}>
+            {masterOfflineWarning}
+          </div>
+        )}
         {/* Top */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
           {/* Thumb */}
@@ -2266,8 +2283,10 @@ function App() {
   const [isSkipping,  setIsSkipping]  = useState(false);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
+  const [masterOfflineWarning, setMasterOfflineWarning] = useState<string | null>(null);
   const isSkippingRef = useRef(false);
   const adminSessionStartedAtRef = useRef(new Date().toISOString());
+  const autoResetTriggeredRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
 
   const prefs = usePrefs();
@@ -2299,6 +2318,66 @@ function App() {
       setRefreshPrompt(broadcast);
     }, adminSessionStartedAtRef.current);
     return () => { sub.unsubscribe(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const evaluatePriorityHeartbeat = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('players')
+          .select('id, last_heartbeat, priority_player_id')
+          .eq('id', PLAYER_ID)
+          .single();
+
+        if (cancelled || error || !data) return;
+
+        const player = data as Player;
+        const hasPriorityAssigned = player.priority_player_id === PLAYER_ID;
+        const lastHeartbeatMs = player.last_heartbeat ? new Date(player.last_heartbeat).getTime() : 0;
+        const heartbeatAgeMs = Date.now() - lastHeartbeatMs;
+        const masterOffline = hasPriorityAssigned && heartbeatAgeMs > 30000;
+
+        if (masterOffline) {
+          setMasterOfflineWarning('MASTER PLAYER IS OFFLINE - Reassigning Priority to next PLAYER connection');
+          if (!autoResetTriggeredRef.current) {
+            autoResetTriggeredRef.current = true;
+            try {
+              await callPlayerControl({
+                player_id: PLAYER_ID,
+                action: 'reset_priority',
+                initiator: 'admin_ui',
+                reason: 'master_offline_timeout',
+              });
+            } catch (resetError) {
+              console.error('[Admin] Failed to auto-reset priority player:', resetError);
+            }
+          }
+          return;
+        }
+
+        setMasterOfflineWarning(null);
+        if (!hasPriorityAssigned || heartbeatAgeMs <= 30000) {
+          autoResetTriggeredRef.current = false;
+        }
+      } catch (err) {
+        console.error('[Admin] Failed to evaluate player heartbeat:', err);
+      }
+    };
+
+    evaluatePriorityHeartbeat();
+    const interval = window.setInterval(evaluatePriorityHeartbeat, 5000);
+    const sub = subscribeToTable<Player>('players', { column: 'id', value: PLAYER_ID }, () => {
+      evaluatePriorityHeartbeat().catch?.(() => {});
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      sub.unsubscribe();
+    };
   }, [user]);
 
   // ── Queue handlers ────────────────────────────────────────────────────────
@@ -2408,6 +2487,7 @@ function App() {
         onSkip={handleSkip}
         isSkipping={isSkipping}
         onRemove={handleRemove}
+        masterOfflineWarning={masterOfflineWarning}
       />
 
       {/* Body */}

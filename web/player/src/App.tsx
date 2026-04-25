@@ -152,6 +152,33 @@ function App() {
     });
   }, []);
 
+  // Priority/master player heartbeat — sent even while idle so admin can detect
+  // that the current master browser has gone away.
+  useEffect(() => {
+    if (isSlavePlayer) return;
+
+    let cancelled = false;
+    const sendHeartbeat = async () => {
+      try {
+        await callPlayerControl({
+          player_id: PLAYER_ID,
+          action: 'heartbeat',
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('[Player] Heartbeat failed:', error);
+        }
+      }
+    };
+
+    sendHeartbeat();
+    const interval = window.setInterval(sendHeartbeat, 10000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isSlavePlayer]);
+
   // YTM Desktop skip fade: step volume 100→0 over 2s via setVolume commands
   const fadeOutYtm = useCallback((): Promise<void> => {
     return new Promise((resolve) => {

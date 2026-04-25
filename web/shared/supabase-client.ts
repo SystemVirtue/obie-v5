@@ -13,6 +13,7 @@ export interface Player {
   status: 'offline' | 'online' | 'error';
   last_heartbeat: string;
   active_playlist_id: string | null;
+  priority_player_id?: string | null;
   created_at: string;
   updated_at: string;
 }
