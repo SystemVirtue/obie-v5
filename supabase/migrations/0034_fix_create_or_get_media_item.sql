@@ -51,6 +51,5 @@ BEGIN
   RETURN v_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION create_or_get_media_item(TEXT, TEXT, TEXT, TEXT, TEXT, INT, TEXT, JSONB)
   TO authenticated, service_role;

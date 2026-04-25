@@ -37,13 +37,10 @@
 
 ALTER TABLE queue
   DROP CONSTRAINT IF EXISTS queue_player_id_type_position_key;
-
 -- Only unplayed items need unique positions within (player, type).
 CREATE UNIQUE INDEX IF NOT EXISTS queue_player_type_pos_uniq
   ON queue (player_id, type, position)
   WHERE played_at IS NULL;
-
-
 -- 2.  Fix queue_remove — delete item, leave positions as-is
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -81,5 +78,4 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION queue_remove(UUID) TO authenticated, service_role;

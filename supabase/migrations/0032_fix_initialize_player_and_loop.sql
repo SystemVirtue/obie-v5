@@ -139,10 +139,7 @@ BEGIN
   RETURN QUERY SELECT v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION load_playlist(UUID, UUID, INT) TO authenticated, service_role;
-
-
 -- 2.  queue_next — add loop support
 -- ─────────────────────────────────────────────────────────────────────────────
 --   When no unplayed items remain and player_settings.loop = true, reload the
@@ -153,7 +150,6 @@ GRANT EXECUTE ON FUNCTION load_playlist(UUID, UUID, INT) TO authenticated, servi
 --   signature (SQLSTATE 42P13 prevents CREATE OR REPLACE changing return types).
 
 DROP FUNCTION IF EXISTS queue_next(UUID);
-
 CREATE OR REPLACE FUNCTION queue_next(
   p_player_id UUID
 )
@@ -249,10 +245,7 @@ BEGIN
   WHERE  m.id = v_next_queue_item.media_item_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION queue_next(UUID) TO authenticated, service_role;
-
-
 -- 3.  initialize_player_playlist — conditional load
 -- ─────────────────────────────────────────────────────────────────────────────
 --   Only loads the default playlist when the normal queue is genuinely empty.
@@ -260,7 +253,6 @@ GRANT EXECUTE ON FUNCTION queue_next(UUID) TO authenticated, service_role;
 --   tabs, etc.) the call is a no-op — queue state and shuffle order are preserved.
 
 DROP FUNCTION IF EXISTS initialize_player_playlist(UUID);
-
 CREATE OR REPLACE FUNCTION initialize_player_playlist(
   p_player_id UUID
 )
@@ -319,5 +311,4 @@ BEGIN
   RETURN QUERY SELECT TRUE, v_playlist_id, v_playlist_name, v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION initialize_player_playlist(UUID) TO authenticated, service_role;

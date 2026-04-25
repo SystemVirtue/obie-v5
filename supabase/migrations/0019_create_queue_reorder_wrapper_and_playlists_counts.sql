@@ -21,7 +21,6 @@ BEGIN
   WHERE player_id = p_player_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- Create a view that shows playlists along with item counts to avoid
 -- fetching items per-playlist from the client.
 CREATE OR REPLACE VIEW playlists_with_counts AS
@@ -31,7 +30,6 @@ SELECT
 FROM playlists p
 LEFT JOIN playlist_items pi ON pi.playlist_id = p.id
 GROUP BY p.id;
-
 -- Grant select on the view to anon/public if needed (adjust for your RLS policies)
 -- GRANT SELECT ON playlists_with_counts TO public;
 
@@ -78,4 +76,4 @@ GROUP BY p.id;
 --   FOR DELETE
 --   USING (current_setting('request.jwt.claims.role', true) = 'admin');
 
--- End of migration
+-- End of migration;
