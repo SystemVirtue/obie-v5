@@ -8,11 +8,13 @@ import {
   subscribeToQueue,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToAdminBroadcasts,
   subscribeToTable,
   callQueueManager,
   callPlayerControl,
   callPlaylistManager,
   callKioskHandler,
+  createAdminBroadcast,
   getPlaylists,
   getPlaylistItems,
   getTotalCredits,
@@ -24,6 +26,7 @@ import {
   type PlaylistItem,
   type PlayerSettings,
   type MediaItem,
+  type AdminBroadcast,
   signIn,
   signOut,
   getCurrentUser,
@@ -1529,7 +1532,7 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
   );
 }
 
-function ScriptsPanel() {
+function ScriptsPanel({ user }: { user: AuthUser }) {
   const now = () => new Date().toLocaleTimeString();
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -1600,6 +1603,19 @@ function ScriptsPanel() {
     const { data, error } = await supabase.functions.invoke('youtube-scraper', { body: { url } });
     if (error) throw error;
     log({ ts: now(), text: `✓ Scraped ${(data as { count?: number })?.count ?? '?'} items.`, level: 'ok' });
+  };
+
+  const runRefreshAllConnections = async (_: string, log: (e: ScriptLog) => void) => {
+    log({ ts: now(), text: 'Broadcasting refresh prompt to connected admin consoles…', level: 'info' });
+    const broadcast = await createAdminBroadcast({
+      event_type: 'refresh_prompt',
+      payload: {
+        title: 'Update available',
+        message: 'A newer admin console version is available. Refresh now?',
+      },
+      created_by: user.id,
+    });
+    log({ ts: now(), text: `✓ Refresh prompt sent (event #${broadcast.id}).`, level: 'ok' });
   };
 
   // deduplicate-all-playlists: remove items where the same media_item_id
@@ -1681,6 +1697,10 @@ function ScriptsPanel() {
           desc="Directly invoke the youtube-scraper Edge Function with any YouTube playlist URL."
           input={{ label: 'YouTube URL or Playlist ID', placeholder: 'https://www.youtube.com/playlist?list=PL…', required: true }}
           onRun={runScrapeYtScraper}
+        />
+        <ScriptCard icon="🔄" name="refresh-all-connections" category="Admin"
+          desc="Prompt every connected admin console instance to refresh and load the latest deployed build."
+          onRun={runRefreshAllConnections}
         />
       </div>
     </div>
@@ -1891,7 +1911,9 @@ function App() {
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
   const [isSkipping,  setIsSkipping]  = useState(false);
+  const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
   const isSkippingRef = useRef(false);
+  const adminSessionStartedAtRef = useRef(new Date().toISOString());
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
 
   const prefs = usePrefs();
@@ -1913,6 +1935,16 @@ function App() {
     });
     const ps = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => { q.unsubscribe(); s.unsubscribe(); ps.unsubscribe(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    adminSessionStartedAtRef.current = new Date().toISOString();
+    const sub = subscribeToAdminBroadcasts((broadcast) => {
+      if (broadcast.event_type !== 'refresh_prompt') return;
+      setRefreshPrompt(broadcast);
+    }, adminSessionStartedAtRef.current);
+    return () => { sub.unsubscribe(); };
   }, [user]);
 
   // ── Queue handlers ────────────────────────────────────────────────────────
@@ -2012,11 +2044,37 @@ function App() {
               onShuffle={handleShuffle} isShuffling={isShuffling} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} />}
-          {isScriptsView  && <ScriptsPanel />}
+          {isScriptsView  && <ScriptsPanel user={user} />}
           {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} />}
           {view === 'logs' && <LogsPanel />}
         </main>
       </div>
+
+      {refreshPrompt && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+          onClick={() => setRefreshPrompt(null)}
+        >
+          <div
+            style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, minWidth: 320,
+              boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
+              {typeof refreshPrompt.payload?.title === 'string' ? refreshPrompt.payload.title : 'Update available'}
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5, color: 'rgba(255,255,255,0.6)', textAlign: 'center', maxWidth: 360 }}>
+              {typeof refreshPrompt.payload?.message === 'string' ? refreshPrompt.payload.message : 'A newer admin console version is available. Refresh now?'}
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+              <Btn variant="ghost" onClick={() => setRefreshPrompt(null)}>Cancel</Btn>
+              <Btn variant="solid" onClick={() => window.location.reload()}>Refresh Now</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

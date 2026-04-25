@@ -139,6 +139,14 @@ export interface R2File {
   created_at: string;
 }
 
+export interface AdminBroadcast {
+  id: number;
+  event_type: 'refresh_prompt' | string;
+  payload: Record<string, any>;
+  created_at: string;
+  created_by: string | null;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -152,6 +160,7 @@ export interface Database {
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
       r2_files: { Row: R2File };
+      admin_broadcasts: { Row: AdminBroadcast };
     };
   };
 }
@@ -204,6 +213,36 @@ export function subscribeToTable<T = any>(
           new: payload.new as T,
           old: payload.old as T
         });
+      }
+    )
+    .subscribe();
+
+  return {
+    channel,
+    unsubscribe: () => {
+      supabase.removeChannel(channel);
+    }
+  };
+}
+
+export function subscribeToAdminBroadcasts(
+  callback: (broadcast: AdminBroadcast) => void,
+  since?: string
+): RealtimeSubscription<AdminBroadcast> {
+  const channel = supabase.channel(`admin_broadcasts:${since ?? 'all'}`);
+
+  channel
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'admin_broadcasts',
+      },
+      (payload: any) => {
+        const next = payload.new as AdminBroadcast;
+        if (since && next.created_at <= since) return;
+        callback(next);
       }
     )
     .subscribe();
@@ -502,6 +541,28 @@ export async function callPlayerControl(params: {
   }
 
   return data;
+}
+
+export async function createAdminBroadcast(params: {
+  event_type: string;
+  payload?: Record<string, any>;
+  created_by?: string;
+}) {
+  const { data, error } = await supabase
+    .from('admin_broadcasts')
+    .insert({
+      event_type: params.event_type,
+      payload: params.payload ?? {},
+      ...(params.created_by ? { created_by: params.created_by } : {}),
+    })
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message || JSON.stringify(error));
+  }
+
+  return data as AdminBroadcast;
 }
 
 /**

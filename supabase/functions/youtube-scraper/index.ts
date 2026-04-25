@@ -19,6 +19,8 @@ interface Video {
   embeddable?: boolean;
 }
 
+const SEARCH_EMBED_CHECK_CONCURRENCY = 4;
+
 // API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets
 // These must be configured in your Supabase project settings
 const API_KEYS: ApiKey[] = Array.from({ length: 8 }, (_, i) => {
@@ -317,7 +319,7 @@ async function fetchSearch(query: string, apiKey: string): Promise<Video[]> {
     })
     .filter((video: Video) => video.embeddable !== false);
 
-  return videos;
+  return await filterSearchResultsForEmbedding(videos);
 }
 // Fetch playlist metadata (all videos)
 async function fetchPlaylist(playlistId: string, apiKey: string): Promise<Video[]> {
@@ -401,4 +403,50 @@ function parseDuration(duration: string): number {
   const minutes = parseInt(match[2] || '0', 10);
   const seconds = parseInt(match[3] || '0', 10);
   return hours * 3600 + minutes * 60 + seconds;
+}
+
+async function filterSearchResultsForEmbedding(videos: Video[]): Promise<Video[]> {
+  if (videos.length === 0) return videos;
+
+  const validated: Video[] = [];
+
+  for (let i = 0; i < videos.length; i += SEARCH_EMBED_CHECK_CONCURRENCY) {
+    const batch = videos.slice(i, i + SEARCH_EMBED_CHECK_CONCURRENCY);
+    const batchResults = await Promise.all(batch.map(async (video) => {
+      const isEmbeddable = await verifyEmbeddableForSearch(video);
+      return isEmbeddable ? video : null;
+    }));
+
+    validated.push(...batchResults.filter((video): video is Video => video !== null));
+  }
+
+  console.log(`[youtube-scraper] Search embeddability filter kept ${validated.length}/${videos.length} results`);
+  return validated;
+}
+
+async function verifyEmbeddableForSearch(video: Video): Promise<boolean> {
+  if (video.embeddable === false) return false;
+
+  try {
+    const oembedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(video.url)}&format=json`;
+    const response = await fetch(oembedUrl, {
+      method: 'GET',
+      redirect: 'follow',
+    });
+
+    if (response.ok) {
+      return true;
+    }
+
+    if (response.status === 401 || response.status === 403 || response.status === 404) {
+      console.log(`[youtube-scraper] Excluding non-embeddable search result ${video.id} (oEmbed ${response.status})`);
+      return false;
+    }
+
+    console.warn(`[youtube-scraper] Unexpected oEmbed status ${response.status} for ${video.id}; keeping result`);
+    return true;
+  } catch (error) {
+    console.warn(`[youtube-scraper] oEmbed check failed for ${video.id}; keeping result`, error);
+    return true;
+  }
 }
