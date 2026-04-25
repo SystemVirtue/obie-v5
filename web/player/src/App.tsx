@@ -1417,35 +1417,13 @@ function App() {
 
     const advanceToNext = async (reason: string) => {
       console.error(`[Player] ${reason} — advancing to next video`);
-      const expectedMediaId = currentMediaIdRef.current ?? status.current_media_id ?? null;
       logPlayerEvent('player_recovery_triggered', 'warn', {
         recovery_reason: reason,
         source: status.source ?? 'youtube',
         media_item_id: status.current_media_id,
       }, reason).catch(() => {});
       try {
-        const result = await callPlayerControl({
-          player_id: PLAYER_ID,
-          state: 'idle',
-          progress: 1,
-          expected_media_id: expectedMediaId ?? undefined,
-          action: 'ended',
-        });
-        if (result?.next_item) {
-          const nextMedia: MediaItem = {
-            id: result.next_item.media_item_id,
-            title: result.next_item.title || 'Unknown',
-            artist: 'Unknown',
-            url: result.next_item.url,
-            duration: result.next_item.duration || 0,
-            source_id: '',
-            source_type: 'youtube',
-            thumbnail: null,
-            fetched_at: new Date().toISOString(),
-            metadata: {},
-          };
-          setCurrentMedia(nextMedia);
-        }
+        await reportEndedAndNext(false);
       } catch (error) {
         logPlayerEvent('player_recovery_failed', 'error', {
           recovery_reason: reason,
@@ -1501,7 +1479,7 @@ function App() {
         unexpectedPauseTimeoutRef.current = null;
       }
     };
-  }, [status?.state]);
+  }, [status, logPlayerEvent, reportEndedAndNext]);
 
   // Sync player state with server commands
   useEffect(() => {

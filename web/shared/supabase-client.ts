@@ -275,32 +275,38 @@ export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
+  let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  const fetchStatus = (label: 'Initial' | 'Updated') => {
+    supabase
+      .from('player_status')
+      .select('*, current_media:media_items(*)')
+      .eq('player_id', playerId)
+      .single()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error(`[subscribeToPlayerStatus] ❌ ${label.toLowerCase()} status error:`, error);
+          return;
+        }
+
+        if (data) {
+          console.log(`[subscribeToPlayerStatus] 📺 ${label} status:`, {
+            state: (data as any).state,
+            current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
+            title: (data as any).current_media?.title?.slice(0, 30) || 'none',
+            progress: (data as any).progress,
+            last_updated: (data as any).last_updated
+          });
+          callback(data as any);
+        }
+      });
+  };
+
   // Fetch initial status with media_item join
   console.log('[subscribeToPlayerStatus] 🎵 Fetching initial player status...');
-  supabase
-    .from('player_status')
-    .select('*, current_media:media_items(*)')
-    .eq('player_id', playerId)
-    .single()
-    .then(({ data, error }) => {
-      if (error) {
-        console.error('[subscribeToPlayerStatus] ❌ Initial status error:', error);
-        return;
-      }
-      
-      if (data) {
-        console.log('[subscribeToPlayerStatus] 📺 Initial status:', {
-          state: (data as any).state,
-          current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-          title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-          progress: (data as any).progress,
-          last_updated: (data as any).last_updated
-        });
-        callback(data as any);
-      }
-    });
+  fetchStatus('Initial');
 
-  return subscribeToTable<PlayerStatus>(
+  const sub = subscribeToTable<PlayerStatus>(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
@@ -313,33 +319,23 @@ export function subscribeToPlayerStatus(
       });
       
       if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-        // Fetch with media_item join
         console.log('[subscribeToPlayerStatus] 🔄 Fetching updated status with media...');
-        supabase
-          .from('player_status')
-          .select('*, current_media:media_items(*)')
-          .eq('player_id', playerId)
-          .single()
-          .then(({ data, error }) => {
-            if (error) {
-              console.error('[subscribeToPlayerStatus] ❌ Update fetch error:', error);
-              return;
-            }
-            
-            if (data) {
-              console.log('[subscribeToPlayerStatus] 📺 Updated status:', {
-                state: (data as any).state,
-                current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-                title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-                progress: (data as any).progress,
-                last_updated: (data as any).last_updated
-              });
-              callback(data as any);
-            }
-          });
+        if (refetchTimeout) clearTimeout(refetchTimeout);
+        refetchTimeout = setTimeout(() => {
+          refetchTimeout = null;
+          fetchStatus('Updated');
+        }, 120);
       }
     }
   );
+
+  return {
+    channel: sub.channel,
+    unsubscribe: () => {
+      if (refetchTimeout) clearTimeout(refetchTimeout);
+      sub.unsubscribe();
+    }
+  };
 }
 
 /**

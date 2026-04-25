@@ -2437,7 +2437,16 @@ function App() {
   const handleSkip = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
-    try { await callPlayerControl({ player_id: PLAYER_ID, state: 'idle', action: 'skip', initiator: 'admin_ui', reason: 'admin_skip_button' }); }
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        state: 'idle',
+        action: 'skip',
+        expected_media_id: status?.current_media_id ?? undefined,
+        initiator: 'admin_ui',
+        reason: 'admin_skip_button',
+      });
+    }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000); // failsafe
   };

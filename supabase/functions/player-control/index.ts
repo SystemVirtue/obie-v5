@@ -354,6 +354,31 @@ Deno.serve(async (req)=>{
       }
       // If song ended naturally (from Player), trigger queue_next
       if (action === 'ended' || state === 'idle') {
+        const { data: currentStatus } = await supabase
+          .from('player_status')
+          .select('state, current_media_id')
+          .eq('player_id', player_id)
+          .single();
+
+        if (action === 'ended' && typeof expected_media_id === 'string' && currentStatus?.current_media_id !== expected_media_id) {
+          console.log('[player-control] Ignoring duplicate ended for already-advanced media', {
+            expected_media_id,
+            actual_media_id: currentStatus?.current_media_id ?? null,
+            state: currentStatus?.state ?? null,
+          });
+          return new Response(JSON.stringify({
+            success: true,
+            skipped: true,
+            reason: 'already_advanced'
+          }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+
         // Check if this player is the priority player before allowing queue progression
         const { data: player } = await supabase
           .from('players')
