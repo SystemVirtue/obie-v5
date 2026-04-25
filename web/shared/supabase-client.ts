@@ -165,7 +165,14 @@ export interface Database {
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
       r2_files: { Row: R2File };
-      admin_broadcasts: { Row: AdminBroadcast };
+      admin_broadcasts: {
+        Row: AdminBroadcast;
+        Insert: {
+          event_type: string;
+          payload?: Record<string, any>;
+          created_by?: string | null;
+        };
+      };
     };
   };
 }

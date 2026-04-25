@@ -449,7 +449,7 @@ function App() {
       return;
     }
 
-    analyser.getByteTimeDomainData(waveform);
+    analyser.getByteTimeDomainData(waveform as unknown as Uint8Array<ArrayBuffer>);
     let sumSquares = 0;
     for (let i = 0; i < waveform.length; i++) {
       const normalized = (waveform[i] - 128) / 128;
