@@ -55,6 +55,7 @@ function App() {
   const playerDivRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
   const currentMediaIdRef = useRef<string | null>(null);
+  const shouldAutoplayCurrentMediaRef = useRef(false);
   const fadeIntervalRef = useRef<number | null>(null);
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
@@ -512,6 +513,16 @@ function App() {
   const onPlayerReady = useCallback((_event: any) => {
     console.log('[Player] YouTube player ready - waiting for user to press play');
     setPlayerReady(true); // Mark player as ready to hide loading overlay
+    if (shouldAutoplayCurrentMediaRef.current && playerRef.current?.playVideo) {
+      console.log('[Player] Existing playback detected on connect — auto-starting loaded video');
+      setTimeout(() => {
+        try {
+          playerRef.current?.playVideo();
+        } catch (error) {
+          console.error('[Player] Failed to auto-play existing video on connect:', error);
+        }
+      }, 250);
+    }
     // Don't report status here - let user click play first
     // Reporting 'idle' here causes the backend to think video ended and skip to next
   }, []);
@@ -800,6 +811,7 @@ function App() {
       }
 
       if (newMediaId && newMediaId !== oldMediaId) {
+        shouldAutoplayCurrentMediaRef.current = newState === 'playing';
         console.log('[Player] New media from status (CHANGED):', {
           old_id: oldMediaId,
           new_id: newMediaId,
@@ -1290,16 +1302,16 @@ function App() {
     }
 
     // First time setup - create new player
-    currentMediaIdRef.current = currentMedia.id;
-    currentYouTubeIdRef.current = youtubeId;
-    videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
-    setPlayerReady(false);
+      currentMediaIdRef.current = currentMedia.id;
+      currentYouTubeIdRef.current = youtubeId;
+      videoHasPlayedRef.current = false; // Reset — new player, video hasn't played yet
+      setPlayerReady(false);
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
     playerRef.current = new window.YT.Player(playerDivRef.current, {
       videoId: youtubeId,
       playerVars: {
-        autoplay: 0,        // Don't autoplay on first load (browser policy)
+        autoplay: shouldAutoplayCurrentMediaRef.current ? 1 : 0,
         controls: 0,        // Hide controls to prevent accidental clicks
         disablekb: 1,       // Disable keyboard controls
         modestbranding: 1,  // Hide YouTube logo

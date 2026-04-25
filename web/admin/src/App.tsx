@@ -1458,6 +1458,8 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   const [creditsLoading, setCreditsLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [saving, setSaving]   = useState(false);
+  const [resettingPriority, setResettingPriority] = useState(false);
+  const [priorityResetDone, setPriorityResetDone] = useState(false);
   const [localMediaScanning, setLocalMediaScanning]     = useState(false);
   const [localMediaScanResult, setLocalMediaScanResult] = useState<{ count: number; path: string } | null>(null);
 
@@ -1530,8 +1532,16 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleResetPriorityPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority', initiator: 'admin_ui' }); }
+    if (resettingPriority) return;
+    setResettingPriority(true);
+    setPriorityResetDone(false);
+    try {
+      await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority', initiator: 'admin_ui' });
+      setPriorityResetDone(true);
+      setTimeout(() => setPriorityResetDone(false), 2500);
+    }
     catch (e) { console.error(e); }
+    finally { setResettingPriority(false); }
   };
 
   const handleScanLocalMedia = async () => {
@@ -1638,6 +1648,24 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
         )}
       </>
     )}
+    <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
+        Clears priority designation. The next player to initialise will claim it.
+      </div>
+      <Btn
+        variant={priorityResetDone ? 'accent' : 'ghost'}
+        onClick={handleResetPriorityPlayer}
+        disabled={resettingPriority}
+        style={priorityResetDone ? {
+          background: 'rgba(34,197,94,0.18)',
+          color: '#4ade80',
+          border: '1px solid rgba(34,197,94,0.38)',
+        } : undefined}
+      >
+        {resettingPriority ? <><Spinner size={12} /> Resetting…</> : priorityResetDone ? '✓ Priority Reset' : '🔄 Reset Priority Player'}
+      </Btn>
+    </div>
   </>, handleSavePlayback);
 
   if (view === 'settings-kiosk') return (
@@ -1750,13 +1778,6 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
               {local.kiosk_coin_acceptor_device_id && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>Device: {local.kiosk_coin_acceptor_device_id}</div>}
             </div>
           )}
-
-          {/* Priority player reset */}
-          <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>Clears priority designation. The next player to initialise will claim it.</div>
-            <Btn variant="ghost" onClick={handleResetPriorityPlayer}>🔄 Reset Priority Player</Btn>
-          </div>
         </div>
       </div>
     </div>
