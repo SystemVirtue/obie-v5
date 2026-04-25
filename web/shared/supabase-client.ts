@@ -541,6 +541,7 @@ export async function callPlayerControl(params: {
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
   action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect';
+  expected_media_id?: string;
   session_id?: string;
   stored_player_id?: string;
   initiator?: string;

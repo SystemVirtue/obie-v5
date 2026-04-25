@@ -371,6 +371,7 @@ function App() {
       return;
     }
     isEndingRef.current = true;
+    const expectedMediaId = currentMediaIdRef.current;
 
     console.log(isSkip ? '[Player] Video SKIPPED - triggering queue_next' : '[Player] Video ENDED - triggering queue_next');
 
@@ -392,6 +393,7 @@ function App() {
         player_id: PLAYER_ID,
         state: 'idle',
         progress: 1,
+        expected_media_id: expectedMediaId ?? undefined,
         action: 'ended', // Always use 'ended' after fade completes to trigger queue_next
       });
       console.log('[Player] Queue_next full result:', JSON.stringify(result, null, 2));
@@ -591,14 +593,30 @@ function App() {
     } else if (event.data === 2) {
       // PAUSED
       console.log('[Player] Video PAUSED');
+      if (!videoHasPlayedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+        console.log('[Player] Video paused before first play — treating as startup pause and retrying play...');
+        try {
+          window.setTimeout(() => {
+            try {
+              playerRef.current?.playVideo();
+            } catch (retryError) {
+              console.error('[Player] Error retrying startup play:', retryError);
+            }
+          }, 250);
+        } catch (error) {
+          console.error('[Player] Error auto-playing video:', error);
+        }
+        return;
+      }
+
       reportStatus('paused');
 
-      // If video was recently loaded and paused unexpectedly, attempt to auto-play
+      // If video was recently loaded and paused unexpectedly after it had already started,
+      // attempt to nudge it back into play once.
       if (recentlyLoadedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
         console.log('[Player] Video paused unexpectedly after load, attempting auto-play...');
         try {
           playerRef.current.playVideo();
-          // Clear the flag since we're attempting to play
           recentlyLoadedRef.current = false;
         } catch (error) {
           console.error('[Player] Error auto-playing video:', error);
@@ -850,7 +868,7 @@ function App() {
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
       if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url) {
         // Only activate when the local_url is actually new (avoid redundant sets)
-        if (newStatus.local_url !== localPlaybackUrl) {
+        if (newStatus.local_url !== localPlaybackUrlRef.current) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
           console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
@@ -1399,6 +1417,7 @@ function App() {
 
     const advanceToNext = async (reason: string) => {
       console.error(`[Player] ${reason} — advancing to next video`);
+      const expectedMediaId = currentMediaIdRef.current ?? status.current_media_id ?? null;
       logPlayerEvent('player_recovery_triggered', 'warn', {
         recovery_reason: reason,
         source: status.source ?? 'youtube',
@@ -1409,6 +1428,7 @@ function App() {
           player_id: PLAYER_ID,
           state: 'idle',
           progress: 1,
+          expected_media_id: expectedMediaId ?? undefined,
           action: 'ended',
         });
         if (result?.next_item) {
@@ -1444,23 +1464,27 @@ function App() {
 
     if (status.state === 'loading') {
       // ── 4-second loading timeout ──────────────────────────────────────────
-      console.log('[Player] Video entered loading state, setting 4-second timeout to load next if not loaded');
+      console.log('[Player] Video entered loading state, setting 8-second timeout to load next if not loaded');
       loadingTimeoutRef.current = window.setTimeout(() => {
         loadingTimeoutRef.current = null;
-        advanceToNext('Video still in loading state after 4 seconds');
-      }, 4000);
+        advanceToNext('Video still in loading state after 8 seconds');
+      }, 8000);
 
     } else if (status.state === 'paused' && !videoHasPlayedRef.current) {
+      if (recentlyLoadedRef.current) {
+        console.log('[Player] Video paused before first play but still within startup grace window');
+        return;
+      }
       // ── Unexpected pause: video paused before it ever played ──────────────
       // This fires when an error (e.g. embedding block, network issue) causes the
       // player to land in 'paused' rather than 'loading'. Since the video has
       // never entered 'playing' state, this is not a user-initiated pause —
       // auto-advance after 3 seconds.
-      console.warn('[Player] Video paused before it ever played — unexpected pause, will auto-advance in 3s');
+      console.warn('[Player] Video paused before it ever played — unexpected pause, will auto-advance in 6s');
       unexpectedPauseTimeoutRef.current = window.setTimeout(() => {
         unexpectedPauseTimeoutRef.current = null;
         advanceToNext('Video paused before playing (unexpected pause)');
-      }, 3000);
+      }, 6000);
 
     } else if (status.state !== 'paused') {
       // Status changed to something other than paused/loading — log the transition
