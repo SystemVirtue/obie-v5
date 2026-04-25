@@ -21,6 +21,7 @@ import {
   getTotalCredits,
   updateAllCredits,
   type QueueItem,
+  type Player,
   type PlayerStatus,
   type SystemLog,
   type Playlist,
