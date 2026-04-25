@@ -313,8 +313,14 @@ Deno.serve(async (req)=>{
         if (preUpdateState === 'idle') {
           // Player was already idle — no video playing, skip the fade and advance queue now.
           console.log('[player-control] Skip while idle - calling queue_next directly (no fade needed)');
+          const { data: idleStatus } = await supabase
+            .from('player_status')
+            .select('current_media_id')
+            .eq('player_id', player_id)
+            .single();
           const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
-            p_player_id: player_id
+            p_player_id: player_id,
+            p_expected_media_id: idleStatus?.current_media_id ?? null,
           });
           if (nextError) {
             console.error('[player-control] ❌ Failed to get next item on idle-skip:', nextError);
@@ -370,8 +376,14 @@ Deno.serve(async (req)=>{
         }
 
         console.log('[player-control] Song ended, calling queue_next for priority player:', player_id);
+        const { data: endedStatus } = await supabase
+          .from('player_status')
+          .select('current_media_id')
+          .eq('player_id', player_id)
+          .single();
         const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
-          p_player_id: player_id
+          p_player_id: player_id,
+          p_expected_media_id: endedStatus?.current_media_id ?? null,
         });
         if (nextError) {
           console.error('[player-control] ❌ Failed to get next item:', nextError);
