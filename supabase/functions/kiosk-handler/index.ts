@@ -408,6 +408,312 @@ Deno.serve(async (req)=>{
       }
     }
 
+    // Handle R2 video search — queries r2_files table
+    if (action === 'search_r2') {
+      const query = (body.query || '').trim();
+      try {
+        let dbQuery = supabase
+          .from('r2_files')
+          .select('*')
+          .order('title', { ascending: true })
+          .limit(50);
+
+        if (query.length > 0) {
+          dbQuery = supabase
+            .from('r2_files')
+            .select('*')
+            .or(`title.ilike.%${query}%,file_name.ilike.%${query}%,artist.ilike.%${query}%`)
+            .order('title', { ascending: true })
+            .limit(50);
+        }
+
+        const { data: files, error: searchError } = await dbQuery;
+        if (searchError) {
+          console.error('R2 search error:', searchError);
+          return new Response(JSON.stringify({ error: searchError.message }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const videos = (files || []).map((f: any) => ({
+          id: f.id,
+          title: f.title || f.file_name,
+          artist: f.artist || null,
+          channelTitle: f.artist || 'Cloudflare R2',
+          thumbnail: f.thumbnail || '',
+          thumbnailUrl: f.thumbnail || '',
+          url: f.public_url,
+          videoUrl: f.public_url,
+          duration: f.duration || null,
+          source: 'cloudflare',
+        }));
+
+        return new Response(JSON.stringify({ videos }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('R2 search error:', err);
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Handle R2 video request — creates media_item from r2_file and enqueues
+    if (action === 'request_r2') {
+      const { session_id, r2_file_id, player_id } = body;
+      if (!session_id || !r2_file_id) {
+        return new Response(JSON.stringify({
+          error: 'session_id and r2_file_id are required for request_r2 action',
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      try {
+        const { data: r2File, error: r2Error } = await supabase
+          .from('r2_files')
+          .select('*')
+          .eq('id', r2_file_id)
+          .single();
+
+        if (r2Error || !r2File) {
+          return new Response(JSON.stringify({ error: 'R2 file not found' }), {
+            status: 404,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const sourceId = `cloudflare:${r2File.object_key}`;
+        const { data: mediaItemId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+          p_source_id: sourceId,
+          p_source_type: 'cloudflare',
+          p_title: r2File.title || r2File.file_name,
+          p_artist: r2File.artist || null,
+          p_url: r2File.public_url,
+          p_duration: r2File.duration || null,
+          p_thumbnail: r2File.thumbnail || null,
+          p_metadata: { bucket: r2File.bucket_name, object_key: r2File.object_key },
+        });
+
+        if (mediaError || !mediaItemId) {
+          console.error('Failed to create media item from R2 file:', mediaError);
+          return new Response(JSON.stringify({
+            error: 'Failed to create media item',
+            details: mediaError,
+          }), {
+            status: 500,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        const { data: queueId, error: rpcError } = await supabase.rpc('kiosk_request_enqueue', {
+          p_session_id: session_id,
+          p_media_item_id: mediaItemId,
+        });
+
+        if (rpcError) {
+          console.error('kiosk_request_enqueue error:', rpcError);
+          return new Response(JSON.stringify({ error: rpcError.message || rpcError }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+
+        await supabase.from('system_logs').insert({
+          player_id,
+          event: 'kiosk_request_r2',
+          severity: 'info',
+          payload: {
+            session_id,
+            r2_file_id,
+            media_item_id: mediaItemId,
+            queue_id: queueId,
+            title: r2File.title || r2File.file_name,
+            artist: r2File.artist || null,
+          },
+        });
+
+        return new Response(JSON.stringify({ queue_id: queueId }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('R2 request error:', err);
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Handle admin video requests without consuming kiosk credits
+    if (action === 'admin_request') {
+      const { player_id, url, r2_file_id, add_to_queue, title, artist, thumbnail, duration } = body;
+      if (!player_id || (!url && !r2_file_id)) {
+        return new Response(JSON.stringify({
+          error: 'player_id and either url or r2_file_id are required for admin_request action'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      let mediaItemId = null;
+
+      try {
+        if (r2_file_id) {
+          const { data: r2File, error: r2Error } = await supabase
+            .from('r2_files')
+            .select('*')
+            .eq('id', r2_file_id)
+            .single();
+
+          if (r2Error || !r2File) {
+            return new Response(JSON.stringify({ error: 'R2 file not found' }), {
+              status: 404,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          const sourceId = `cloudflare:${r2File.object_key}`;
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id: sourceId,
+            p_source_type: 'cloudflare',
+            p_title: r2File.title || r2File.file_name,
+            p_artist: r2File.artist || null,
+            p_url: r2File.public_url,
+            p_duration: r2File.duration || null,
+            p_thumbnail: r2File.thumbnail || null,
+            p_metadata: { bucket: r2File.bucket_name, object_key: r2File.object_key },
+          });
+
+          if (mediaError || !resolvedId) {
+            console.error('admin_request: failed to create media item from R2:', mediaError);
+            return new Response(JSON.stringify({ error: 'Failed to create media item from R2 file' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          mediaItemId = resolvedId;
+        } else {
+          let videoTitle = title;
+          let videoArtist = artist || null;
+          let videoThumbnail = thumbnail || null;
+          let videoDuration = duration || null;
+          let videoUrl = url;
+          const videoIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+          let videoId = videoIdMatch?.[1] || null;
+
+          if (!videoTitle || !videoId) {
+            const scraperResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+              },
+              body: JSON.stringify({ url, type: 'auto' })
+            });
+
+            if (!scraperResp.ok) {
+              return new Response(JSON.stringify({ error: 'Failed to scrape YouTube URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const { videos } = await scraperResp.json();
+            if (!videos || videos.length === 0) {
+              return new Response(JSON.stringify({ error: 'No videos found at the provided URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const video = videos[0];
+            if (!video?.id?.trim() || !video?.url?.trim() || !video?.title?.trim()) {
+              return new Response(JSON.stringify({ error: 'Invalid video data from scraper' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            videoId = video.id;
+            videoTitle = video.title;
+            videoArtist = video.artist || null;
+            videoThumbnail = video.thumbnail || null;
+            videoDuration = video.duration || null;
+            videoUrl = video.url;
+          }
+
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id: `youtube:${videoId}`,
+            p_source_type: 'youtube',
+            p_title: videoTitle,
+            p_artist: videoArtist,
+            p_url: videoUrl,
+            p_duration: videoDuration,
+            p_thumbnail: videoThumbnail,
+            p_metadata: {},
+          });
+
+          if (mediaError || !resolvedId) {
+            console.error('admin_request: failed to create media item:', mediaError);
+            return new Response(JSON.stringify({ error: 'Failed to create media item' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          mediaItemId = resolvedId;
+        }
+
+        let queueId = null;
+
+        if (add_to_queue) {
+          const { data: qId, error: queueError } = await supabase.rpc('queue_add', {
+            p_player_id: player_id,
+            p_media_item_id: mediaItemId,
+            p_type: 'priority',
+            p_requested_by: 'admin',
+          });
+
+          if (queueError) {
+            console.error('admin_request: queue_add error:', queueError);
+            return new Response(JSON.stringify({ error: queueError.message || 'Failed to add to queue' }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          queueId = qId;
+
+          await supabase.from('system_logs').insert({
+            player_id,
+            event: 'admin_request',
+            severity: 'info',
+            payload: { media_item_id: mediaItemId, queue_id: queueId, source: r2_file_id ? 'r2' : 'youtube' },
+          });
+        }
+
+        return new Response(JSON.stringify({ media_item_id: mediaItemId, queue_id: queueId }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('admin_request error:', err);
+        return new Response(JSON.stringify({ error: err.message }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Handle adding credits to a session (e.g., coin insert)
     if (action === 'credit') {
       const { session_id, amount } = body;

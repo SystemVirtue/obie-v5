@@ -207,21 +207,26 @@ function App() {
       return () => clearTimeout(timer);
     }, [searchQuery]);
 
-    // Perform search — routes through kiosk-handler for consistent single entry point
+    // Perform search — runs YouTube and Cloudflare R2 in parallel and merges results
     const performSearch = async (query: string) => {
       try {
         setIsSearching(true);
         setSearchResults([]);
 
-        // Append karaoke search term if karaoke option is enabled
-        let searchQuery = query;
+        let ytQuery = query;
         if (includeKaraoke) {
-          searchQuery = query + ' Lyric Video Karaoke';
+          ytQuery = query + ' Lyric Video Karaoke';
         }
 
-        const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
-        const videos = result?.videos || [];
-        setSearchResults(videos);
+        const [ytSettled, r2Settled] = await Promise.allSettled([
+          callKioskHandler({ action: 'search', query: ytQuery }) as Promise<{ videos?: any[] }>,
+          callKioskHandler({ action: 'search_r2', query }) as Promise<{ videos?: any[] }>,
+        ]);
+
+        const ytVideos = ytSettled.status === 'fulfilled' ? (ytSettled.value?.videos || []) : [];
+        const r2Videos = r2Settled.status === 'fulfilled' ? (r2Settled.value?.videos || []) : [];
+
+        setSearchResults([...r2Videos, ...ytVideos]);
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {
@@ -243,8 +248,17 @@ function App() {
 
       setIsConfirming(true);
       try {
-        // Add directly to queue (search results are pre-filtered for embeddability)
-        const res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
+        let res: any;
+        if (selectedResult.source === 'cloudflare') {
+          res = await callKioskHandler({
+            session_id: session.session_id,
+            action: 'request_r2',
+            r2_file_id: selectedResult.id,
+            player_id: PLAYER_ID,
+          });
+        } else {
+          res = await callKioskHandler({ session_id: session.session_id, action: 'request', url: selectedResult.url, player_id: PLAYER_ID });
+        }
         if (res?.error) {
           alert('Failed to add to priority queue: ' + (res.error.message || res.error));
           console.error('Server failed to enqueue request:', res.error);

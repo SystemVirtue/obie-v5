@@ -65,6 +65,8 @@ function App() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
   // Tracks the YouTube ID of the currently-loaded video (legacy reference, kept for potential future use)
   const currentYouTubeIdRef = useRef<string | null>(null);
+  const localVideoLastReportRef = useRef<number>(0); // Throttle local video progress reports
+  const localPlaybackUrlRef = useRef<string | null>(null); // Mirror of localPlaybackUrl for use inside callbacks
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
@@ -350,6 +352,11 @@ function App() {
   }, []);
 
   const onPlayerStateChange = useCallback((event: any) => {
+    // Ignore YouTube events when a Cloudflare/local video is active
+    if (localPlaybackUrlRef.current) {
+      console.log('[Player] YouTube state change ignored (local/Cloudflare video active):', event.data);
+      return;
+    }
     console.log('[Player] YouTube state change:', event.data);
 
     // YouTube Player States:
@@ -413,6 +420,11 @@ function App() {
   //   101 = Embedding not allowed by owner
   //   150 = Same as 101 (embedding not allowed by owner)
   const onPlayerError = useCallback(async (event: any) => {
+    // Ignore YouTube errors when a Cloudflare/local video is active
+    if (localPlaybackUrlRef.current) {
+      console.log('[Player] YouTube error ignored (local/Cloudflare video active):', event.data);
+      return;
+    }
     console.error('[Player] YouTube player error:', event.data);
 
     if (isSlavePlayer) return;
@@ -570,6 +582,10 @@ function App() {
             ytmAdminPausedRef.current = true;
             setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
+          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
+            // Cloudflare/local: pause the <video> element
+            console.log('[Player] Pausing local/Cloudflare video...');
+            localVideoRef.current.pause();
           } else if (playerRef.current) {
             // Fade out when pausing
             console.log('[Player] Pausing - fading out...');
@@ -579,6 +595,10 @@ function App() {
         } else if (newState === 'playing' && prevState === 'paused') {
           if (playerModeRef.current === 'ytm_desktop') {
             ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
+          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
+            // Cloudflare/local: resume the <video> element
+            console.log('[Player] Resuming local/Cloudflare video...');
+            localVideoRef.current.play().catch(() => {});
           } else if (playerRef.current) {
             // Fade in when resuming
             console.log('[Player] Resuming - fading in...');
@@ -595,11 +615,11 @@ function App() {
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
 
-      // ── Local-source fallback (yt-dlp download complete) ─────────────────
-      if (newStatus.source === 'local' && newStatus.local_url) {
+      // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
+      if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url) {
         // Only activate when the local_url is actually new (avoid redundant sets)
         if (newStatus.local_url !== localPlaybackUrl) {
-          console.log(`[Player][realtime] source=local → activating local <video>`);
+          console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
           console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
         }
@@ -646,6 +666,7 @@ function App() {
   useEffect(() => {
     playerModeRef.current = settings?.player_mode ?? 'iframe';
   }, [settings?.player_mode]);
+  useEffect(() => { localPlaybackUrlRef.current = localPlaybackUrl; }, [localPlaybackUrl]);
 
   // ── YTM Desktop auth ──────────────────────────────────────────────────────
   const ytmRequestAuth = useCallback(async () => {
@@ -954,6 +975,17 @@ function App() {
   useEffect(() => {
     if (!currentMedia) return;
 
+    // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
+    // Just update the ref so the status subscription doesn't re-trigger media changes.
+    if (localPlaybackUrl) {
+      if (currentMediaIdRef.current !== currentMedia.id) {
+        console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
+        currentMediaIdRef.current = currentMedia.id;
+        videoHasPlayedRef.current = false;
+      }
+      return;
+    }
+
     // YTM Desktop mode: dispatch changeVideo instead of creating an iframe
     if (playerModeRef.current === 'ytm_desktop') {
       if (currentMediaIdRef.current === currentMedia.id) {
@@ -1079,7 +1111,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
+  }, [currentMedia, localPlaybackUrl, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
@@ -1126,6 +1158,13 @@ function App() {
         console.error('[Player] Failed to advance after auto-skip:', error);
       }
     };
+
+    // Skip loading/pause timeouts when a local/Cloudflare video is active —
+    // the <video> element handles its own lifecycle and will report 'playing'.
+    if (status.source === 'cloudflare' || status.source === 'local') {
+      console.log(`[Player] Source is ${status.source} — skipping YouTube loading/pause timeouts`);
+      return;
+    }
 
     if (status.state === 'loading') {
       // ── 4-second loading timeout ──────────────────────────────────────────
@@ -1178,6 +1217,11 @@ function App() {
     }
 
     if (!playerRef.current || !playerRef.current.playVideo) return;
+
+    // Don't send commands to the YouTube iframe when a local/Cloudflare video is active —
+    // the <video> element controls its own playback state.
+    if (localPlaybackUrl) return;
+
     const player = playerRef.current;
 
     // Send commands to YouTube player based on server state
@@ -1186,7 +1230,7 @@ function App() {
     } else if (status.state === 'paused') {
       player.pauseVideo();
     }
-  }, [status?.state]);
+  }, [status?.state, localPlaybackUrl]);
 
   return (
     <div className="relative w-screen h-screen bg-black">
@@ -1210,6 +1254,18 @@ function App() {
           onPlay={() => {
             const v = localVideoRef.current;
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
+            videoHasPlayedRef.current = true;
+            reportStatus('playing');
+          }}
+          onTimeUpdate={() => {
+            const now = Date.now();
+            if (now - localVideoLastReportRef.current < 5000) return; // Throttle to every 5s
+            localVideoLastReportRef.current = now;
+            const v = localVideoRef.current;
+            if (v && v.duration && isFinite(v.duration) && v.duration > 0) {
+              const progress = v.currentTime / v.duration;
+              reportStatus('playing', progress);
+            }
           }}
           onEnded={() => {
             console.log('[Player][local-video] ■ ENDED — triggering queue_next');
@@ -1382,8 +1438,8 @@ function App() {
         </div>
         {currentMedia && (
           <>
-            <div className="mb-1 text-gray-300 truncate">{currentMedia.title}</div>
-            <div className="text-gray-500 text-xs truncate">{currentMedia.artist}</div>
+            <div className="mb-1 text-gray-300 truncate">{cleanDisplayText(currentMedia.title)}</div>
+            <div className="text-gray-500 text-xs truncate">{cleanDisplayText(currentMedia.artist)}</div>
           </>
         )}
         <div className="mt-2 text-xs text-gray-500">

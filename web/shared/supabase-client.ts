@@ -70,9 +70,9 @@ export interface PlayerStatus {
   queue_head_position: number;
   last_updated: string;
   current_media?: MediaItem; // Joined data
-  /** 'youtube' = normal iframe mode (default); 'local' = yt-dlp download in Storage */
-  source?: 'youtube' | 'local';
-  /** Public URL of the downloaded .mp4 in the 'downloads' bucket (only set when source='local') */
+  /** 'youtube' = normal iframe mode (default); 'local' = yt-dlp download; 'cloudflare' = R2 bucket */
+  source?: 'youtube' | 'local' | 'cloudflare';
+  /** Public URL for non-YouTube playback (yt-dlp download or Cloudflare R2 video) */
   local_url?: string | null;
 }
 
@@ -97,6 +97,8 @@ export interface PlayerSettings {
   kiosk_coin_acceptor_device_id?: string | null;
   kiosk_show_virtual_coin_button?: boolean;
   player_mode?: 'iframe' | 'ytm_desktop';
+  cloudflare_enabled?: boolean;
+  cloudflare_r2_public_url?: string | null;
 }
 
 export interface KioskSession {
@@ -118,6 +120,25 @@ export interface SystemLog {
   timestamp: string;
 }
 
+export interface R2File {
+  id: string;
+  bucket_name: string;
+  object_key: string;
+  file_name: string;
+  content_type: string | null;
+  size_bytes: number | null;
+  etag: string | null;
+  last_modified: string | null;
+  public_url: string;
+  title: string | null;
+  artist: string | null;
+  duration: number | null;
+  thumbnail: string | null;
+  tags: string[] | null;
+  synced_at: string;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -130,6 +151,7 @@ export interface Database {
       player_settings: { Row: PlayerSettings; Update: Partial<PlayerSettings> };
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
+      r2_files: { Row: R2File };
     };
   };
 }
@@ -517,19 +539,27 @@ export async function callDownloadVideo(params: {
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request' | 'check';
+  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
   query?: string;
   media_item_id?: string;
   amount?: number;
   url?: string;
+  r2_file_id?: string;
+  add_to_queue?: boolean;
+  title?: string;
+  artist?: string | null;
+  thumbnail?: string | null;
+  duration?: number | null;
 }) {
   try {
+    const apiKey = import.meta.env.VITE_KIOSK_API_KEY;
     // Call Edge Function directly to bypass authentication requirements for public kiosk
     const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${supabaseAnonKey}`,
+        ...(apiKey ? { apikey: apiKey } : {}),
       },
       body: JSON.stringify(params),
     });
