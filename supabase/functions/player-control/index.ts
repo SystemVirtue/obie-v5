@@ -27,12 +27,18 @@ function isTransientDatabaseError(error) {
 }
 
 async function isMasterEndpoint(supabase, playerId, endpointId) {
-  if (!endpointId) return false;
   const { data: player } = await supabase
     .from('players')
-    .select('priority_endpoint_id')
+    .select('priority_player_id, priority_endpoint_id')
     .eq('id', playerId)
     .single();
+
+  if (!endpointId) {
+    // Transitional compatibility for already-open player screens that still use
+    // the pre-endpoint priority model. Once the page refreshes, endpoint_id will
+    // be present and the stricter endpoint ownership check below applies.
+    return player?.priority_player_id === playerId && !player?.priority_endpoint_id;
+  }
 
   return player?.priority_endpoint_id === endpointId;
 }
@@ -375,12 +381,34 @@ Deno.serve(async (req)=>{
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
+      const { data: currentPlayer } = await supabase
+        .from('players')
+        .select('priority_player_id, priority_endpoint_id')
+        .eq('id', player_id)
+        .single();
+
+      if (!currentPlayer?.priority_player_id && !currentPlayer?.priority_endpoint_id) {
+        return new Response(JSON.stringify({
+          success: true,
+          ignored: true,
+          reason: 'priority_already_clear'
+        }), {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
       const { error: resetError } = await supabase.rpc('clear_priority_endpoint', {
         p_player_id: player_id,
       });
       if (resetError) throw resetError;
       await logSystemEvent(supabase, player_id, 'priority_player_reset', 'warn', {
         source: initiator || 'admin_ui',
+        previous_priority_player_id: currentPlayer?.priority_player_id || null,
+        previous_priority_endpoint_id: currentPlayer?.priority_endpoint_id || null,
       });
 
       console.log(`[player-control] Priority player reset for player ${player_id}`);

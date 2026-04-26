@@ -2608,6 +2608,12 @@ function App() {
         });
         const hasActiveMasterEndpoint = activeEndpoints.some(endpoint => endpoint.role === 'master' && endpoint.endpoint_id === player.priority_endpoint_id);
 
+        if (playbackNeedsDriver && hasPriorityAssigned && !player.priority_endpoint_id && heartbeatAgeMs <= 30000) {
+          setMasterOfflineWarning('LEGACY MASTER HAS NO ENDPOINT - refresh the Player screen to enable endpoint controls');
+          autoResetTriggeredRef.current = false;
+          return;
+        }
+
         if (playbackNeedsDriver && activeEndpoints.length === 0) {
           setMasterOfflineWarning('NO CONNECTED PLAYER ENDPOINT - open a Player screen and set it as master');
           autoResetTriggeredRef.current = false;
