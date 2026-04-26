@@ -346,8 +346,15 @@ export function subscribeToQueue(
   callback: (items: QueueItem[]) => void
 ): RealtimeSubscription<QueueItem> {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
-  
+  let fetchInFlight = false;
+  let refetchRequested = false;
+
   const fetchQueue = () => {
+    if (fetchInFlight) {
+      refetchRequested = true;
+      return;
+    }
+    fetchInFlight = true;
     console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
     const fetchTime = new Date().toISOString();
     console.log('[subscribeToQueue] ⏰ Fetch timestamp:', fetchTime);
@@ -382,6 +389,17 @@ export function subscribeToQueue(
         if (data) {
           callback(data as QueueItem[]);
         }
+      })
+      .finally(() => {
+        fetchInFlight = false;
+        if (refetchRequested) {
+          refetchRequested = false;
+          if (refetchTimeout) clearTimeout(refetchTimeout);
+          refetchTimeout = setTimeout(() => {
+            refetchTimeout = null;
+            fetchQueue();
+          }, 250);
+        }
       });
   };
   
@@ -393,10 +411,13 @@ export function subscribeToQueue(
     'queue',
     { column: 'player_id', value: playerId },
     () => {
-      // Debounce refetch to allow database updates to complete
-      console.log('[subscribeToQueue] Change detected, scheduling refetch in 800ms...');
+      // Coalesce queue bursts into a single trailing fetch.
       if (refetchTimeout) clearTimeout(refetchTimeout);
+      if (fetchInFlight) {
+        refetchRequested = true;
+      }
       refetchTimeout = setTimeout(() => {
+        refetchTimeout = null;
         fetchQueue();
       }, 800); // Increased to 800ms to ensure all position updates complete
     }
