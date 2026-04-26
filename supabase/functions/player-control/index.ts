@@ -15,6 +15,17 @@ async function logSystemEvent(supabase, playerId, event, severity = 'info', payl
   }
 }
 
+async function isMasterEndpoint(supabase, playerId, endpointId) {
+  if (!endpointId) return false;
+  const { data: player } = await supabase
+    .from('players')
+    .select('priority_endpoint_id')
+    .eq('id', playerId)
+    .single();
+
+  return player?.priority_endpoint_id === endpointId;
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -27,7 +38,25 @@ Deno.serve(async (req)=>{
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
     // Parse request body
     const body = await req.json();
-    const { player_id, state, progress, action = 'update', expected_media_id, session_id, stored_player_id, initiator, reason, event_name, severity, payload } = body;
+    const {
+      player_id,
+      state,
+      progress,
+      action = 'update',
+      expected_media_id,
+      session_id,
+      endpoint_id,
+      target_endpoint_id,
+      stored_player_id,
+      stored_endpoint_id,
+      initiator,
+      reason,
+      event_name,
+      severity,
+      payload,
+      origin,
+      user_agent,
+    } = body;
     if (!player_id) {
       return new Response(JSON.stringify({
         error: 'player_id is required'
@@ -41,9 +70,15 @@ Deno.serve(async (req)=>{
     }
     // Handle heartbeat
     if (action === 'heartbeat') {
-      const { error } = await supabase.rpc('player_heartbeat', {
-        p_player_id: player_id
-      });
+      const { error } = endpoint_id && session_id
+        ? await supabase.rpc('player_endpoint_heartbeat', {
+            p_player_id: player_id,
+            p_endpoint_id: endpoint_id,
+            p_session_id: session_id,
+          })
+        : await supabase.rpc('player_heartbeat', {
+            p_player_id: player_id
+          });
       if (error) throw error;
       return new Response(JSON.stringify({
         success: true
@@ -78,9 +113,40 @@ Deno.serve(async (req)=>{
     }
 
     if (action === 'disconnect') {
+      if (endpoint_id) {
+        const { data: currentPlayer } = await supabase
+          .from('players')
+          .select('priority_endpoint_id')
+          .eq('id', player_id)
+          .single();
+
+        const wasMaster = currentPlayer?.priority_endpoint_id === endpoint_id;
+
+        const { error: endpointError } = await supabase
+          .from('player_endpoints')
+          .update({
+            status: 'disconnected',
+            role: 'slave',
+            disconnected_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('player_id', player_id)
+          .eq('endpoint_id', endpoint_id);
+
+        if (endpointError) throw endpointError;
+
+        if (wasMaster) {
+          const { error: clearError } = await supabase.rpc('clear_priority_endpoint', {
+            p_player_id: player_id,
+          });
+          if (clearError) throw clearError;
+        }
+      }
+
       await logSystemEvent(supabase, player_id, 'player_disconnected', 'warn', {
         source: initiator || 'player_client',
         reason: reason || 'window_unload',
+        endpoint_id: endpoint_id || null,
       });
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
@@ -93,9 +159,9 @@ Deno.serve(async (req)=>{
 
     // Handle session registration for priority player mechanism
     if (action === 'register_session') {
-      if (!session_id) {
+      if (!session_id || !endpoint_id) {
         return new Response(JSON.stringify({
-          error: 'session_id is required for register_session'
+          error: 'session_id and endpoint_id are required for register_session'
         }), {
           status: 400,
           headers: {
@@ -105,23 +171,74 @@ Deno.serve(async (req)=>{
         });
       }
 
-      // Check if this player was previously priority (stored_player_id matches)
-      if (stored_player_id === player_id) {
-        // This player was previously priority - restore priority status
-        const { error: updateError } = await supabase
-          .from('players')
-          .update({ priority_player_id: player_id })
-          .eq('id', player_id);
+      const now = new Date().toISOString();
+      const { error: endpointUpsertError } = await supabase
+        .from('player_endpoints')
+        .upsert({
+          endpoint_id,
+          player_id,
+          session_id,
+          role: 'slave',
+          status: 'connected',
+          origin: typeof origin === 'string' ? origin : null,
+          user_agent: typeof user_agent === 'string' ? user_agent : null,
+          last_seen: now,
+          connected_at: now,
+          disconnected_at: null,
+          updated_at: now,
+        }, {
+          onConflict: 'endpoint_id',
+        });
 
-        if (updateError) throw updateError;
+      if (endpointUpsertError) throw endpointUpsertError;
+
+      const { data: existingPriority } = await supabase
+        .from('players')
+        .select('priority_player_id, priority_endpoint_id')
+        .eq('id', player_id)
+        .single();
+
+      if (existingPriority?.priority_endpoint_id) {
+        const { data: currentMasterEndpoint } = await supabase
+          .from('player_endpoints')
+          .select('status, last_seen')
+          .eq('player_id', player_id)
+          .eq('endpoint_id', existingPriority.priority_endpoint_id)
+          .maybeSingle();
+
+        const masterIsStale = !currentMasterEndpoint
+          || currentMasterEndpoint.status !== 'connected'
+          || !currentMasterEndpoint.last_seen
+          || new Date(currentMasterEndpoint.last_seen).getTime() < Date.now() - 45000;
+
+        if (masterIsStale) {
+          const { error: clearError } = await supabase.rpc('clear_priority_endpoint', {
+            p_player_id: player_id,
+          });
+          if (clearError) throw clearError;
+          existingPriority.priority_endpoint_id = null;
+          existingPriority.priority_player_id = null;
+        }
+      }
+
+      const shouldRestorePriority = stored_endpoint_id === endpoint_id
+        || stored_player_id === player_id;
+
+      if (existingPriority?.priority_endpoint_id === endpoint_id || (shouldRestorePriority && !existingPriority?.priority_endpoint_id)) {
+        const { error: assignError } = await supabase.rpc('assign_priority_endpoint', {
+          p_player_id: player_id,
+          p_endpoint_id: endpoint_id,
+        });
+        if (assignError) throw assignError;
         await logSystemEvent(supabase, player_id, 'priority_player_assigned', 'info', {
           session_id,
+          endpoint_id,
           role: 'priority',
           restored: true,
           source: 'register_session',
         });
 
-        console.log(`[player-control] Player ${player_id} restored as priority player (session: ${session_id})`);
+        console.log(`[player-control] Endpoint ${endpoint_id} restored as priority player (session: ${session_id})`);
         return new Response(JSON.stringify({
           success: true,
           is_priority: true,
@@ -135,14 +252,7 @@ Deno.serve(async (req)=>{
         });
       }
 
-      // Check if there's already a priority player
-      const { data: existingPriority } = await supabase
-        .from('players')
-        .select('priority_player_id')
-        .eq('id', player_id)
-        .single();
-
-      if (!existingPriority?.priority_player_id) {
+      if (!existingPriority?.priority_endpoint_id) {
         // No priority player yet - check if any players are currently playing
         const { data: playingPlayers } = await supabase
           .from('player_status')
@@ -151,14 +261,14 @@ Deno.serve(async (req)=>{
 
         if (!playingPlayers || playingPlayers.length === 0) {
           // No players are currently playing - make this one priority
-          const { error: updateError } = await supabase
-            .from('players')
-            .update({ priority_player_id: player_id })
-            .eq('id', player_id);
-
-          if (updateError) throw updateError;
+          const { error: assignError } = await supabase.rpc('assign_priority_endpoint', {
+            p_player_id: player_id,
+            p_endpoint_id: endpoint_id,
+          });
+          if (assignError) throw assignError;
           await logSystemEvent(supabase, player_id, 'priority_player_assigned', 'info', {
             session_id,
+            endpoint_id,
             role: 'priority',
             restored: false,
             source: 'register_session',
@@ -177,8 +287,14 @@ Deno.serve(async (req)=>{
           });
         } else {
           // Players are playing - this becomes a slave
+          await supabase
+            .from('player_endpoints')
+            .update({ role: 'slave', updated_at: now })
+            .eq('player_id', player_id)
+            .eq('endpoint_id', endpoint_id);
           await logSystemEvent(supabase, player_id, 'priority_player_waiting_assignment', 'info', {
             session_id,
+            endpoint_id,
             role: 'slave',
             source: 'register_session',
             reason: 'other_players_playing',
@@ -196,8 +312,14 @@ Deno.serve(async (req)=>{
           });
         }
       } else {
+        await supabase
+          .from('player_endpoints')
+          .update({ role: 'slave', updated_at: now })
+          .eq('player_id', player_id)
+          .eq('endpoint_id', endpoint_id);
         await logSystemEvent(supabase, player_id, 'player_connected', 'info', {
           session_id,
+          endpoint_id,
           role: 'slave',
           source: 'register_session',
           reason: 'priority_exists',
@@ -217,11 +339,9 @@ Deno.serve(async (req)=>{
     }
     // Handle reset priority player
     if (action === 'reset_priority') {
-      const { error: resetError } = await supabase
-        .from('players')
-        .update({ priority_player_id: null })
-        .eq('id', player_id);
-
+      const { error: resetError } = await supabase.rpc('clear_priority_endpoint', {
+        p_player_id: player_id,
+      });
       if (resetError) throw resetError;
       await logSystemEvent(supabase, player_id, 'priority_player_reset', 'warn', {
         source: initiator || 'admin_ui',
@@ -231,6 +351,102 @@ Deno.serve(async (req)=>{
       return new Response(JSON.stringify({
         success: true,
         message: 'Priority player reset'
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    if (action === 'identify_endpoint') {
+      if (!target_endpoint_id) {
+        return new Response(JSON.stringify({
+          error: 'target_endpoint_id is required for identify_endpoint'
+        }), {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      const identifyUntil = new Date(Date.now() + 12000).toISOString();
+      const { data: updatedEndpoint, error: identifyError } = await supabase
+        .from('player_endpoints')
+        .update({
+          identify_until: identifyUntil,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('player_id', player_id)
+        .eq('endpoint_id', target_endpoint_id)
+        .eq('status', 'connected')
+        .select('endpoint_id')
+        .maybeSingle();
+
+      if (identifyError) throw identifyError;
+      if (!updatedEndpoint) {
+        return new Response(JSON.stringify({
+          success: false,
+          reason: 'endpoint_not_connected'
+        }), {
+          status: 409,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      await logSystemEvent(supabase, player_id, 'player_identify_requested', 'info', {
+        source: initiator || 'admin_ui',
+        endpoint_id: target_endpoint_id,
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        endpoint_id: target_endpoint_id,
+        identify_until: identifyUntil,
+      }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
+    if (action === 'set_master_endpoint') {
+      if (!target_endpoint_id) {
+        return new Response(JSON.stringify({
+          error: 'target_endpoint_id is required for set_master_endpoint'
+        }), {
+          status: 400,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      const { error: assignError } = await supabase.rpc('assign_priority_endpoint', {
+        p_player_id: player_id,
+        p_endpoint_id: target_endpoint_id,
+      });
+      if (assignError) throw assignError;
+
+      await logSystemEvent(supabase, player_id, 'priority_player_assigned', 'info', {
+        source: initiator || 'admin_ui',
+        endpoint_id: target_endpoint_id,
+        role: 'priority',
+        restored: false,
+      });
+
+      return new Response(JSON.stringify({
+        success: true,
+        endpoint_id: target_endpoint_id,
       }), {
         status: 200,
         headers: {
@@ -289,14 +505,11 @@ Deno.serve(async (req)=>{
       // If idle: call queue_next directly (no fade needed, nothing is playing).
       // If playing/paused: let the Player handle the fade and then call queue_next.
       if (action === 'skip' && state === 'idle') {
-        // Check if this player is the priority player before allowing queue progression
-        const { data: player } = await supabase
-          .from('players')
-          .select('priority_player_id')
-          .eq('id', player_id)
-          .single();
+        const callerIsMaster = initiator === 'admin_ui'
+          ? true
+          : await isMasterEndpoint(supabase, player_id, endpoint_id);
 
-        if (player?.priority_player_id !== player_id) {
+        if (!callerIsMaster) {
           console.log(`[player-control] Ignoring skip from non-priority player ${player_id}`);
           return new Response(JSON.stringify({
             success: false,
@@ -379,14 +592,11 @@ Deno.serve(async (req)=>{
           });
         }
 
-        // Check if this player is the priority player before allowing queue progression
-        const { data: player } = await supabase
-          .from('players')
-          .select('priority_player_id')
-          .eq('id', player_id)
-          .single();
+        const callerIsMaster = initiator === 'admin_ui'
+          ? true
+          : await isMasterEndpoint(supabase, player_id, endpoint_id);
 
-        if (player?.priority_player_id !== player_id) {
+        if (!callerIsMaster) {
           console.log(`[player-control] Ignoring ${action} from non-priority player ${player_id}`);
           return new Response(JSON.stringify({
             success: false,

@@ -7,6 +7,7 @@ import {
   supabase,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToPlayerEndpoint,
   callPlayerControl,
   callQueueManager,
   callPlaylistManager,
@@ -14,6 +15,7 @@ import {
   type PlayerStatus,
   type MediaItem,
   type PlayerSettings,
+  type PlayerEndpoint,
 } from '@shared/supabase-client';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
@@ -49,12 +51,17 @@ function App() {
   const [currentMedia, setCurrentMedia] = useState<MediaItem | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isSlavePlayer, setIsSlavePlayer] = useState(false); // Track if this is a slave player
+  const [identifyUntil, setIdentifyUntil] = useState<number | null>(null);
+  const [currentEndpointId, setCurrentEndpointId] = useState<string | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
   const playerRef = useRef<any>(null);
   const playerDivRef = useRef<HTMLDivElement>(null);
   const hasInitialized = useRef(false);
   const currentMediaIdRef = useRef<string | null>(null);
+  const endpointIdRef = useRef<string | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
   const shouldAutoplayCurrentMediaRef = useRef(false);
   const consecutiveHeartbeatFailuresRef = useRef(0);
   const fadeIntervalRef = useRef<number | null>(null);
@@ -156,10 +163,11 @@ function App() {
     });
   }, []);
 
-  // Priority/master player heartbeat — sent even while idle so admin can detect
-  // that the current master browser has gone away.
+  // Endpoint heartbeat — all connected players send this so the admin console
+  // has an accurate real-time roster. The backend only updates the canonical
+  // player heartbeat when the calling endpoint currently owns master.
   useEffect(() => {
-    if (isSlavePlayer) return;
+    if (!endpointIdRef.current || !sessionIdRef.current) return;
 
     let cancelled = false;
     const sendHeartbeat = async () => {
@@ -167,6 +175,8 @@ function App() {
         await callPlayerControl({
           player_id: PLAYER_ID,
           action: 'heartbeat',
+          endpoint_id: endpointIdRef.current ?? undefined,
+          session_id: sessionIdRef.current ?? undefined,
         });
         consecutiveHeartbeatFailuresRef.current = 0;
       } catch (error) {
@@ -188,7 +198,7 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [isSlavePlayer]);
+  }, [currentEndpointId, currentSessionId, isSlavePlayer]);
 
   // YTM Desktop skip fade: step volume 100→0 over 2s via setVolume commands
   const fadeOutYtm = useCallback((): Promise<void> => {
@@ -342,6 +352,8 @@ function App() {
       await callPlayerControl({
         player_id: PLAYER_ID,
         action: 'client_log',
+        session_id: sessionIdRef.current ?? undefined,
+        endpoint_id: endpointIdRef.current ?? undefined,
         initiator: 'player_client',
         event_name: eventName,
         severity,
@@ -368,6 +380,8 @@ function App() {
         state,
         progress,
         action: 'update',
+        session_id: sessionIdRef.current ?? undefined,
+        endpoint_id: endpointIdRef.current ?? undefined,
       });
     } catch (error) {
       console.error('[Player] Failed to report status:', error);
@@ -418,6 +432,8 @@ function App() {
         state: 'idle',
         progress: 1,
         expected_media_id: expectedMediaId ?? undefined,
+        session_id: sessionIdRef.current ?? undefined,
+        endpoint_id: endpointIdRef.current ?? undefined,
         action: 'ended', // Always use 'ended' after fade completes to trigger queue_next
       });
       console.log('[Player] Queue_next full result:', JSON.stringify(result, null, 2));
@@ -813,34 +829,39 @@ function App() {
           console.warn('[Player] No playlist available');
         }
 
-        // Register this player instance as a potential priority player
+        // Register this player instance as a potential priority player.
+        // endpointId is stable for a browser endpoint; sessionId changes per page load.
         const sessionId = crypto.randomUUID();
-        
-        // Check if this player was previously priority
+        let endpointId = localStorage.getItem('obie_player_endpoint_id');
+        if (!endpointId) {
+          endpointId = crypto.randomUUID();
+          localStorage.setItem('obie_player_endpoint_id', endpointId);
+        }
+
         const storedPlayerId = localStorage.getItem('obie_priority_player_id');
-        
-        console.log('[Player] Registering session:', sessionId, 'stored_player_id:', storedPlayerId);
+        const storedEndpointId = localStorage.getItem('obie_player_endpoint_id');
+
+        sessionIdRef.current = sessionId;
+        endpointIdRef.current = endpointId;
+        setCurrentSessionId(sessionId);
+        setCurrentEndpointId(endpointId);
+
+        console.log('[Player] Registering session:', sessionId, 'endpoint_id:', endpointId, 'stored_endpoint_id:', storedEndpointId);
         
         const sessionResult = await callPlayerControl({
           player_id: PLAYER_ID,
           action: 'register_session',
           session_id: sessionId,
+          endpoint_id: endpointId,
           stored_player_id: storedPlayerId || undefined,
+          stored_endpoint_id: storedEndpointId || undefined,
+          origin: window.location.origin,
+          user_agent: navigator.userAgent,
         });
 
         // Store whether this player is a slave (not priority)
         setIsSlavePlayer(!sessionResult.is_priority);
-        
-        // If this player became priority, store its ID in localStorage
-        if (sessionResult.is_priority) {
-          localStorage.setItem('obie_priority_player_id', PLAYER_ID);
-          console.log('[Player] Priority player ID stored in localStorage');
-        } else if (storedPlayerId === PLAYER_ID) {
-          // This player was previously priority but is no longer - clear localStorage
-          localStorage.removeItem('obie_priority_player_id');
-          console.log('[Player] Priority player ID removed from localStorage');
-        }
-        
+
         console.log('[Player] Session registered successfully, is_slave:', !sessionResult.is_priority, 'restored:', sessionResult.restored || false);
       } catch (error) {
         console.error('[Player] Failed to initialize:', error);
@@ -849,6 +870,44 @@ function App() {
 
     initPlayer();
   }, []);
+
+  useEffect(() => {
+    if (!currentEndpointId) return;
+
+    const applyEndpointState = (endpoint: PlayerEndpoint | null) => {
+      if (!endpoint) return;
+      const slave = endpoint.role !== 'master';
+      setIsSlavePlayer(slave);
+      if (!slave) {
+        localStorage.setItem('obie_priority_player_id', PLAYER_ID);
+      } else {
+        localStorage.removeItem('obie_priority_player_id');
+      }
+
+      if (endpoint.identify_until) {
+        const identifyUntilMs = new Date(endpoint.identify_until).getTime();
+        if (identifyUntilMs > Date.now()) {
+          setIdentifyUntil(identifyUntilMs);
+          return;
+        }
+      }
+      setIdentifyUntil(null);
+    };
+
+    const sub = subscribeToPlayerEndpoint(currentEndpointId, applyEndpointState);
+    return () => sub.unsubscribe();
+  }, [currentEndpointId]);
+
+  useEffect(() => {
+    if (!identifyUntil) return;
+    const timeoutMs = identifyUntil - Date.now();
+    if (timeoutMs <= 0) {
+      setIdentifyUntil(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setIdentifyUntil(null), timeoutMs);
+    return () => window.clearTimeout(timer);
+  }, [identifyUntil]);
 
   // NOTE: Shuffle-on-load is handled entirely by the load_playlist RPC (migration 0028).
   // When a playlist is loaded, load_playlist reads player_settings.shuffle and, if enabled,
@@ -988,6 +1047,8 @@ function App() {
       const body = JSON.stringify({
         player_id: PLAYER_ID,
         action: 'disconnect',
+        session_id: sessionIdRef.current,
+        endpoint_id: endpointIdRef.current,
         initiator: 'player_client',
         reason: 'window_unload',
       });
@@ -1755,13 +1816,45 @@ function App() {
         style={{ pointerEvents: playerMode === 'ytm_desktop' ? 'none' : 'auto' }}
       />
 
-      {/* Obie Logo Overlay */}
-      <img
-        src="/Obie_neon_no_BG.png"
-        alt="Obie Logo"
-        className="absolute bottom-[40px] left-[20px] w-[8vw] h-auto pointer-events-none z-10"
-        style={{ maxWidth: '160px', minWidth: '60px' }}
-      />
+      {identifyUntil && (
+        <div
+          className="absolute inset-0 pointer-events-none z-20 animate-pulse"
+          style={{
+            border: '10px solid rgba(239, 68, 68, 0.96)',
+            boxShadow: 'inset 0 0 0 2px rgba(255,255,255,0.2), 0 0 34px rgba(239,68,68,0.45)',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              top: 18,
+              left: 18,
+              padding: '10px 14px',
+              borderRadius: 10,
+              background: 'rgba(127, 29, 29, 0.92)',
+              border: '1px solid rgba(248, 113, 113, 0.65)',
+              color: '#fee2e2',
+              fontFamily: 'var(--font-display)',
+              fontSize: 18,
+              fontWeight: 700,
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            }}
+          >
+            Identify Player
+          </div>
+        </div>
+      )}
+
+      {/* Only the current master endpoint shows the Outside Obie logo */}
+      {!isSlavePlayer && (
+        <img
+          src="/Obie_neon_no_BG.png"
+          alt="Obie Logo"
+          className="absolute bottom-[40px] left-[20px] w-[8vw] h-auto pointer-events-none z-10"
+          style={{ maxWidth: '160px', minWidth: '60px' }}
+        />
+      )}
 
       {/* Status Overlay (for debugging) - HIDDEN */}
       {/* 
@@ -1824,14 +1917,6 @@ function App() {
         </div>
       )}
 
-      {/* Slave Player Debug Overlay */}
-      {isSlavePlayer && (
-        <div className="absolute bottom-0 left-0 right-0 flex justify-center items-end pb-4 pointer-events-none">
-          <div className="text-3xl font-semibold tracking-wide text-white opacity-[0.15]" style={{ fontFamily: 'Arial, sans-serif' }}>
-            SLAVE
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import {
   subscribeToQueue,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToPlayerEndpoints,
   subscribeToAdminBroadcasts,
   subscribeToTable,
   callQueueManager,
@@ -27,6 +28,7 @@ import {
   type Playlist,
   type PlaylistItem,
   type PlayerSettings,
+  type PlayerEndpoint,
   type MediaItem,
   type AdminBroadcast,
   type R2File,
@@ -1473,11 +1475,15 @@ function SettingsRow({ label, desc, children }: { label: string; desc?: string; 
 function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs }) {
   const [local, setLocal]     = useState<PlayerSettings | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
+  const [connectedEndpoints, setConnectedEndpoints] = useState<PlayerEndpoint[]>([]);
   const [creditsLoading, setCreditsLoading] = useState(false);
   const [error, setError]     = useState<string | null>(null);
   const [saving, setSaving]   = useState(false);
   const [resettingPriority, setResettingPriority] = useState(false);
   const [priorityResetDone, setPriorityResetDone] = useState(false);
+  const [hoveredEndpointId, setHoveredEndpointId] = useState<string | null>(null);
+  const [identifyingEndpointId, setIdentifyingEndpointId] = useState<string | null>(null);
+  const [promotingEndpointId, setPromotingEndpointId] = useState<string | null>(null);
   const [localMediaScanning, setLocalMediaScanning]     = useState(false);
   const [localMediaScanResult, setLocalMediaScanResult] = useState<{ count: number; path: string } | null>(null);
 
@@ -1490,6 +1496,10 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       const total = await getTotalCredits(PLAYER_ID).catch(() => null);
       if (total !== null) setCredits(total);
     });
+    return () => sub.unsubscribe();
+  }, []);
+  useEffect(() => {
+    const sub = subscribeToPlayerEndpoints(PLAYER_ID, setConnectedEndpoints);
     return () => sub.unsubscribe();
   }, []);
 
@@ -1589,6 +1599,68 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     }
   };
 
+  const endpointIsActive = useCallback((endpoint: PlayerEndpoint) => {
+    if (endpoint.status !== 'connected') return false;
+    const lastSeen = endpoint.last_seen ? new Date(endpoint.last_seen).getTime() : 0;
+    return lastSeen > Date.now() - 45000;
+  }, []);
+
+  const formatEndpointLabel = useCallback((endpoint: PlayerEndpoint) => {
+    const source = endpoint.origin || 'Unknown origin';
+    try {
+      const parsed = new URL(source);
+      return parsed.host || parsed.origin;
+    } catch {
+      return source.replace(/^https?:\/\//, '');
+    }
+  }, []);
+
+  const formatLastSeen = useCallback((value: string | null) => {
+    if (!value) return 'No heartbeat';
+    const deltaSeconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+    if (deltaSeconds < 2) return 'just now';
+    if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
+    const deltaMinutes = Math.round(deltaSeconds / 60);
+    return `${deltaMinutes}m ago`;
+  }, []);
+
+  const handleIdentifyEndpoint = async (endpointId: string) => {
+    if (identifyingEndpointId || promotingEndpointId) return;
+    setIdentifyingEndpointId(endpointId);
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'identify_endpoint',
+        target_endpoint_id: endpointId,
+        initiator: 'admin_ui',
+        reason: 'identify_player_button',
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIdentifyingEndpointId(null);
+    }
+  };
+
+  const handleSetMasterEndpoint = async (endpoint: PlayerEndpoint) => {
+    if (promotingEndpointId || identifyingEndpointId) return;
+    if (endpoint.role !== 'slave' || !endpointIsActive(endpoint)) return;
+    setPromotingEndpointId(endpoint.endpoint_id);
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'set_master_endpoint',
+        target_endpoint_id: endpoint.endpoint_id,
+        initiator: 'admin_ui',
+        reason: 'set_master_button',
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPromotingEndpointId(null);
+    }
+  };
+
   if (!local) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner /></div>;
 
   const errBlock = error && (
@@ -1604,87 +1676,229 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     </div>
   );
 
-  if (view === 'settings-playback') return wrap('Playback Settings', 'Queue and player behaviour', <>
-    <SettingsRow label="Shuffle Playlist when loaded"  desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
-    <SettingsRow label="Loop Playlist"    desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop}         onChange={() => handleToggle('loop')} /></SettingsRow>
-    {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
-    <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
-      <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
-    </SettingsRow>
-    {'player_mode' in local && (
-      <SettingsRow label="Player Mode" desc="iFrame embeds YouTube directly; ytm_desktop routes playback through YTM Desktop Companion (localhost:9863)">
-        <select
-          value={local.player_mode ?? 'iframe'}
-          onChange={e => set('player_mode', e.target.value as 'iframe' | 'ytm_desktop')}
-          style={{ padding: '7px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', cursor: 'pointer' }}
-        >
-          <option value="iframe">iFrame Player</option>
-          <option value="ytm_desktop">ytm_desktop API</option>
-        </select>
+  if (view === 'settings-playback') {
+    const activeEndpoints = [...connectedEndpoints]
+      .filter(endpointIsActive)
+      .sort((a, b) => {
+        if (a.role !== b.role) return a.role === 'master' ? -1 : 1;
+        return new Date(b.last_seen || b.connected_at).getTime() - new Date(a.last_seen || a.connected_at).getTime();
+      });
+
+    const leftContent = <>
+      <SettingsRow label="Shuffle Playlist when loaded"  desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
+      <SettingsRow label="Loop Playlist"    desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop}         onChange={() => handleToggle('loop')} /></SettingsRow>
+      {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
+      <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
+        <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
       </SettingsRow>
-    )}
-    {'silence_skip_enabled' in local && (
-      <>
-        <SettingsRow label="Silence Detection" desc="For Cloudflare/local media, skip long silent tails near the end of a track">
-          <Toggle checked={!!local.silence_skip_enabled} onChange={() => handleToggle('silence_skip_enabled' as keyof PlayerSettings)} />
+      {'player_mode' in local && (
+        <SettingsRow label="Player Mode" desc="iFrame embeds YouTube directly; ytm_desktop routes playback through YTM Desktop Companion (localhost:9863)">
+          <select
+            value={local.player_mode ?? 'iframe'}
+            onChange={e => set('player_mode', e.target.value as 'iframe' | 'ytm_desktop')}
+            style={{ padding: '7px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', cursor: 'pointer' }}
+          >
+            <option value="iframe">iFrame Player</option>
+            <option value="ytm_desktop">ytm_desktop API</option>
+          </select>
         </SettingsRow>
-        {local.silence_skip_enabled && (
-          <>
-            <SettingsRow label="Silence Tail Window" desc="Only monitor audio during the final N seconds">
-              <input
-                type="number"
-                min={5}
-                max={120}
-                value={local.silence_skip_tail_seconds ?? 20}
-                onChange={e => set('silence_skip_tail_seconds', Number(e.target.value))}
-                style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
-              />
-            </SettingsRow>
-            <SettingsRow label="Silence Duration (ms)" desc="Continuous silence required before auto-skip">
-              <input
-                type="number"
-                min={500}
-                max={10000}
-                step={100}
-                value={local.silence_skip_duration_ms ?? 3000}
-                onChange={e => set('silence_skip_duration_ms', Number(e.target.value))}
-                style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
-              />
-            </SettingsRow>
-            <SettingsRow label="Silence Threshold" desc="Lower values are stricter; 0.01 is a conservative starting point">
-              <input
-                type="number"
-                min={0.001}
-                max={0.1}
-                step={0.001}
-                value={local.silence_skip_threshold ?? 0.01}
-                onChange={e => set('silence_skip_threshold', Number(e.target.value))}
-                style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
-              />
-            </SettingsRow>
-          </>
-        )}
-      </>
-    )}
-    <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
-      <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
-        Clears priority designation. The next player to initialise will claim it.
+      )}
+      {'silence_skip_enabled' in local && (
+        <>
+          <SettingsRow label="Silence Detection" desc="For Cloudflare/local media, skip long silent tails near the end of a track">
+            <Toggle checked={!!local.silence_skip_enabled} onChange={() => handleToggle('silence_skip_enabled' as keyof PlayerSettings)} />
+          </SettingsRow>
+          {local.silence_skip_enabled && (
+            <>
+              <SettingsRow label="Silence Tail Window" desc="Only monitor audio during the final N seconds">
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={local.silence_skip_tail_seconds ?? 20}
+                  onChange={e => set('silence_skip_tail_seconds', Number(e.target.value))}
+                  style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                />
+              </SettingsRow>
+              <SettingsRow label="Silence Duration (ms)" desc="Continuous silence required before auto-skip">
+                <input
+                  type="number"
+                  min={500}
+                  max={10000}
+                  step={100}
+                  value={local.silence_skip_duration_ms ?? 3000}
+                  onChange={e => set('silence_skip_duration_ms', Number(e.target.value))}
+                  style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                />
+              </SettingsRow>
+              <SettingsRow label="Silence Threshold" desc="Lower values are stricter; 0.01 is a conservative starting point">
+                <input
+                  type="number"
+                  min={0.001}
+                  max={0.1}
+                  step={0.001}
+                  value={local.silence_skip_threshold ?? 0.01}
+                  onChange={e => set('silence_skip_threshold', Number(e.target.value))}
+                  style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                />
+              </SettingsRow>
+            </>
+          )}
+        </>
+      )}
+      <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
+          Clears priority designation. The next player to initialise will claim it.
+        </div>
+        <Btn
+          variant={priorityResetDone ? 'accent' : 'ghost'}
+          onClick={handleResetPriorityPlayer}
+          disabled={resettingPriority || !!promotingEndpointId}
+          style={priorityResetDone ? {
+            background: 'rgba(34,197,94,0.18)',
+            color: '#4ade80',
+            border: '1px solid rgba(34,197,94,0.38)',
+          } : undefined}
+        >
+          {resettingPriority ? <><Spinner size={12} /> Resetting…</> : priorityResetDone ? '✓ Priority Reset' : '🔄 Reset Priority Player'}
+        </Btn>
       </div>
-      <Btn
-        variant={priorityResetDone ? 'accent' : 'ghost'}
-        onClick={handleResetPriorityPlayer}
-        disabled={resettingPriority}
-        style={priorityResetDone ? {
-          background: 'rgba(34,197,94,0.18)',
-          color: '#4ade80',
-          border: '1px solid rgba(34,197,94,0.38)',
-        } : undefined}
-      >
-        {resettingPriority ? <><Spinner size={12} /> Resetting…</> : priorityResetDone ? '✓ Priority Reset' : '🔄 Reset Priority Player'}
-      </Btn>
-    </div>
-  </>, handleSavePlayback);
+      <div style={{ marginTop: 20 }}><SaveBtn onSave={handleSavePlayback} loading={saving} /></div>
+    </>;
+
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <PanelHeader title="Playback Settings" subtitle="Queue and player behaviour" />
+        <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px, 520px) minmax(380px, 1fr)', gap: 24, alignItems: 'start' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ maxWidth: 520 }}>{errBlock}{leftContent}</div>
+            </div>
+            <div style={{ minWidth: 0, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: '#fff' }}>Connected Players</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
+                    Realtime endpoint roster. Hover a row to identify or promote a live player.
+                  </div>
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
+                  {activeEndpoints.length} connected
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1.1fr) 120px 120px minmax(190px, 1fr)', gap: 12, padding: '0 0 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                {['Endpoint', 'Role', 'Status', 'Actions'].map(label => (
+                  <div key={label} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {activeEndpoints.length === 0 ? (
+                  <div style={{ padding: '18px 14px', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                    No connected player endpoints detected.
+                  </div>
+                ) : activeEndpoints.map(endpoint => {
+                  const isHovered = hoveredEndpointId === endpoint.endpoint_id;
+                  const isMaster = endpoint.role === 'master';
+                  const canPromote = endpoint.role === 'slave' && endpointIsActive(endpoint);
+                  const identifyBusy = identifyingEndpointId === endpoint.endpoint_id;
+                  const promoteBusy = promotingEndpointId === endpoint.endpoint_id;
+                  return (
+                    <div
+                      key={endpoint.endpoint_id}
+                      onMouseEnter={() => setHoveredEndpointId(endpoint.endpoint_id)}
+                      onMouseLeave={() => setHoveredEndpointId(current => current === endpoint.endpoint_id ? null : current)}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(180px, 1.1fr) 120px 120px minmax(190px, 1fr)',
+                        gap: 12,
+                        alignItems: 'center',
+                        padding: '12px 0',
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {formatEndpointLabel(endpoint)}
+                        </div>
+                        <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>
+                          {endpoint.endpoint_id.slice(0, 8)} · seen {formatLastSeen(endpoint.last_seen)}
+                        </div>
+                      </div>
+                      <div>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: 74,
+                          padding: '5px 10px',
+                          borderRadius: 999,
+                          fontFamily: 'var(--font-display)',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: isMaster ? '#fbbf24' : '#93c5fd',
+                          background: isMaster ? 'rgba(251,191,36,0.12)' : 'rgba(59,130,246,0.12)',
+                          border: `1px solid ${isMaster ? 'rgba(251,191,36,0.24)' : 'rgba(59,130,246,0.24)'}`,
+                        }}>
+                          {isMaster ? 'Master' : 'Slave'}
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: 90,
+                          padding: '5px 10px',
+                          borderRadius: 999,
+                          fontFamily: 'var(--font-display)',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: '#4ade80',
+                          background: 'rgba(34,197,94,0.12)',
+                          border: '1px solid rgba(34,197,94,0.24)',
+                        }}>
+                          Connected
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start', minHeight: 34 }}>
+                        {isHovered ? (
+                          <>
+                            <Btn
+                              variant="ghost"
+                              onClick={() => handleIdentifyEndpoint(endpoint.endpoint_id)}
+                              disabled={!!identifyingEndpointId || !!promotingEndpointId}
+                              style={{ padding: '6px 10px', fontSize: 12 }}
+                            >
+                              {identifyBusy ? <><Spinner size={11} /> Identifying…</> : 'IDENTIFY PLAYER'}
+                            </Btn>
+                            {canPromote && (
+                              <Btn
+                                variant="accent"
+                                onClick={() => handleSetMasterEndpoint(endpoint)}
+                                disabled={!!identifyingEndpointId || !!promotingEndpointId}
+                                style={{ padding: '6px 10px', fontSize: 12 }}
+                              >
+                                {promoteBusy ? <><Spinner size={11} /> Setting…</> : 'SET AS MASTER'}
+                              </Btn>
+                            )}
+                          </>
+                        ) : (
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)' }}>
+                            {isMaster ? 'Current master endpoint' : 'Hover for actions'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (view === 'settings-kiosk') return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>

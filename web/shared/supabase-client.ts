@@ -14,6 +14,23 @@ export interface Player {
   last_heartbeat: string;
   active_playlist_id: string | null;
   priority_player_id?: string | null;
+  priority_endpoint_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlayerEndpoint {
+  endpoint_id: string;
+  player_id: string;
+  session_id: string;
+  role: 'master' | 'slave';
+  status: 'connected' | 'disconnected';
+  origin: string | null;
+  user_agent: string | null;
+  connected_at: string;
+  last_seen: string;
+  disconnected_at: string | null;
+  identify_until: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -157,6 +174,7 @@ export interface Database {
   public: {
     Tables: {
       players: { Row: Player };
+      player_endpoints: { Row: PlayerEndpoint };
       playlists: { Row: Playlist };
       playlist_items: { Row: PlaylistItem };
       media_items: { Row: MediaItem };
@@ -502,6 +520,54 @@ export function subscribeToSystemLogs(
   );
 }
 
+export function subscribeToPlayerEndpoints(
+  playerId: string,
+  callback: (endpoints: PlayerEndpoint[]) => void
+): RealtimeSubscription<PlayerEndpoint> {
+  const load = () => {
+    supabase
+      .from('player_endpoints')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('connected_at', { ascending: true })
+      .then(({ data }) => {
+        callback((data as PlayerEndpoint[]) || []);
+      });
+  };
+
+  load();
+
+  return subscribeToTable<PlayerEndpoint>(
+    'player_endpoints',
+    { column: 'player_id', value: playerId },
+    () => load()
+  );
+}
+
+export function subscribeToPlayerEndpoint(
+  endpointId: string,
+  callback: (endpoint: PlayerEndpoint | null) => void
+): RealtimeSubscription<PlayerEndpoint> {
+  const load = () => {
+    supabase
+      .from('player_endpoints')
+      .select('*')
+      .eq('endpoint_id', endpointId)
+      .maybeSingle()
+      .then(({ data }) => {
+        callback((data as PlayerEndpoint | null) ?? null);
+      });
+  };
+
+  load();
+
+  return subscribeToTable<PlayerEndpoint>(
+    'player_endpoints',
+    { column: 'endpoint_id', value: endpointId },
+    () => load()
+  );
+}
+
 // =============================================================================
 // API HELPERS
 // =============================================================================
@@ -561,15 +627,20 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect' | 'identify_endpoint' | 'set_master_endpoint';
   expected_media_id?: string;
   session_id?: string;
+  endpoint_id?: string;
+  target_endpoint_id?: string;
   stored_player_id?: string;
+  stored_endpoint_id?: string;
   initiator?: string;
   reason?: string;
   event_name?: string;
   severity?: 'debug' | 'info' | 'warn' | 'error';
   payload?: Record<string, any>;
+  origin?: string;
+  user_agent?: string;
 }) {
   const { data, error } = await supabase.functions.invoke('player-control', {
     body: params

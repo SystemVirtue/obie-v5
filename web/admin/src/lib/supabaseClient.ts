@@ -13,6 +13,24 @@ export interface Player {
   status: 'offline' | 'online' | 'error';
   last_heartbeat: string;
   active_playlist_id: string | null;
+  priority_player_id?: string | null;
+  priority_endpoint_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlayerEndpoint {
+  endpoint_id: string;
+  player_id: string;
+  session_id: string;
+  role: 'master' | 'slave';
+  status: 'connected' | 'disconnected';
+  origin: string | null;
+  user_agent: string | null;
+  connected_at: string;
+  last_seen: string;
+  disconnected_at: string | null;
+  identify_until: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -119,6 +137,7 @@ export interface Database {
   public: {
     Tables: {
       players: { Row: Player };
+      player_endpoints: { Row: PlayerEndpoint };
       playlists: { Row: Playlist };
       playlist_items: { Row: PlaylistItem };
       media_items: { Row: MediaItem };
@@ -370,6 +389,30 @@ export function subscribeToSystemLogs(
   );
 }
 
+export function subscribeToPlayerEndpoints(
+  playerId: string,
+  callback: (endpoints: PlayerEndpoint[]) => void
+): RealtimeSubscription<PlayerEndpoint> {
+  const load = () => {
+    supabase
+      .from('player_endpoints')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('connected_at', { ascending: true })
+      .then(({ data }) => {
+        callback((data as PlayerEndpoint[]) || []);
+      });
+  };
+
+  load();
+
+  return subscribeToTable<PlayerEndpoint>(
+    'player_endpoints',
+    { column: 'player_id', value: playerId },
+    () => load()
+  );
+}
+
 // =============================================================================
 // API HELPERS
 // =============================================================================
@@ -429,9 +472,14 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'identify_endpoint' | 'set_master_endpoint';
   session_id?: string;
+  endpoint_id?: string;
+  target_endpoint_id?: string;
   stored_player_id?: string;
+  stored_endpoint_id?: string;
+  initiator?: string;
+  reason?: string;
 }) {
   const { data, error } = await supabase.functions.invoke('player-control', {
     body: params
