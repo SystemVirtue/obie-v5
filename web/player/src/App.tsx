@@ -273,6 +273,11 @@ function App() {
     return match ? match[1] : null;
   };
 
+  const isYouTubePlaybackUrl = useCallback((url: string | null | undefined): boolean => {
+    if (!url) return false;
+    return extractYouTubeId(url) !== null;
+  }, []);
+
   const resetSilenceTracking = useCallback((resetTriggered = false) => {
     silenceStartedAtRef.current = null;
     if (resetTriggered) silenceTriggeredForRef.current = null;
@@ -425,6 +430,18 @@ function App() {
           url: result.next_item.url,
           duration: result.next_item.duration
         });
+
+        // Switch playback modes immediately from the queue_next result instead of
+        // waiting for a follow-up realtime update to do it for us.
+        if (isYouTubePlaybackUrl(result.next_item.url)) {
+          if (localPlaybackUrlRef.current) {
+            console.log('[Player] queue_next result is YouTube — clearing local/Cloudflare mode immediately');
+            setLocalPlaybackUrl(null);
+          }
+        } else if (result.next_item.url && result.next_item.url !== localPlaybackUrlRef.current) {
+          console.log('[Player] queue_next result is local/Cloudflare — activating <video> immediately');
+          setLocalPlaybackUrl(result.next_item.url);
+        }
         
         const nextMedia: MediaItem = {
           id: result.next_item.media_item_id,
@@ -478,7 +495,7 @@ function App() {
         isEndingRef.current = false;
       }, 1000);
     }
-  }, [fadeOut, fadeOutYtm, logPlayerEvent]);
+  }, [fadeOut, fadeOutYtm, isYouTubePlaybackUrl, logPlayerEvent]);
 
   const evaluateTailSilence = useCallback(() => {
     if (!settings?.silence_skip_enabled) return;
@@ -910,9 +927,11 @@ function App() {
           console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
           setLocalPlaybackUrl(newStatus.local_url);
         }
-      } else if (newMediaId && newMediaId !== oldMediaId) {
-        // New song started — always return to YouTube iframe mode
-        console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} new media_id=${newMediaId} → reset to iframe mode`);
+      } else if (localPlaybackUrlRef.current) {
+        // Any non-local source should tear down the local <video> path immediately.
+        // Otherwise a finished Cloudflare/local element can stay mounted and block
+        // a requested YouTube track if the transition status arrives late.
+        console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
       }
 
