@@ -70,6 +70,35 @@ function markKeyAsFailed(apiKey: string): void {
   }
 }
 
+function getYouTubeErrorReason(errorData: any): string | null {
+  return errorData?.error?.errors?.[0]?.reason || errorData?.error?.status || null;
+}
+
+function shouldRotateApiKey(reason: string | null): boolean {
+  return [
+    'quotaExceeded',
+    'dailyLimitExceeded',
+    'dailyLimitExceededUnreg',
+    'ipRefererBlocked',
+    'forbidden',
+    'accessNotConfigured',
+    'youtubeSignupRequired',
+    'keyInvalid',
+  ].includes(reason || '');
+}
+
+async function handleYouTubeApiError(response: Response, apiKey: string): Promise<void> {
+  if (response.status !== 400 && response.status !== 403) return;
+
+  const errorData = await response.clone().json().catch(() => ({}));
+  const reason = getYouTubeErrorReason(errorData);
+  if (!shouldRotateApiKey(reason)) return;
+
+  markKeyAsFailed(apiKey);
+  const message = errorData?.error?.message || `${response.status} ${response.statusText}`;
+  throw new Error(`YouTube API key failed (${reason || response.status}): ${message}`);
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -175,9 +204,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         break;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        // If quota exceeded, try next key
-        if (lastError.message.includes('Quota exceeded')) {
-          console.log(`Quota exceeded on attempt ${attempt + 1}, trying next key...`);
+        // Try the next configured key when this key is exhausted, disabled,
+        // invalid, or blocked by referrer/IP restrictions for Edge/server calls.
+        if (lastError.message.includes('YouTube API key failed')) {
+          console.log(`YouTube API key failed on attempt ${attempt + 1}, trying next key: ${lastError.message}`);
           continue;
         }
         // Other errors - don't retry
@@ -243,14 +273,7 @@ function extractPlaylistId(url: string): string | null {
 async function fetchVideo(videoId: string, apiKey: string): Promise<Video | null> {
   const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status&id=${videoId}&key=${apiKey}`;
   const response = await fetch(url);
-  // Handle quota exceeded - mark key as failed and throw
-  if (response.status === 403) {
-    const errorData = await response.json();
-    if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
-      markKeyAsFailed(apiKey);
-      throw new Error('Quota exceeded - key marked as failed');
-    }
-  }
+  await handleYouTubeApiError(response, apiKey);
   if (!response.ok) {
     throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
   }
@@ -265,14 +288,7 @@ async function fetchVideo(videoId: string, apiKey: string): Promise<Video | null
 async function fetchSearch(query: string, apiKey: string): Promise<Video[]> {
   const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&videoCategoryId=10&videoEmbeddable=true&maxResults=10&key=${apiKey}`;
   const response = await fetch(url);
-  // Handle quota exceeded - mark key as failed and throw
-  if (response.status === 403) {
-    const errorData = await response.json();
-    if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
-      markKeyAsFailed(apiKey);
-      throw new Error('Quota exceeded - key marked as failed');
-    }
-  }
+  await handleYouTubeApiError(response, apiKey);
   if (!response.ok) {
     throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
   }
@@ -329,14 +345,7 @@ async function fetchPlaylist(playlistId: string, apiKey: string): Promise<Video[
   do {
     const url = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails&playlistId=${playlistId}&maxResults=${maxResults}${pageToken ? `&pageToken=${pageToken}` : ''}&key=${apiKey}`;
     const response = await fetch(url);
-    // Handle quota exceeded - mark key as failed and throw
-    if (response.status === 403) {
-      const errorData = await response.json();
-      if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
-        markKeyAsFailed(apiKey);
-        throw new Error('Quota exceeded - key marked as failed');
-      }
-    }
+    await handleYouTubeApiError(response, apiKey);
     if (!response.ok) {
       throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
     }
@@ -353,14 +362,7 @@ async function fetchPlaylist(playlistId: string, apiKey: string): Promise<Video[
 async function fetchVideosBatch(videoIds: string, apiKey: string): Promise<Video[]> {
   const url = `https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails,status&id=${videoIds}&key=${apiKey}`;
   const response = await fetch(url);
-  // Handle quota exceeded - mark key as failed and throw
-  if (response.status === 403) {
-    const errorData = await response.json();
-    if (errorData.error?.errors?.[0]?.reason === 'quotaExceeded') {
-      markKeyAsFailed(apiKey);
-      throw new Error('Quota exceeded - key marked as failed');
-    }
-  }
+  await handleYouTubeApiError(response, apiKey);
   if (!response.ok) {
     throw new Error(`YouTube API error: ${response.status} ${response.statusText}`);
   }
