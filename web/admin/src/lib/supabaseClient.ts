@@ -237,6 +237,17 @@ export function subscribeToQueue(
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
   let fetchInFlight = false;
   let refetchRequested = false;
+  const finishFetch = () => {
+    fetchInFlight = false;
+    if (refetchRequested) {
+      refetchRequested = false;
+      if (refetchTimeout) clearTimeout(refetchTimeout);
+      refetchTimeout = setTimeout(() => {
+        refetchTimeout = null;
+        fetchQueue();
+      }, 250);
+    }
+  };
 
   const fetchQueue = () => {
     if (fetchInFlight) {
@@ -257,17 +268,10 @@ export function subscribeToQueue(
           console.log('[subscribeToQueue] Fetched', data.length, 'items');
           callback(data as QueueItem[]);
         }
-      })
-      .finally(() => {
-        fetchInFlight = false;
-        if (refetchRequested) {
-          refetchRequested = false;
-          if (refetchTimeout) clearTimeout(refetchTimeout);
-          refetchTimeout = setTimeout(() => {
-            refetchTimeout = null;
-            fetchQueue();
-          }, 250);
-        }
+        finishFetch();
+      }, (error) => {
+        console.error('[subscribeToQueue] Unexpected fetch failure:', error);
+        finishFetch();
       });
   };
   
