@@ -58,6 +58,7 @@ function App() {
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
   const playerRef = useRef<any>(null);
   const playerDivRef = useRef<HTMLDivElement>(null);
+  const statusRef = useRef<PlayerStatus | null>(null);
   const hasInitialized = useRef(false);
   const currentMediaIdRef = useRef<string | null>(null);
   const endpointIdRef = useRef<string | null>(null);
@@ -110,6 +111,10 @@ function App() {
   const playerModeRef = useRef<'iframe' | 'ytm_desktop'>('iframe');
   const [ytmTestResult, setYtmTestResult] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle');
   const [ytmTestMsg, setYtmTestMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
 
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((): Promise<void> => {
@@ -706,6 +711,8 @@ function App() {
     } else if (event.data === 2) {
       // PAUSED
       console.log('[Player] Video PAUSED');
+      const pauseAfterConfirmedStart = videoHasPlayedRef.current || firstPlayAtRef.current > 0 || !!status?.playback_started_at;
+      const adminRequestedPause = status?.state === 'paused';
       if (!videoHasPlayedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
         console.log('[Player] Video paused before first play — treating as startup pause and retrying play...');
         try {
@@ -718,6 +725,36 @@ function App() {
           }, 250);
         } catch (error) {
           console.error('[Player] Error auto-playing video:', error);
+        }
+        return;
+      }
+
+      if (pauseAfterConfirmedStart && !adminRequestedPause) {
+        const secondsSinceFirstPlay = firstPlayAtRef.current ? (Date.now() - firstPlayAtRef.current) / 1000 : null;
+        console.warn('[Player] Ignoring transient YouTube PAUSED after confirmed start', {
+          media_item_id: currentMediaIdRef.current,
+          youtube_id: currentYouTubeIdRef.current,
+          secondsSinceFirstPlay,
+          backend_state: status?.state,
+          playback_started_at: status?.playback_started_at ?? null,
+        });
+        logPlayerEvent('youtube_pause_suppressed', 'warn', {
+          media_item_id: currentMediaIdRef.current,
+          youtube_id: currentYouTubeIdRef.current,
+          seconds_since_first_play: secondsSinceFirstPlay,
+          backend_state: status?.state,
+          playback_started_at: status?.playback_started_at ?? null,
+        }, 'transient_pause_after_start').catch(() => {});
+        if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
+          window.setTimeout(() => {
+            try {
+              if (statusRef.current?.state !== 'paused') {
+                playerRef.current?.playVideo();
+              }
+            } catch (retryError) {
+              console.error('[Player] Error retrying play after transient pause:', retryError);
+            }
+          }, 250);
         }
         return;
       }
@@ -757,7 +794,7 @@ function App() {
       console.log('[Player] Video BUFFERING');
       reportStatus('loading');
     }
-  }, [reportStatus, reportEndedAndNext, fadeIn]);
+  }, [status?.playback_started_at, status?.state, reportStatus, reportEndedAndNext, fadeIn, logPlayerEvent]);
 
   // Handle playback errors — any YouTube player error skips immediately to the next video.
   // Error codes:
@@ -1691,6 +1728,14 @@ function App() {
     }
 
     if (status.state === 'loading') {
+      if (videoHasPlayedRef.current || status.playback_started_at) {
+        console.warn('[Player] Backend still loading after confirmed playback — re-reporting playing instead of recovering', {
+          media_item_id: status.current_media_id,
+          playback_started_at: status.playback_started_at ?? null,
+        });
+        reportStatus('playing', status.progress);
+        return;
+      }
       // ── 4-second loading timeout ──────────────────────────────────────────
       console.log('[Player] Video entered loading state, setting 8-second timeout to load next if not loaded');
       loadingTimeoutRef.current = window.setTimeout(() => {
@@ -1699,6 +1744,14 @@ function App() {
       }, 8000);
 
     } else if (status.state === 'paused' && !videoHasPlayedRef.current) {
+      if (status.playback_started_at) {
+        console.warn('[Player] Backend paused after confirmed playback — re-reporting playing instead of recovering', {
+          media_item_id: status.current_media_id,
+          playback_started_at: status.playback_started_at,
+        });
+        reportStatus('playing', status.progress);
+        return;
+      }
       if (recentlyLoadedRef.current) {
         console.log('[Player] Video paused before first play but still within startup grace window');
         return;
@@ -1729,7 +1782,7 @@ function App() {
         unexpectedPauseTimeoutRef.current = null;
       }
     };
-  }, [status, logPlayerEvent, reportEndedAndNext, reportPlaybackFailure]);
+  }, [status, logPlayerEvent, reportEndedAndNext, reportPlaybackFailure, reportStatus]);
 
   // Sync player state with server commands
   useEffect(() => {
