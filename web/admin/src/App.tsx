@@ -2537,9 +2537,11 @@ function App() {
   const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
   const [masterOfflineWarning, setMasterOfflineWarning] = useState<string | null>(null);
   const isSkippingRef = useRef(false);
+  const statusRef = useRef<PlayerStatus | null>(null);
   const adminSessionStartedAtRef = useRef(new Date().toISOString());
   const autoResetTriggeredRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const prefs = usePrefs();
 
@@ -2580,7 +2582,7 @@ function App() {
       try {
         const { data, error } = await supabase
           .from('players')
-          .select('id, last_heartbeat, priority_player_id')
+          .select('id, last_heartbeat, priority_player_id, priority_endpoint_id')
           .eq('id', PLAYER_ID)
           .single();
 
@@ -2591,6 +2593,31 @@ function App() {
         const lastHeartbeatMs = player.last_heartbeat ? new Date(player.last_heartbeat).getTime() : 0;
         const heartbeatAgeMs = Date.now() - lastHeartbeatMs;
         const masterOffline = hasPriorityAssigned && heartbeatAgeMs > 30000;
+        const activeStatus = statusRef.current;
+        const playbackNeedsDriver = activeStatus?.state === 'loading' || activeStatus?.state === 'playing' || activeStatus?.state === 'paused';
+
+        const { data: endpoints } = await supabase
+          .from('player_endpoints')
+          .select('endpoint_id, role, status, last_seen')
+          .eq('player_id', PLAYER_ID)
+          .eq('status', 'connected');
+
+        const activeEndpoints = ((endpoints as PlayerEndpoint[] | null) ?? []).filter(endpoint => {
+          const lastSeen = endpoint.last_seen ? new Date(endpoint.last_seen).getTime() : 0;
+          return Date.now() - lastSeen <= 45000;
+        });
+        const hasActiveMasterEndpoint = activeEndpoints.some(endpoint => endpoint.role === 'master' && endpoint.endpoint_id === player.priority_endpoint_id);
+
+        if (playbackNeedsDriver && activeEndpoints.length === 0) {
+          setMasterOfflineWarning('NO CONNECTED PLAYER ENDPOINT - open a Player screen and set it as master');
+          autoResetTriggeredRef.current = false;
+          return;
+        }
+
+        if (playbackNeedsDriver && hasPriorityAssigned && player.priority_endpoint_id && !hasActiveMasterEndpoint) {
+          setMasterOfflineWarning('MASTER ENDPOINT IS STALE - set a connected player as master');
+          return;
+        }
 
         if (masterOffline) {
           setMasterOfflineWarning('MASTER PLAYER IS OFFLINE - Reassigning Priority to next PLAYER connection');
