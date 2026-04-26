@@ -87,6 +87,11 @@ export interface PlayerStatus {
   now_playing_index: number;
   queue_head_position: number;
   last_updated: string;
+  playback_started_at?: string | null;
+  playback_error?: string | null;
+  playback_error_code?: string | null;
+  playback_error_at?: string | null;
+  last_recovery_reason?: string | null;
   current_media?: MediaItem; // Joined data
   /** 'youtube' = normal iframe mode (default); 'local' = yt-dlp download; 'cloudflare' = R2 bucket */
   source?: 'youtube' | 'local' | 'cloudflare';
@@ -627,7 +632,7 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect' | 'identify_endpoint' | 'set_master_endpoint';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect' | 'identify_endpoint' | 'set_master_endpoint' | 'playback_failed';
   expected_media_id?: string;
   session_id?: string;
   endpoint_id?: string;
@@ -642,16 +647,26 @@ export async function callPlayerControl(params: {
   origin?: string;
   user_agent?: string;
 }) {
-  const { data, error } = await supabase.functions.invoke('player-control', {
-    body: params
-  });
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { data, error } = await supabase.functions.invoke('player-control', {
+      body: params
+    });
 
-  if (error) {
-    // Normalize error to a real Error so callers receive a message string
-    throw new Error(error.message || JSON.stringify(error));
+    if (!error) return data;
+
+    lastError = error;
+    const status = (error as any)?.context?.status;
+    const message = error.message || JSON.stringify(error);
+    const transient = status === 502 || status === 503 || status === 504 || /\b(502|503|504)\b|network|timeout/i.test(message);
+    if (!transient || attempt === 3) {
+      throw new Error(message);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, attempt * 350));
   }
 
-  return data;
+  throw new Error(lastError instanceof Error ? lastError.message : JSON.stringify(lastError));
 }
 
 export async function createAdminBroadcast(params: {

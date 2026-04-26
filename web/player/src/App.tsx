@@ -74,6 +74,8 @@ function App() {
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
+  const lastPlaybackFailureKeyRef = useRef<string | null>(null);
+  const lastRecoveryKeyRef = useRef<string | null>(null);
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -275,6 +277,8 @@ function App() {
     firstPlayAtRef.current = 0;
     mediaLoadStartedAtRef.current = now;
     ignoreEndedUntilRef.current = now + 4000;
+    lastPlaybackFailureKeyRef.current = null;
+    lastRecoveryKeyRef.current = null;
   }, []);
 
   // Extract YouTube video ID from URL
@@ -287,6 +291,11 @@ function App() {
     if (!url) return false;
     return extractYouTubeId(url) !== null;
   }, []);
+
+  const getPlaybackSourceLabel = useCallback(() => {
+    if (localPlaybackUrlRef.current) return status?.source ?? 'local';
+    return status?.source ?? 'youtube';
+  }, [status?.source]);
 
   const resetSilenceTracking = useCallback((resetTriggered = false) => {
     silenceStartedAtRef.current = null;
@@ -364,6 +373,42 @@ function App() {
       console.error('[Player] Failed to write system log:', eventName, error);
     }
   }, []);
+
+  const reportPlaybackFailure = useCallback(async (
+    reason: string,
+    details: Record<string, unknown> = {},
+  ) => {
+    const mediaId = currentMediaIdRef.current;
+    const youtubeId = currentYouTubeIdRef.current;
+    const key = `${mediaId ?? 'none'}:${reason}:${String(details.error_code ?? '')}`;
+    if (lastPlaybackFailureKeyRef.current === key) {
+      console.warn('[Player] Duplicate playback failure suppressed:', { reason, mediaId, youtubeId });
+      return;
+    }
+    lastPlaybackFailureKeyRef.current = key;
+
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'playback_failed',
+        session_id: sessionIdRef.current ?? undefined,
+        endpoint_id: endpointIdRef.current ?? undefined,
+        initiator: 'player_client',
+        event_name: 'playback_failed',
+        reason,
+        payload: {
+          media_item_id: mediaId,
+          youtube_id: youtubeId,
+          playback_source: getPlaybackSourceLabel(),
+          endpoint_id: endpointIdRef.current,
+          session_id: sessionIdRef.current,
+          ...details,
+        },
+      });
+    } catch (error) {
+      console.error('[Player] Failed to report playback failure:', error);
+    }
+  }, [getPlaybackSourceLabel]);
 
   // Report playback events to server (disabled for slave players)
   const reportStatus = useCallback(async (state: PlayerStatus['state'], progress?: number) => {
@@ -444,7 +489,9 @@ function App() {
           media_item_id: result.next_item.media_item_id,
           title: result.next_item.title,
           url: result.next_item.url,
-          duration: result.next_item.duration
+          duration: result.next_item.duration,
+          endpoint_id: endpointIdRef.current,
+          session_id: sessionIdRef.current,
         });
 
         // Switch playback modes immediately from the queue_next result instead of
@@ -453,6 +500,15 @@ function App() {
           if (localPlaybackUrlRef.current) {
             console.log('[Player] queue_next result is YouTube — clearing local/Cloudflare mode immediately');
             setLocalPlaybackUrl(null);
+            localPlaybackUrlRef.current = null;
+            try {
+              localVideoRef.current?.pause();
+              localVideoRef.current?.removeAttribute('src');
+              localVideoRef.current?.load();
+            } catch (error) {
+              console.warn('[Player] Failed to tear down local video before YouTube handoff:', error);
+            }
+            teardownLocalAudioAnalyser();
           }
         } else if (result.next_item.url && result.next_item.url !== localPlaybackUrlRef.current) {
           console.log('[Player] queue_next result is local/Cloudflare — activating <video> immediately');
@@ -511,7 +567,7 @@ function App() {
         isEndingRef.current = false;
       }, 1000);
     }
-  }, [fadeOut, fadeOutYtm, isYouTubePlaybackUrl, logPlayerEvent]);
+  }, [fadeOut, fadeOutYtm, isSlavePlayer, isYouTubePlaybackUrl, logPlayerEvent, teardownLocalAudioAnalyser]);
 
   const evaluateTailSilence = useCallback(() => {
     if (!settings?.silence_skip_enabled) return;
@@ -531,7 +587,7 @@ function App() {
       return;
     }
 
-    analyser.getByteTimeDomainData(waveform as unknown as Uint8Array<ArrayBuffer>);
+    analyser.getByteTimeDomainData(waveform as any);
     let sumSquares = 0;
     for (let i = 0; i < waveform.length; i++) {
       const normalized = (waveform[i] - 128) / 128;
@@ -716,16 +772,31 @@ function App() {
       console.log('[Player] YouTube error ignored (local/Cloudflare video active):', event.data);
       return;
     }
-    console.error('[Player] YouTube player error:', event.data);
+    const errorCode = Number(event.data);
+    const failureReason =
+      errorCode === 101 || errorCode === 150 ? 'youtube_embed_blocked'
+      : errorCode === 100 ? 'youtube_video_unavailable'
+      : errorCode === 2 ? 'youtube_invalid_parameter_or_restricted'
+      : errorCode === 5 ? 'youtube_html5_playback_error'
+      : 'youtube_player_error';
+
+    console.error('[Player] YouTube player error:', event.data, failureReason);
     logPlayerEvent('youtube_playback_error', 'error', {
-      error_code: event.data,
+      error_code: errorCode,
       media_item_id: currentMediaIdRef.current,
       youtube_id: currentYouTubeIdRef.current,
+      playback_source: getPlaybackSourceLabel(),
     }, 'youtube_player_error').catch(() => {});
+    reportPlaybackFailure(failureReason, {
+      error_code: errorCode,
+      media_item_id: currentMediaIdRef.current,
+      youtube_id: currentYouTubeIdRef.current,
+      player_state: typeof playerRef.current?.getPlayerState === 'function' ? playerRef.current.getPlayerState() : null,
+    }).catch(() => {});
 
     if (isSlavePlayer) return;
 
-    if (event.data === 100) {
+    if (errorCode === 100) {
       // Video is gone — remove it from the queue and all playlists so it never comes up again.
       const unavailableMediaId = currentMediaIdRef.current;
       if (unavailableMediaId) {
@@ -762,9 +833,9 @@ function App() {
     // fires just before the error, causing the server status to land in 'paused'
     // (via an async race between reportStatus calls), which cancels the timeout
     // and leaves the player stuck indefinitely.
-    console.error(`[Player] Skipping video due to playback error (${event.data})`);
+    console.error(`[Player] Skipping video due to playback error (${errorCode})`);
     reportEndedAndNext(false);
-  }, [isSlavePlayer, reportEndedAndNext, logPlayerEvent]);
+  }, [getPlaybackSourceLabel, isSlavePlayer, reportEndedAndNext, logPlayerEvent, reportPlaybackFailure]);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -984,6 +1055,8 @@ function App() {
         if (newStatus.local_url !== localPlaybackUrlRef.current) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
           console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
+          lastPlaybackFailureKeyRef.current = null;
+          lastRecoveryKeyRef.current = null;
           setLocalPlaybackUrl(newStatus.local_url);
         }
       } else if (localPlaybackUrlRef.current) {
@@ -992,6 +1065,15 @@ function App() {
         // a requested YouTube track if the transition status arrives late.
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
+        localPlaybackUrlRef.current = null;
+        try {
+          localVideoRef.current?.pause();
+          localVideoRef.current?.removeAttribute('src');
+          localVideoRef.current?.load();
+        } catch (error) {
+          console.warn('[Player] Failed to tear down local video on realtime source change:', error);
+        }
+        teardownLocalAudioAnalyser();
       }
 
       if (newMediaId && newMediaId !== oldMediaId) {
@@ -1019,7 +1101,7 @@ function App() {
       console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
     };
-  }, [fadeIn, fadeOut, reportEndedAndNext]);
+  }, [fadeIn, fadeOut, reportEndedAndNext, teardownLocalAudioAnalyser]);
 
   // Subscribe to player settings (to watch karaoke_mode)
   useEffect(() => {
@@ -1374,16 +1456,38 @@ function App() {
   // Create or update YouTube player when media changes
   useEffect(() => {
     if (!currentMedia) return;
+    const currentMediaIsYouTube = isYouTubePlaybackUrl(currentMedia.url);
 
     // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
     // Just update the ref so the status subscription doesn't re-trigger media changes.
-    if (localPlaybackUrl) {
+    if (localPlaybackUrl && !currentMediaIsYouTube) {
       if (currentMediaIdRef.current !== currentMedia.id) {
         console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
         currentMediaIdRef.current = currentMedia.id;
         videoHasPlayedRef.current = false;
+        lastPlaybackFailureKeyRef.current = null;
+        lastRecoveryKeyRef.current = null;
       }
       return;
+    } else if (localPlaybackUrl && currentMediaIsYouTube) {
+      // React state can briefly still hold the previous Cloudflare/local URL when
+      // a queue transition has already selected a YouTube item. Do not mark the
+      // YouTube media as loaded until the iframe path actually loads it.
+      console.warn('[Player] Clearing stale local/Cloudflare URL before YouTube load', {
+        media_id: currentMedia.id,
+        youtube_id: extractYouTubeId(currentMedia.url),
+        stale_url: localPlaybackUrl,
+      });
+      setLocalPlaybackUrl(null);
+      localPlaybackUrlRef.current = null;
+      try {
+        localVideoRef.current?.pause();
+        localVideoRef.current?.removeAttribute('src');
+        localVideoRef.current?.load();
+      } catch (error) {
+        console.warn('[Player] Failed to tear down stale local video:', error);
+      }
+      teardownLocalAudioAnalyser();
     }
 
     // YTM Desktop mode: dispatch changeVideo instead of creating an iframe
@@ -1406,14 +1510,25 @@ function App() {
         if (res.ok) {
           setYtmConnected(true);
           setYtmError(null);
-          // changeVideo causes immediate autoplay in YTM Desktop — report 'playing' now
-          // so admin console advances from 'loading' → 'playing' without waiting for a socket event.
-          reportStatus('playing');
+          window.setTimeout(() => {
+            if (ytmCurrentVideoIdRef.current === videoId && !ytmPlayingReportedRef.current) {
+              reportPlaybackFailure('ytm_playback_not_confirmed', {
+                youtube_id: videoId,
+                media_item_id: currentMediaIdRef.current,
+              }).catch(() => {});
+              reportEndedAndNext(false);
+            }
+          }, 10000);
         } else if (res.status === 401) { setYtmConnected(false); setYtmError('YTM auth failed — please reconnect'); }
         else setYtmError(`YTM command failed (HTTP ${res.status})`);
       }).catch(() => {
         setYtmError('YTM Desktop offline — start YTM Desktop with Companion Server enabled');
         setYtmConnected(false);
+        reportPlaybackFailure('ytm_desktop_offline', {
+          youtube_id: videoId,
+          media_item_id: currentMediaIdRef.current,
+        }).catch(() => {});
+        reportEndedAndNext(false);
       });
       return;
     }
@@ -1436,6 +1551,11 @@ function App() {
     const youtubeId = extractYouTubeId(currentMedia.url);
     if (!youtubeId) {
       console.error('[Player] Could not extract YouTube ID from:', currentMedia.url);
+      reportPlaybackFailure('youtube_id_extract_failed', {
+        media_item_id: currentMedia.id,
+        url: currentMedia.url,
+      }).catch(() => {});
+      reportEndedAndNext(false);
       return;
     }
 
@@ -1513,7 +1633,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, localPlaybackUrl, ytApiReady, onPlayerReady, onPlayerStateChange, onPlayerError, reportStatus, markYouTubeLoadStart]);
+  }, [currentMedia, localPlaybackUrl, ytApiReady, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, teardownLocalAudioAnalyser]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
@@ -1534,11 +1654,24 @@ function App() {
 
     const advanceToNext = async (reason: string) => {
       console.error(`[Player] ${reason} — advancing to next video`);
-      logPlayerEvent('player_recovery_triggered', 'warn', {
-        recovery_reason: reason,
-        source: status.source ?? 'youtube',
-        media_item_id: status.current_media_id,
-      }, reason).catch(() => {});
+      const recoveryKey = `${status.current_media_id ?? 'none'}:${reason}`;
+      if (lastRecoveryKeyRef.current !== recoveryKey) {
+        lastRecoveryKeyRef.current = recoveryKey;
+        logPlayerEvent('player_recovery_triggered', 'warn', {
+          recovery_reason: reason,
+          source: status.source ?? 'youtube',
+          media_item_id: status.current_media_id,
+          endpoint_id: endpointIdRef.current,
+          session_id: sessionIdRef.current,
+        }, reason).catch(() => {});
+        reportPlaybackFailure('playback_start_timeout', {
+          recovery_reason: reason,
+          media_item_id: status.current_media_id,
+          playback_source: status.source ?? 'youtube',
+        }).catch(() => {});
+      } else {
+        console.warn('[Player] Duplicate recovery log suppressed:', { reason, media_item_id: status.current_media_id });
+      }
       try {
         await reportEndedAndNext(false);
       } catch (error) {
@@ -1596,7 +1729,7 @@ function App() {
         unexpectedPauseTimeoutRef.current = null;
       }
     };
-  }, [status, logPlayerEvent, reportEndedAndNext]);
+  }, [status, logPlayerEvent, reportEndedAndNext, reportPlaybackFailure]);
 
   // Sync player state with server commands
   useEffect(() => {
@@ -1673,6 +1806,11 @@ function App() {
           onError={(e) => {
             resetSilenceTracking(true);
             console.error('[Player][local-video] ✖ ERROR:', e);
+            reportPlaybackFailure('local_or_cloudflare_video_error', {
+              media_item_id: currentMediaIdRef.current,
+              playback_source: status?.source ?? 'local',
+              local_url: localPlaybackUrl,
+            }).catch(() => {});
             setLocalPlaybackUrl(null);
             reportEndedAndNext(false);
           }}

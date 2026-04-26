@@ -15,6 +15,17 @@ async function logSystemEvent(supabase, playerId, event, severity = 'info', payl
   }
 }
 
+function isTransientDatabaseError(error) {
+  const message = `${error?.message ?? ''} ${error?.code ?? ''}`.toLowerCase();
+  return message.includes('timeout')
+    || message.includes('temporarily')
+    || message.includes('connection')
+    || message.includes('unavailable')
+    || error?.code === '57014'
+    || error?.code === '53300'
+    || error?.code === '08006';
+}
+
 async function isMasterEndpoint(supabase, playerId, endpointId) {
   if (!endpointId) return false;
   const { data: player } = await supabase
@@ -100,6 +111,8 @@ Deno.serve(async (req)=>{
         {
           source: initiator || 'player_client',
           reason: reason || null,
+          endpoint_id: endpoint_id || null,
+          session_id: session_id || null,
           ...(payload && typeof payload === 'object' ? payload : {}),
         },
       );
@@ -114,6 +127,29 @@ Deno.serve(async (req)=>{
 
     if (action === 'disconnect') {
       if (endpoint_id) {
+        const { data: currentEndpoint } = await supabase
+          .from('player_endpoints')
+          .select('session_id, role')
+          .eq('player_id', player_id)
+          .eq('endpoint_id', endpoint_id)
+          .maybeSingle();
+
+        if (session_id && currentEndpoint?.session_id && currentEndpoint.session_id !== session_id) {
+          await logSystemEvent(supabase, player_id, 'stale_disconnect_ignored', 'warn', {
+            source: initiator || 'player_client',
+            endpoint_id,
+            session_id,
+            current_session_id: currentEndpoint.session_id,
+          });
+          return new Response(JSON.stringify({ success: true, ignored: true, reason: 'stale_session' }), {
+            status: 200,
+            headers: {
+              ...corsHeaders,
+              'Content-Type': 'application/json'
+            }
+          });
+        }
+
         const { data: currentPlayer } = await supabase
           .from('players')
           .select('priority_endpoint_id')
@@ -456,18 +492,99 @@ Deno.serve(async (req)=>{
       });
     }
 
+    if (action === 'playback_failed') {
+      const callerIsMaster = initiator === 'admin_ui'
+        ? true
+        : await isMasterEndpoint(supabase, player_id, endpoint_id);
+
+      await logSystemEvent(supabase, player_id, typeof event_name === 'string' && event_name ? event_name : 'playback_failed', 'error', {
+        source: initiator || 'player_client',
+        reason: reason || 'playback_failed',
+        endpoint_id: endpoint_id || null,
+        session_id: session_id || null,
+        ...(payload && typeof payload === 'object' ? payload : {}),
+        ignored: !callerIsMaster,
+      });
+
+      if (!callerIsMaster) {
+        return new Response(JSON.stringify({
+          success: false,
+          reason: 'not_priority_player'
+        }), {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      const updateData: Record<string, unknown> = {
+        playback_error: reason || 'playback_failed',
+        playback_error_code: payload && typeof payload === 'object' && 'error_code' in payload ? String(payload.error_code) : null,
+        playback_error_at: new Date().toISOString(),
+        last_recovery_reason: reason || 'playback_failed',
+        last_updated: new Date().toISOString(),
+      };
+
+      const { error: failureUpdateError } = await supabase
+        .from('player_status')
+        .update(updateData)
+        .eq('player_id', player_id);
+      if (failureUpdateError) throw failureUpdateError;
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: {
+          ...corsHeaders,
+          'Content-Type': 'application/json'
+        }
+      });
+    }
+
     // Handle status update
     if (action === 'update' || action === 'ended' || action === 'skip') {
+      const callerIsMaster = initiator === 'admin_ui'
+        ? true
+        : await isMasterEndpoint(supabase, player_id, endpoint_id);
+
+      if (!callerIsMaster) {
+        console.log(`[player-control] Ignoring ${action} update from non-priority endpoint`, {
+          player_id,
+          endpoint_id: endpoint_id || null,
+          session_id: session_id || null,
+          state: state || null,
+        });
+        await logSystemEvent(supabase, player_id, 'non_master_status_ignored', 'warn', {
+          source: initiator || 'player_client',
+          action,
+          state: state || null,
+          endpoint_id: endpoint_id || null,
+          session_id: session_id || null,
+        });
+        return new Response(JSON.stringify({
+          success: false,
+          reason: 'not_priority_player'
+        }), {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
+
+      const { data: currentStatusForUpdate } = await supabase
+        .from('player_status')
+        .select('state, current_media_id, source, playback_started_at')
+        .eq('player_id', player_id)
+        .single();
+
       // For skip: capture current player state BEFORE updating, so we can decide
       // whether the player needs to fade out or whether it's already idle.
       let preUpdateState: string | null = null;
       if (action === 'skip') {
-        const { data: currentStatus } = await supabase
-          .from('player_status')
-          .select('state')
-          .eq('player_id', player_id)
-          .single();
-        preUpdateState = currentStatus?.state ?? null;
+        preUpdateState = currentStatusForUpdate?.state ?? null;
       }
 
       const updateData: Record<string, unknown> = {
@@ -483,8 +600,24 @@ Deno.serve(async (req)=>{
       if (progress !== undefined) {
         updateData.progress = Math.min(1, Math.max(0, progress));
       }
+      if (state === 'playing') {
+        updateData.playback_started_at = currentStatusForUpdate?.playback_started_at || new Date().toISOString();
+        updateData.playback_error = null;
+        updateData.playback_error_code = null;
+        updateData.playback_error_at = null;
+        updateData.last_recovery_reason = null;
+      }
       const { error: updateError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
       if (updateError) throw updateError;
+      if (state === 'playing' && !currentStatusForUpdate?.playback_started_at) {
+        await logSystemEvent(supabase, player_id, 'playback_started_confirmed', 'info', {
+          source: initiator || 'player_client',
+          endpoint_id: endpoint_id || null,
+          session_id: session_id || null,
+          media_item_id: currentStatusForUpdate?.current_media_id || null,
+          playback_source: currentStatusForUpdate?.source || null,
+        });
+      }
       if (initiator === 'admin_ui') {
         if (action === 'skip') {
           await logSystemEvent(supabase, player_id, 'admin_skip', 'warn', {
@@ -505,24 +638,6 @@ Deno.serve(async (req)=>{
       // If idle: call queue_next directly (no fade needed, nothing is playing).
       // If playing/paused: let the Player handle the fade and then call queue_next.
       if (action === 'skip' && state === 'idle') {
-        const callerIsMaster = initiator === 'admin_ui'
-          ? true
-          : await isMasterEndpoint(supabase, player_id, endpoint_id);
-
-        if (!callerIsMaster) {
-          console.log(`[player-control] Ignoring skip from non-priority player ${player_id}`);
-          return new Response(JSON.stringify({
-            success: false,
-            reason: 'not_priority_player'
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-
         if (preUpdateState === 'idle') {
           // Player was already idle — no video playing, skip the fade and advance queue now.
           console.log('[player-control] Skip while idle - calling queue_next directly (no fade needed)');
@@ -583,24 +698,6 @@ Deno.serve(async (req)=>{
             success: true,
             skipped: true,
             reason: 'already_advanced'
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-
-        const callerIsMaster = initiator === 'admin_ui'
-          ? true
-          : await isMasterEndpoint(supabase, player_id, endpoint_id);
-
-        if (!callerIsMaster) {
-          console.log(`[player-control] Ignoring ${action} from non-priority player ${player_id}`);
-          return new Response(JSON.stringify({
-            success: false,
-            reason: 'not_priority_player'
           }), {
             status: 200,
             headers: {
@@ -684,10 +781,11 @@ Deno.serve(async (req)=>{
     });
   } catch (error) {
     console.error('Player control error:', error);
+    const status = isTransientDatabaseError(error) ? 503 : 500;
     return new Response(JSON.stringify({
       error: error.message
     }), {
-      status: 500,
+      status,
       headers: {
         ...corsHeaders,
         'Content-Type': 'application/json'

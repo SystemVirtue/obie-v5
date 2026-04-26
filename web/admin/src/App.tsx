@@ -308,6 +308,13 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
   const isPaused  = status?.state === 'paused';
   const progress  = Math.min(100, (status?.progress ?? 0) * 100);
   const stateLabel = isSkipping ? 'SKIPPING' : isPlaying ? 'Now Playing' : isPaused ? 'Paused' : (status?.state || 'Idle');
+  const playbackSource = status?.source ?? 'youtube';
+  const sourceLabel =
+    playbackSource === 'cloudflare' ? 'Cached Cloudflare'
+    : playbackSource === 'local' ? 'Local fallback'
+    : 'YouTube iframe';
+  const playbackConfirmed = !!status?.playback_started_at;
+  const playbackError = status?.playback_error;
   const handlePlayPauseClick = () => {
     if (isSkipping) return;
     if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
@@ -396,7 +403,28 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
                 textTransform: 'uppercase', fontWeight: 600 }}>
                 {stateLabel}
               </span>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                background: playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.12)' : playbackSource === 'local' ? 'rgba(59,130,246,0.14)' : 'rgba(251,191,36,0.12)',
+                color: playbackSource === 'cloudflare' ? '#4ade80' : playbackSource === 'local' ? '#93c5fd' : '#fbbf24',
+                border: `1px solid ${playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.25)' : playbackSource === 'local' ? 'rgba(59,130,246,0.3)' : 'rgba(251,191,36,0.25)'}` }}>
+                {sourceLabel}
+              </span>
+              {status?.current_media_id && (
+                <span title={playbackConfirmed ? `Confirmed ${new Date(status.playback_started_at as string).toLocaleTimeString()}` : 'Waiting for first real playing event'}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                    background: playbackConfirmed ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)',
+                    color: playbackConfirmed ? '#86efac' : '#fbbf24',
+                    border: `1px solid ${playbackConfirmed ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.25)'}` }}>
+                  {playbackConfirmed ? 'START CONFIRMED' : 'AWAITING START'}
+                </span>
+              )}
             </div>
+            {playbackError && (
+              <div style={{ marginBottom: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fca5a5',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                Last failure: {playbackError}{status?.playback_error_code ? ` (${status.playback_error_code})` : ''}
+              </div>
+            )}
             <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
               letterSpacing: '-0.03em', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
@@ -1172,6 +1200,7 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const m = (item as any).media_item as any;
+  const sourceType = m?.source_type === 'cloudflare' ? 'cloudflare' : 'youtube';
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
@@ -1180,7 +1209,15 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
         {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)' }}>{m?.artist || ''}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.artist || ''}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
+              background: sourceType === 'cloudflare' ? 'rgba(34,197,94,0.1)' : 'rgba(251,191,36,0.1)',
+              color: sourceType === 'cloudflare' ? '#86efac' : '#fbbf24',
+              border: `1px solid ${sourceType === 'cloudflare' ? 'rgba(34,197,94,0.22)' : 'rgba(251,191,36,0.22)'}` }}>
+              {sourceType === 'cloudflare' ? 'CACHED' : 'YOUTUBE'}
+            </span>
+          </div>
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
         <button onClick={() => onRemove(item.id)} style={{ width: 26, height: 26, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12 }}>✕</button>

@@ -87,6 +87,11 @@ export interface PlayerStatus {
   now_playing_index: number;
   queue_head_position: number;
   last_updated: string;
+  playback_started_at?: string | null;
+  playback_error?: string | null;
+  playback_error_code?: string | null;
+  playback_error_at?: string | null;
+  last_recovery_reason?: string | null;
   current_media?: MediaItem; // Joined data
 }
 
@@ -472,7 +477,7 @@ export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'identify_endpoint' | 'set_master_endpoint';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect' | 'identify_endpoint' | 'set_master_endpoint' | 'playback_failed';
   session_id?: string;
   endpoint_id?: string;
   target_endpoint_id?: string;

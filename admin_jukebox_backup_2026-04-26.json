@@ -1,0 +1,179 @@
+{
+  "backed_up_at": "2026-04-25T12:05:06.825Z",
+  "target_player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+  "player": {
+    "id": "232886d3-af07-4e0d-95e8-654d2636b420",
+    "name": "admin_jukebox",
+    "status": "online",
+    "last_heartbeat": "2026-04-11T07:52:46.623567+00:00",
+    "active_playlist_id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+    "created_at": "2026-04-11T07:52:46.623567+00:00",
+    "updated_at": "2026-04-12T20:04:46.05936+00:00",
+    "priority_player_id": null,
+    "owner_id": "514f2da2-3e3d-46b2-ba7b-8d7dc90d025a"
+  },
+  "settings": {
+    "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+    "loop": false,
+    "shuffle": false,
+    "volume": 75,
+    "freeplay": false,
+    "coin_per_song": 1,
+    "branding": {
+      "logo": "",
+      "name": "Obie Jukebox",
+      "theme": "dark"
+    },
+    "search_enabled": true,
+    "max_queue_size": 50,
+    "priority_queue_limit": 10,
+    "karaoke_mode": false,
+    "player_mode": "iframe",
+    "local_media_enabled": false,
+    "local_media_path": null,
+    "cloudflare_enabled": false,
+    "cloudflare_r2_public_url": null
+  },
+  "status": {
+    "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+    "state": "idle",
+    "progress": 0,
+    "current_media_id": null,
+    "now_playing_index": 0,
+    "queue_head_position": 0,
+    "last_updated": "2026-04-11T07:52:46.623567+00:00",
+    "source": "youtube",
+    "local_url": null
+  },
+  "playlists": [
+    {
+      "id": "38138612-40e9-4d31-aaa3-44e2039ba163",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "name": "Default Playlist",
+      "description": "Auto-created playlist for admin_jukebox",
+      "is_active": true,
+      "created_at": "2026-04-11T07:52:53.507654+00:00",
+      "updated_at": "2026-04-11T07:52:53.507654+00:00"
+    },
+    {
+      "id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "name": "Default Karaoke Mix",
+      "description": "Auto-created playlist with random karaoke songs",
+      "is_active": true,
+      "created_at": "2026-04-12T20:04:46.05936+00:00",
+      "updated_at": "2026-04-12T20:04:46.05936+00:00"
+    }
+  ],
+  "playlist_items": [
+    {
+      "id": "7bfe1aba-5d21-4854-bebb-b4e409c53300",
+      "playlist_id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+      "position": 0,
+      "media_item_id": "e1c3b0d4-f73f-46f1-941d-a7129c937b10",
+      "added_at": "2026-04-12T20:04:46.05936+00:00"
+    },
+    {
+      "id": "55a8db50-4b41-4180-bd74-1093787a7b89",
+      "playlist_id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+      "position": 1,
+      "media_item_id": "5b3c27b4-43b2-4a3b-b725-a447f93bc42a",
+      "added_at": "2026-04-12T20:04:46.05936+00:00"
+    },
+    {
+      "id": "ca0bdd22-797c-465c-a586-bb4b11f40e62",
+      "playlist_id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+      "position": 2,
+      "media_item_id": "e5db3b1d-67bb-452e-a872-c686ac2242d9",
+      "added_at": "2026-04-12T20:04:46.05936+00:00"
+    },
+    {
+      "id": "c5d7d6f4-a99f-457d-9155-013e761566c4",
+      "playlist_id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+      "position": 3,
+      "media_item_id": "5bdadbae-e09d-49ca-8910-3ede96249a1f",
+      "added_at": "2026-04-12T20:04:46.05936+00:00"
+    },
+    {
+      "id": "fc693956-4a2d-4300-a2a4-c9b3d1445a18",
+      "playlist_id": "17ba9900-707c-4a0e-b22b-c7576bd81770",
+      "position": 4,
+      "media_item_id": "97743a77-e513-4b8e-8db0-5e2872ecb5eb",
+      "added_at": "2026-04-12T20:04:46.05936+00:00"
+    }
+  ],
+  "queue": [
+    {
+      "id": "61cce4ff-b27c-4445-964d-e66df0d0f2ce",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "type": "normal",
+      "media_item_id": "e1c3b0d4-f73f-46f1-941d-a7129c937b10",
+      "position": 0,
+      "requested_by": null,
+      "requested_at": "2026-04-12T20:04:46.05936+00:00",
+      "played_at": null,
+      "expires_at": "2026-04-12T20:34:46.05936+00:00",
+      "priority": false
+    },
+    {
+      "id": "784bb7d5-8e39-4183-a034-7d11da50dc20",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "type": "normal",
+      "media_item_id": "5b3c27b4-43b2-4a3b-b725-a447f93bc42a",
+      "position": 1,
+      "requested_by": null,
+      "requested_at": "2026-04-12T20:04:46.05936+00:00",
+      "played_at": null,
+      "expires_at": "2026-04-12T20:34:46.05936+00:00",
+      "priority": false
+    },
+    {
+      "id": "21797312-60ec-4343-8130-9e064fdad6f4",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "type": "normal",
+      "media_item_id": "e5db3b1d-67bb-452e-a872-c686ac2242d9",
+      "position": 2,
+      "requested_by": null,
+      "requested_at": "2026-04-12T20:04:46.05936+00:00",
+      "played_at": null,
+      "expires_at": "2026-04-12T20:34:46.05936+00:00",
+      "priority": false
+    },
+    {
+      "id": "2aaabe05-44f6-4f46-a760-2becc0e7c536",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "type": "normal",
+      "media_item_id": "5bdadbae-e09d-49ca-8910-3ede96249a1f",
+      "position": 3,
+      "requested_by": null,
+      "requested_at": "2026-04-12T20:04:46.05936+00:00",
+      "played_at": null,
+      "expires_at": "2026-04-12T20:34:46.05936+00:00",
+      "priority": false
+    },
+    {
+      "id": "93c6cac5-49d9-46b5-8385-e5dd3e9521e3",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "type": "normal",
+      "media_item_id": "97743a77-e513-4b8e-8db0-5e2872ecb5eb",
+      "position": 4,
+      "requested_by": null,
+      "requested_at": "2026-04-12T20:04:46.05936+00:00",
+      "played_at": null,
+      "expires_at": "2026-04-12T20:34:46.05936+00:00",
+      "priority": false
+    },
+    {
+      "id": "eeaa22c5-2f6b-4cc6-bc0d-85a5b88f68bf",
+      "player_id": "232886d3-af07-4e0d-95e8-654d2636b420",
+      "type": "priority",
+      "media_item_id": "b919a784-61e0-408e-bb54-66b341ed8df8",
+      "position": 0,
+      "requested_by": "6bee85ee-a6c7-49cc-9c8d-fb2c3333f7b4",
+      "requested_at": "2026-04-20T04:53:24.982108+00:00",
+      "played_at": null,
+      "expires_at": "2026-04-20T05:23:24.982108+00:00",
+      "priority": false
+    }
+  ]
+}
