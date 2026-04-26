@@ -56,6 +56,7 @@ function App() {
   const hasInitialized = useRef(false);
   const currentMediaIdRef = useRef<string | null>(null);
   const shouldAutoplayCurrentMediaRef = useRef(false);
+  const consecutiveHeartbeatFailuresRef = useRef(0);
   const fadeIntervalRef = useRef<number | null>(null);
   const isSkipLoadingRef = useRef(false); // Track if loading after skip
   const recentlyLoadedRef = useRef(false); // Track if video was recently loaded and should auto-play
@@ -167,9 +168,16 @@ function App() {
           player_id: PLAYER_ID,
           action: 'heartbeat',
         });
+        consecutiveHeartbeatFailuresRef.current = 0;
       } catch (error) {
         if (!cancelled) {
-          console.error('[Player] Heartbeat failed:', error);
+          consecutiveHeartbeatFailuresRef.current += 1;
+          const failures = consecutiveHeartbeatFailuresRef.current;
+          const logMethod = failures === 1 || failures % 6 === 0 ? console.warn : console.debug;
+          logMethod('[Player] Heartbeat failed:', {
+            failures,
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       }
     };
