@@ -39,7 +39,6 @@ import {
   subscribeToAuth,
   type AuthUser,
 } from '@shared/supabase-client';
-import { cleanDisplayText } from '../../shared/media-utils';
 import {
   DndContext,
   closestCenter,
@@ -70,20 +69,20 @@ const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 
 const FS_SCALES = [
   { zoom: 0.82, label: 'Smallest', pct: '82%' },
-  { zoom: 0.91, label: 'Smaller',  pct: '91%' },
-  { zoom: 1.00, label: 'Normal',   pct: '100%' },
-  { zoom: 1.10, label: 'Larger',   pct: '110%' },
-  { zoom: 1.22, label: 'Largest',  pct: '122%' },
+  { zoom: 0.91, label: 'Smaller', pct: '91%' },
+  { zoom: 1.00, label: 'Normal', pct: '100%' },
+  { zoom: 1.10, label: 'Larger', pct: '110%' },
+  { zoom: 1.22, label: 'Largest', pct: '122%' },
 ];
 
 const PRESET_COLOURS = [
-  { hex: '#f59e0b', name: 'Amber' },    { hex: '#ef4444', name: 'Red' },
-  { hex: '#f97316', name: 'Orange' },   { hex: '#eab308', name: 'Yellow' },
-  { hex: '#22c55e', name: 'Green' },    { hex: '#14b8a6', name: 'Teal' },
-  { hex: '#06b6d4', name: 'Cyan' },     { hex: '#3b82f6', name: 'Blue' },
-  { hex: '#6366f1', name: 'Indigo' },   { hex: '#8b5cf6', name: 'Violet' },
-  { hex: '#d946ef', name: 'Fuchsia' },  { hex: '#ec4899', name: 'Pink' },
-  { hex: '#a3e635', name: 'Lime' },     { hex: '#94a3b8', name: 'Slate' },
+  { hex: '#f59e0b', name: 'Amber' }, { hex: '#ef4444', name: 'Red' },
+  { hex: '#f97316', name: 'Orange' }, { hex: '#eab308', name: 'Yellow' },
+  { hex: '#22c55e', name: 'Green' }, { hex: '#14b8a6', name: 'Teal' },
+  { hex: '#06b6d4', name: 'Cyan' }, { hex: '#3b82f6', name: 'Blue' },
+  { hex: '#6366f1', name: 'Indigo' }, { hex: '#8b5cf6', name: 'Violet' },
+  { hex: '#d946ef', name: 'Fuchsia' }, { hex: '#ec4899', name: 'Pink' },
+  { hex: '#a3e635', name: 'Lime' }, { hex: '#94a3b8', name: 'Slate' },
   { hex: '#ffffff', name: 'White' },
 ];
 
@@ -116,16 +115,16 @@ function applyAccentCSS(hex: string) {
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
   const [r, g, b] = hexToRgb(hex);
   const root = document.documentElement;
-  root.style.setProperty('--accent',        hex);
-  root.style.setProperty('--accent-dark',   darkenHex(hex, 0.12));
-  root.style.setProperty('--accent-dim',    `rgba(${r},${g},${b},0.15)`);
+  root.style.setProperty('--accent', hex);
+  root.style.setProperty('--accent-dark', darkenHex(hex, 0.12));
+  root.style.setProperty('--accent-dim', `rgba(${r},${g},${b},0.15)`);
   root.style.setProperty('--accent-border', `rgba(${r},${g},${b},0.30)`);
-  root.style.setProperty('--accent-glow',   `rgba(${r},${g},${b},0.38)`);
-  root.style.setProperty('--accent-rgb',    `${r},${g},${b}`);
+  root.style.setProperty('--accent-glow', `rgba(${r},${g},${b},0.38)`);
+  root.style.setProperty('--accent-rgb', `${r},${g},${b}`);
 }
 function applyZoom(zoom: number) {
   const el = document.getElementById('root');
-  if (el) (el.style as unknown as Record<string,string>).zoom = String(zoom);
+  if (el) (el.style as unknown as Record<string, string>).zoom = String(zoom);
 }
 
 // ─── Prefs hook ──────────────────────────────────────────────────────────────
@@ -174,20 +173,26 @@ function Spinner({ size = 20 }: { size?: number }) {
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}
-      style={{ width: 44, height: 24, borderRadius: 999, flexShrink: 0,
+      style={{
+        width: 44, height: 24, borderRadius: 999, flexShrink: 0,
         background: checked ? 'var(--accent)' : 'rgba(255,255,255,0.12)', transition: 'background 0.2s',
         position: 'relative', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
-        border: 'none', outline: 'none' }}>
-      <span style={{ position: 'absolute', top: 3, left: checked ? 23 : 3, width: 18, height: 18,
-        borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.5)' }} />
+        border: 'none', outline: 'none'
+      }}>
+      <span style={{
+        position: 'absolute', top: 3, left: checked ? 23 : 3, width: 18, height: 18,
+        borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.5)'
+      }} />
     </button>
   );
 }
 
 function PanelHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--border)'
+    }}>
       <div>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>{title}</h1>
         {subtitle && <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>{subtitle}</p>}
@@ -203,16 +208,18 @@ function Btn({ onClick, children, variant = 'ghost', disabled, style: xs }: {
 }) {
   const vmap: Record<string, React.CSSProperties> = {
     accent: { background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--accent-border)' },
-    solid:  { background: 'var(--accent)', color: '#000' },
-    ghost:  { background: 'rgba(255,255,255,0.05)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.1)' },
+    solid: { background: 'var(--accent)', color: '#000' },
+    ghost: { background: 'rgba(255,255,255,0.05)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.1)' },
     danger: { background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' },
   };
   return (
     <button disabled={disabled} onClick={onClick}
-      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, border: 'none',
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, border: 'none',
         cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
         fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap',
-        ...vmap[variant], ...xs }}>
+        ...vmap[variant], ...xs
+      }}>
       {children}
     </button>
   );
@@ -223,11 +230,13 @@ function SaveBtn({ onSave, loading }: { onSave: () => Promise<void>; loading?: b
   const handle = async () => { await onSave(); setSaved(true); setTimeout(() => setSaved(false), 2500); };
   return (
     <button onClick={handle} disabled={loading}
-      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 12,
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 12,
         cursor: loading ? 'default' : 'pointer', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600,
         background: saved ? 'rgba(34,197,94,0.18)' : 'var(--accent)',
         color: saved ? '#4ade80' : '#000',
-        border: saved ? '1px solid rgba(34,197,94,0.4)' : 'none', transition: 'all 0.2s' }}>
+        border: saved ? '1px solid rgba(34,197,94,0.4)' : 'none', transition: 'all 0.2s'
+      }}>
       {loading ? <Spinner size={14} /> : saved ? '✓ Saved' : 'Save Settings'}
     </button>
   );
@@ -248,8 +257,10 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
     try {
       const result = await signIn(email, password);
       if (result.user) {
-        onSignIn({ id: result.user.id, email: result.user.email || '',
-          role: result.user.user_metadata?.role || result.user.app_metadata?.role });
+        onSignIn({
+          id: result.user.id, email: result.user.email || '',
+          role: result.user.user_metadata?.role || result.user.app_metadata?.role
+        });
       }
     } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Failed to sign in'); }
     finally { setLoading(false); }
@@ -273,15 +284,19 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
               <input type={label === 'Password' ? 'password' : 'email'} required
                 value={label === 'Email' ? email : password}
                 onChange={e => label === 'Email' ? setEmail(e.target.value) : setPassword(e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0a0a0a',
-                  border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
+                style={{
+                  width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0a0a0a',
+                  border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none'
+                }} />
             </div>
           ))}
           {error && <p style={{ color: '#f87171', fontSize: 12, marginBottom: 12, fontFamily: 'var(--font-mono)' }}>{error}</p>}
           <button type="submit" disabled={loading}
-            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: loading ? 'default' : 'pointer',
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: loading ? 'default' : 'pointer',
               background: 'var(--accent)', color: '#000', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700,
-              opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+            }}>
             {loading ? <><Spinner size={16} /> Signing in…</> : 'Sign In'}
           </button>
         </form>
@@ -302,18 +317,18 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cm = (status as any)?.current_media as any;
-  const thumb  = cm?.thumbnail || '';
-  const title  = cleanDisplayText(cm?.title) || 'Nothing playing';
+  const thumb = cm?.thumbnail || '';
+  const title = cleanDisplayText(cm?.title) || 'Nothing playing';
   const artist = cleanDisplayText(cm?.artist) || '—';
   const isPlaying = status?.state === 'playing';
-  const isPaused  = status?.state === 'paused';
-  const progress  = Math.min(100, (status?.progress ?? 0) * 100);
+  const isPaused = status?.state === 'paused';
+  const progress = Math.min(100, (status?.progress ?? 0) * 100);
   const stateLabel = isSkipping ? 'SKIPPING' : isPlaying ? 'Now Playing' : isPaused ? 'Paused' : (status?.state || 'Idle');
   const playbackSource = status?.source ?? 'youtube';
   const sourceLabel =
     playbackSource === 'cloudflare' ? 'Cached Cloudflare'
-    : playbackSource === 'local' ? 'Local fallback'
-    : 'YouTube iframe';
+      : playbackSource === 'local' ? 'Local fallback'
+        : 'YouTube iframe';
   const playbackConfirmed = !!status?.playback_started_at;
   const playbackError = status?.playback_error;
   const youtubePlayabilityStatus = cm?.youtube_playability_status || cm?.metadata?.youtube_playability_status || 'unknown';
@@ -349,7 +364,7 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
     title: currentQueueItem?.media_item?.title?.slice(0, 30) || 'none'
   });
 
-  const upNext   = queue.filter(q => q.media_item_id !== (status as any)?.current_media_id).slice(0, 3);
+  const upNext = queue.filter(q => q.media_item_id !== (status as any)?.current_media_id).slice(0, 3);
   const priority = queue.filter(q => q.type === 'priority');
 
   return (
@@ -360,8 +375,10 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg,rgba(5,5,5,0.85) 0%,rgba(5,5,5,0.2) 50%,rgba(5,5,5,0.92) 100%)' }} />
       </>}
       {/* Grain */}
-      <div style={{ position: 'absolute', inset: 0, opacity: 0.12, pointerEvents: 'none', backgroundSize: '128px',
-        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E")` }} />
+      <div style={{
+        position: 'absolute', inset: 0, opacity: 0.12, pointerEvents: 'none', backgroundSize: '128px',
+        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E")`
+      }} />
       {/* Bottom line */}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--accent-border),transparent)' }} />
 
@@ -398,51 +415,67 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
           {/* Info */}
           <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              <div style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
                 background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24',
                 boxShadow: `0 0 8px ${isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24'}`,
-                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
+                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none'
+              }} />
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
                 color: isSkipping ? '#f59e0b' : isPlaying ? '#4ade80' : 'rgba(255,255,255,0.4)',
-                textTransform: 'uppercase', fontWeight: 600 }}>
+                textTransform: 'uppercase', fontWeight: 600
+              }}>
                 {stateLabel}
               </span>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
                 background: playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.12)' : playbackSource === 'local' ? 'rgba(59,130,246,0.14)' : 'rgba(251,191,36,0.12)',
                 color: playbackSource === 'cloudflare' ? '#4ade80' : playbackSource === 'local' ? '#93c5fd' : '#fbbf24',
-                border: `1px solid ${playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.25)' : playbackSource === 'local' ? 'rgba(59,130,246,0.3)' : 'rgba(251,191,36,0.25)'}` }}>
+                border: `1px solid ${playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.25)' : playbackSource === 'local' ? 'rgba(59,130,246,0.3)' : 'rgba(251,191,36,0.25)'}`
+              }}>
                 {sourceLabel}
               </span>
               {status?.current_media_id && (
                 <span title={playbackConfirmed ? `Confirmed ${new Date(status.playback_started_at as string).toLocaleTimeString()}` : 'Waiting for first real playing event'}
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                  style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
                     background: playbackConfirmed ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)',
                     color: playbackConfirmed ? '#86efac' : '#fbbf24',
-                    border: `1px solid ${playbackConfirmed ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.25)'}` }}>
+                    border: `1px solid ${playbackConfirmed ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.25)'}`
+                  }}>
                   {playbackConfirmed ? 'START CONFIRMED' : 'AWAITING START'}
                 </span>
               )}
               {showYoutubePlayability && (
                 <span title={youtubePlayabilityReason || 'YouTube playability precheck'}
-                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                  style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
                     background: youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.12)',
                     color: youtubePlayabilityStatus === 'playable' ? '#86efac' : '#fca5a5',
-                    border: `1px solid ${youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.22)' : 'rgba(248,113,113,0.28)'}` }}>
+                    border: `1px solid ${youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.22)' : 'rgba(248,113,113,0.28)'}`
+                  }}>
                   YT {String(youtubePlayabilityStatus).replace(/_/g, ' ').toUpperCase()}
                 </span>
               )}
             </div>
             {playbackError && (
-              <div style={{ marginBottom: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fca5a5',
-                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div style={{
+                marginBottom: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fca5a5',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+              }}>
                 Last failure: {playbackError}{status?.playback_error_code ? ` (${status.playback_error_code})` : ''}
               </div>
             )}
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
+            <h2 style={{
+              fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
               letterSpacing: '-0.03em', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
-            <p style={{ fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{artist}</p>
+              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none'
+            }}>{title}</h2>
+            <p style={{
+              fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em'
+            }}>{artist}</p>
           </div>
 
           {/* Up Next */}
@@ -451,18 +484,20 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             {upNext.length === 0
               ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>Queue empty</div>
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              : upNext.map((item, i) => { const m = (item as any).media_item as any; return (
-                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
-                  {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
+              : upNext.map((item, i) => {
+                const m = (item as any).media_item as any; return (
+                  <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
+                    {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
+                    </div>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                    <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
                   </div>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
-                  <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
-                </div>
-              );})}
+                );
+              })}
           </div>
 
           {/* Priority requests */}
@@ -484,18 +519,22 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             {/* Play/Pause — RED+yellow when playing, GREEN+white when paused, grey when skipping */}
             <button onClick={handlePlayPauseClick} disabled={isSkipping}
               title={isSkipping ? 'Skipping…' : isPlaying ? 'Pause playback' : 'Resume playback'}
-              style={{ width: 44, height: 44, borderRadius: '50%', border: 'none',
+              style={{
+                width: 44, height: 44, borderRadius: '50%', border: 'none',
                 cursor: isSkipping ? 'default' : 'pointer', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
                 background: isSkipping ? 'rgba(255,255,255,0.08)' : isPlaying ? '#dc2626' : '#16a34a',
                 color: isSkipping ? 'rgba(255,255,255,0.25)' : isPlaying ? '#facc15' : '#fff',
                 boxShadow: isSkipping ? 'none' : isPlaying ? '0 4px 18px rgba(220,38,38,0.45)' : '0 4px 18px rgba(22,163,74,0.45)',
                 transition: 'background 0.2s, box-shadow 0.2s, color 0.2s',
-                opacity: isSkipping ? 0.45 : 1 }}>
+                opacity: isSkipping ? 0.45 : 1
+              }}>
               {isPlaying ? '⏸' : '▶'}
             </button>
-            <button onClick={onSkip} disabled={isSkipping} style={{ width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
-              background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, opacity: isSkipping ? 0.45 : 1 }}>
+            <button onClick={onSkip} disabled={isSkipping} style={{
+              width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
+              background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, opacity: isSkipping ? 0.45 : 1
+            }}>
               {isSkipping ? <Spinner size={14} /> : '⏭'}
             </button>
             <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
@@ -503,12 +542,16 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             <div style={{ width: 72 }}><input type="range" min={0} max={100} value={settings?.volume ?? 75} readOnly /></div>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 22 }}>{settings?.volume ?? 75}</span>
             <div style={{ flex: 1 }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
               background: isSkipping ? 'rgba(245,158,11,0.12)' : isPlaying ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.07)',
-              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}` }}>
+              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}`
+            }}>
               <div style={{ width: 5, height: 5, borderRadius: '50%', background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
-                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24' }}>{stateLabel}</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24'
+              }}>{stateLabel}</span>
             </div>
             {priority.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}>
@@ -521,26 +564,34 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
 
       {/* Pause confirmation modal */}
       {showPauseConfirm && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)'
+        }}
           onClick={() => setShowPauseConfirm(false)}>
-          <div style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+          <div style={{
+            background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, minWidth: 280,
-            boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            boxShadow: '0 24px 80px rgba(0,0,0,0.9)'
+          }}
             onClick={e => e.stopPropagation()}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>Pause Playback?</div>
             <div style={{ display: 'flex', gap: 12 }}>
               <button onClick={() => setShowPauseConfirm(false)}
-                style={{ padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
+                style={{
+                  padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
                   background: 'transparent', color: 'rgba(255,255,255,0.55)', cursor: 'pointer',
-                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500 }}>
+                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500
+                }}>
                 Cancel
               </button>
               <button onClick={() => { setShowPauseConfirm(false); onPlayPause(); }}
-                style={{ padding: '9px 24px', borderRadius: 10, border: 'none',
+                style={{
+                  padding: '9px 24px', borderRadius: 10, border: 'none',
                   background: '#dc2626', color: '#fff', cursor: 'pointer',
                   fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700,
-                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)' }}>
+                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)'
+                }}>
                 Confirm
               </button>
             </div>
@@ -564,21 +615,25 @@ type ViewId =
   | 'logs';
 
 const NAV = [
-  { id: 'search',    icon: '🔍', label: 'Search',    children: [] as { id: ViewId; label: string }[] },
-  { id: 'library',   icon: '💾', label: 'Browse Library', children: [] as { id: ViewId; label: string }[] },
-  { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
-  { id: 'playlists', icon: '📋', label: 'Playlists', children: [
-    { id: 'playlists-all'    as ViewId, label: 'All Playlists' },
-    { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
-  ]},
-  { id: 'settings',  icon: '⚙️', label: 'Settings',  children: [
-    { id: 'settings-playback' as ViewId, label: 'Playback' },
-    { id: 'settings-kiosk'    as ViewId, label: 'Kiosk' },
-    { id: 'settings-branding' as ViewId, label: 'Branding' },
-    { id: 'settings-scripts'  as ViewId, label: 'Functions & Scripts' },
-    { id: 'settings-prefs'    as ViewId, label: 'Console Preferences' },
-  ]},
-  { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
+  { id: 'search', icon: '🔍', label: 'Search', children: [] as { id: ViewId; label: string }[] },
+  { id: 'library', icon: '💾', label: 'Browse Library', children: [] as { id: ViewId; label: string }[] },
+  { id: 'queue', icon: '🎵', label: 'Queue', children: [] as { id: ViewId; label: string }[] },
+  {
+    id: 'playlists', icon: '📋', label: 'Playlists', children: [
+      { id: 'playlists-all' as ViewId, label: 'All Playlists' },
+      { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
+    ]
+  },
+  {
+    id: 'settings', icon: '⚙️', label: 'Settings', children: [
+      { id: 'settings-playback' as ViewId, label: 'Playback' },
+      { id: 'settings-kiosk' as ViewId, label: 'Kiosk' },
+      { id: 'settings-branding' as ViewId, label: 'Branding' },
+      { id: 'settings-scripts' as ViewId, label: 'Functions & Scripts' },
+      { id: 'settings-prefs' as ViewId, label: 'Console Preferences' },
+    ]
+  },
+  { id: 'logs', icon: '📄', label: 'Logs', children: [] as { id: ViewId; label: string }[] },
 ];
 
 function Sidebar({ view, setView, queue, user, onSignOut }: {
@@ -600,9 +655,11 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
     group.children.some(c => c.id === view) || (group.children.length === 0 && view === group.id as ViewId);
 
   return (
-    <aside style={{ display: 'flex', flexDirection: 'column', flexShrink: 0,
+    <aside style={{
+      display: 'flex', flexDirection: 'column', flexShrink: 0,
       width: expanded ? 220 : 60, height: '100%', background: 'var(--surface)',
-      borderRight: '1px solid var(--border)', transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden' }}>
+      borderRight: '1px solid var(--border)', transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden'
+    }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 13px', height: 54, flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
         <div style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 14px var(--accent-glow)' }}>
@@ -621,13 +678,15 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden' }}>
         {NAV.map(group => {
           const active = isGroupActive(group);
-          const open   = openGroup === group.id;
+          const open = openGroup === group.id;
           return (
             <div key={group.id}>
-              <button onClick={() => handleGroup(group)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9,
+              <button onClick={() => handleGroup(group)} style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 9,
                 padding: expanded ? '9px 13px' : '9px 0', justifyContent: expanded ? 'flex-start' : 'center',
                 background: 'transparent', border: 'none', cursor: 'pointer', position: 'relative',
-                color: active ? 'var(--accent)' : 'rgba(255,255,255,0.4)' }}>
+                color: active ? 'var(--accent)' : 'rgba(255,255,255,0.4)'
+              }}>
                 {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 2, height: 18, borderRadius: '0 2px 2px 0', background: 'var(--accent)' }} />}
                 <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, background: active ? 'var(--accent-dim)' : 'transparent' }}>{group.icon}</div>
                 {expanded && <>
@@ -641,9 +700,11 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
               {expanded && open && group.children.length > 0 && (
                 <div style={{ background: 'rgba(255,255,255,0.015)', borderLeft: '1px solid rgba(255,255,255,0.06)', marginLeft: 21 }}>
                   {group.children.map(child => (
-                    <button key={child.id} onClick={() => setView(child.id)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7,
+                    <button key={child.id} onClick={() => setView(child.id)} style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 7,
                       padding: '7px 13px', background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)' }}>
+                      color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)'
+                    }}>
                       <div style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, background: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.15)' }} />
                       <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, flex: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>{child.label}</span>
                     </button>
@@ -1005,7 +1066,7 @@ function BrowseLibraryPanel() {
     };
 
     load();
-    const sub = subscribeToTable<R2File>('r2_files', null, () => { load().catch(() => {}); });
+    const sub = subscribeToTable<R2File>('r2_files', null, () => { load().catch(() => { }); });
     return () => { cancelled = true; sub.unsubscribe(); };
   }, [query, karaokeMode]);
 
@@ -1219,23 +1280,29 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   const showYtWarning = sourceType === 'youtube' && ['embed_blocked', 'restricted', 'unavailable', 'invalid'].includes(ytPlayability);
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
-        background: 'rgba(255,255,255,0.025)', marginBottom: 4, border: '1px solid rgba(255,255,255,0.04)' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
+        background: 'rgba(255,255,255,0.025)', marginBottom: 4, border: '1px solid rgba(255,255,255,0.04)'
+      }}>
         <button {...attributes} {...listeners} style={{ cursor: 'grab', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.2)', padding: 2, flexShrink: 0, fontSize: 14 }}>⋮⋮</button>
         {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
             <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.artist || ''}</span>
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
+            <span style={{
+              fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
               background: sourceType === 'cloudflare' ? 'rgba(34,197,94,0.1)' : 'rgba(251,191,36,0.1)',
               color: sourceType === 'cloudflare' ? '#86efac' : '#fbbf24',
-              border: `1px solid ${sourceType === 'cloudflare' ? 'rgba(34,197,94,0.22)' : 'rgba(251,191,36,0.22)'}` }}>
+              border: `1px solid ${sourceType === 'cloudflare' ? 'rgba(34,197,94,0.22)' : 'rgba(251,191,36,0.22)'}`
+            }}>
               {sourceType === 'cloudflare' ? 'CACHED' : 'YOUTUBE'}
             </span>
             {showYtWarning && (
-              <span title={ytPlayabilityReason || 'Known YouTube iframe playback failure'} style={{ fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
-                background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.28)' }}>
+              <span title={ytPlayabilityReason || 'Known YouTube iframe playback failure'} style={{
+                fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
+                background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.28)'
+              }}>
                 {String(ytPlayability).replace(/_/g, ' ').toUpperCase()}
               </span>
             )}
@@ -1256,7 +1323,7 @@ function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling
   isGeneratingRadio: boolean;
 }) {
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
-  const normalQ   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
+  const normalQ = queue.filter(q => q.type === 'normal' && q.media_item_id !== status?.current_media_id);
   const priorityQ = queue.filter(q => q.type === 'priority' && q.media_item_id !== status?.current_media_id);
   const totalCount = normalQ.length + priorityQ.length;
 
@@ -1294,17 +1361,19 @@ function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling
             </div>
           ) : (
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            priorityQ.map(item => { const m = (item as any).media_item as any; return (
-              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
-                {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-                  <div style={{ fontSize: 11, color: '#60a5fa', marginTop: 2 }}>{item.requested_by || 'Kiosk'}</div>
+            priorityQ.map(item => {
+              const m = (item as any).media_item as any; return (
+                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                  {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
+                    <div style={{ fontSize: 11, color: '#60a5fa', marginTop: 2 }}>{item.requested_by || 'Kiosk'}</div>
+                  </div>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                  <button onClick={() => onRemove(item.id)} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12, flexShrink: 0 }}>✕</button>
                 </div>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
-                <button onClick={() => onRemove(item.id)} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12, flexShrink: 0 }}>✕</button>
-              </div>
-            );})
+              );
+            })
           )}
         </div>
 
@@ -1344,12 +1413,12 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   const [playlists, setPlaylists] = useState<(Playlist & { item_count?: number })[]>([]);
   const [playlistItems, setPlaylistItems] = useState<(PlaylistItem & { media_item?: MediaItem })[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [loadingId, setLoadingId]   = useState<string | null>(null);
-  const isLoadingPlaylistRef        = useRef(false); // prevents concurrent load_playlist calls
-  const [msg, setMsg]               = useState<{ text: string; ok: boolean } | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const isLoadingPlaylistRef = useRef(false); // prevents concurrent load_playlist calls
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [importYtId, setImportYtId] = useState('');
   const [importName, setImportName] = useState('');
-  const [importing, setImporting]   = useState(false);
+  const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   const loadPlaylists = useCallback(async () => {
@@ -1417,7 +1486,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         <div style={{ maxWidth: 480, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)', borderRadius: 16, padding: 24 }}>
           {[{ label: 'YouTube Playlist ID *', value: importYtId, set: setImportYtId, ph: 'PLN9QqCogPsXJCgeL_iEgYnW6Rl_8nIUUH', mono: true },
-            { label: 'Playlist Name (optional)', value: importName, set: setImportName, ph: 'My Custom Playlist', mono: false }].map(f => (
+          { label: 'Playlist Name (optional)', value: importName, set: setImportName, ph: 'My Custom Playlist', mono: false }].map(f => (
             <div key={f.label} style={{ marginBottom: 16 }}>
               <label style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: 13, color: 'var(--muted)', marginBottom: 6 }}>{f.label}</label>
               <input value={f.value} onChange={e => f.set(e.target.value)} placeholder={f.ph}
@@ -1425,15 +1494,19 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
             </div>
           ))}
           <button onClick={handleImport} disabled={importing || !importYtId.trim()}
-            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: importing || !importYtId.trim() ? 'default' : 'pointer',
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: importing || !importYtId.trim() ? 'default' : 'pointer',
               background: 'var(--accent)', color: '#000', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700,
-              opacity: importing || !importYtId.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              opacity: importing || !importYtId.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+            }}>
             {importing ? <><Spinner size={16} /> Importing…</> : '📥 Import Playlist'}
           </button>
-          {importResult && <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 9,
+          {importResult && <div style={{
+            marginTop: 14, padding: '10px 14px', borderRadius: 9,
             background: importResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
             border: `1px solid ${importResult.ok ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-            color: importResult.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{importResult.text}</div>}
+            color: importResult.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 12
+          }}>{importResult.text}</div>}
         </div>
       </div>
     </div>
@@ -1451,9 +1524,11 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       <PanelHeader title="Playlists" subtitle={`${playlists.length} playlists · ${totalSongs.toLocaleString()} total songs`}
         actions={<Btn variant="accent" onClick={handleCreate}>＋ New Playlist</Btn>}
       />
-      {msg && <div style={{ margin: '8px 24px 0', padding: '8px 12px', borderRadius: 8,
+      {msg && <div style={{
+        margin: '8px 24px 0', padding: '8px 12px', borderRadius: 8,
         background: msg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-        color: msg.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{msg.text}</div>}
+        color: msg.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 11
+      }}>{msg.text}</div>}
       {active && (
         <div style={{ margin: '8px 24px 0', padding: '8px 14px', borderRadius: 8, background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)' }}>
           ▶ Currently Active: {active.name}
@@ -1462,12 +1537,14 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
         {sorted.map(playlist => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const isActive   = (playlist as any).is_active;
+          const isActive = (playlist as any).is_active;
           const isExpanded = expandedId === playlist.id;
           return (
-            <div key={playlist.id} style={{ marginBottom: 6, borderRadius: 13,
+            <div key={playlist.id} style={{
+              marginBottom: 6, borderRadius: 13,
               background: isActive ? 'var(--accent-dim)' : 'rgba(255,255,255,0.025)',
-              border: `1px solid ${isActive ? 'var(--accent-border)' : 'rgba(255,255,255,0.06)'}` }}>
+              border: `1px solid ${isActive ? 'var(--accent-border)' : 'rgba(255,255,255,0.06)'}`
+            }}>
               <div onClick={() => setExpandedId(isExpanded ? null : playlist.id)}
                 style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', cursor: 'pointer' }}>
                 <div style={{ width: 40, height: 40, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, background: isActive ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)' }}>🎵</div>
@@ -1490,16 +1567,16 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
                   {playlistItems.length === 0
                     ? <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '8px 0' }}>No items loaded yet</div>
                     : playlistItems.slice(0, 50).map((item, i) => (
-                        <div key={item.id} style={{ display: 'flex', gap: 9, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.2)', width: 28 }}>{i + 1}</span>
-                          <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {cleanDisplayText((item.media_item as any)?.title) || 'Unknown'}
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {(item.media_item as any)?.artist ? ` · ${cleanDisplayText((item.media_item as any).artist)}` : ''}
-                          </div>
+                      <div key={item.id} style={{ display: 'flex', gap: 9, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.2)', width: 28 }}>{i + 1}</span>
+                        <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                          {cleanDisplayText((item.media_item as any)?.title) || 'Unknown'}
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                          {(item.media_item as any)?.artist ? ` · ${cleanDisplayText((item.media_item as any).artist)}` : ''}
                         </div>
-                      ))
+                      </div>
+                    ))
                   }
                 </div>
               )}
@@ -1532,18 +1609,18 @@ function SettingsRow({ label, desc, children }: { label: string; desc?: string; 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs }) {
-  const [local, setLocal]     = useState<PlayerSettings | null>(null);
+  const [local, setLocal] = useState<PlayerSettings | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
   const [connectedEndpoints, setConnectedEndpoints] = useState<PlayerEndpoint[]>([]);
   const [creditsLoading, setCreditsLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const [saving, setSaving]   = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [resettingPriority, setResettingPriority] = useState(false);
   const [priorityResetDone, setPriorityResetDone] = useState(false);
   const [hoveredEndpointId, setHoveredEndpointId] = useState<string | null>(null);
   const [identifyingEndpointId, setIdentifyingEndpointId] = useState<string | null>(null);
   const [promotingEndpointId, setPromotingEndpointId] = useState<string | null>(null);
-  const [localMediaScanning, setLocalMediaScanning]     = useState(false);
+  const [localMediaScanning, setLocalMediaScanning] = useState(false);
   const [localMediaScanResult, setLocalMediaScanResult] = useState<{ count: number; path: string } | null>(null);
 
   useEffect(() => { setLocal(settings ? { ...settings } : null); }, [settings]);
@@ -1586,7 +1663,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     silence_skip_duration_ms: local.silence_skip_duration_ms ?? 3000,
     silence_skip_threshold: local.silence_skip_threshold ?? 0.01,
   }) : Promise.resolve();
-  const handleSaveKiosk    = () => local ? saveFields({
+  const handleSaveKiosk = () => local ? saveFields({
     freeplay: local.freeplay,
     coin_per_song: local.coin_per_song,
     search_enabled: local.search_enabled,
@@ -1744,8 +1821,8 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       });
 
     const leftContent = <>
-      <SettingsRow label="Shuffle Playlist when loaded"  desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
-      <SettingsRow label="Loop Playlist"    desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop}         onChange={() => handleToggle('loop')} /></SettingsRow>
+      <SettingsRow label="Shuffle Playlist when loaded" desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle} onChange={() => handleToggle('shuffle')} /></SettingsRow>
+      <SettingsRow label="Loop Playlist" desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop} onChange={() => handleToggle('loop')} /></SettingsRow>
       {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
       <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
         <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
@@ -1964,17 +2041,17 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       <PanelHeader title="Kiosk Settings" subtitle="Request, credits and coin acceptor configuration" />
       <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
         <div style={{ maxWidth: 480 }}>{errBlock}
-          <SettingsRow label="Free Play"              desc="Allow requests without credits"><Toggle checked={!!local.freeplay}        onChange={() => handleToggle('freeplay')} /></SettingsRow>
-          <SettingsRow label="Search Enabled"         desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled}  onChange={() => handleToggle('search_enabled')} /></SettingsRow>
+          <SettingsRow label="Free Play" desc="Allow requests without credits"><Toggle checked={!!local.freeplay} onChange={() => handleToggle('freeplay')} /></SettingsRow>
+          <SettingsRow label="Search Enabled" desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled} onChange={() => handleToggle('search_enabled')} /></SettingsRow>
           {'kiosk_show_virtual_coin_button' in local && (
             <SettingsRow label="Show Virtual Coin Button" desc="Display INSERT COIN button on kiosk">
               <Toggle checked={!!local.kiosk_show_virtual_coin_button} onChange={() => handleToggle('kiosk_show_virtual_coin_button' as keyof PlayerSettings)} />
             </SettingsRow>
           )}
           {[{ label: 'Credits per Song', key: 'coin_per_song', desc: 'credits required per request' },
-            { label: 'Max Queue Size',   key: 'max_queue_size', desc: 'max songs in normal queue' },
-            { label: 'Priority Queue Limit', key: 'priority_queue_limit', desc: 'max priority request slots' }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { label: 'Max Queue Size', key: 'max_queue_size', desc: 'max songs in normal queue' },
+          { label: 'Priority Queue Limit', key: 'priority_queue_limit', desc: 'max priority request slots' }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ].map(({ label, key, desc }) => (<SettingsRow key={key} label={label} desc={desc}>
             <input type="number" min={1} value={(local as any)[key] ?? 1} onChange={e => set(key as keyof PlayerSettings, Number(e.target.value))}
               style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
@@ -2011,9 +2088,11 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
                 </Btn>
               </div>
               {localMediaScanResult && (
-                <div style={{ marginTop: 10, padding: '10px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                <div style={{
+                  marginTop: 10, padding: '10px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   background: localMediaScanResult.count > 0 ? 'rgba(34,197,94,0.1)' : 'rgba(251,191,36,0.1)',
-                  border: `1px solid ${localMediaScanResult.count > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'}` }}>
+                  border: `1px solid ${localMediaScanResult.count > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'}`
+                }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: localMediaScanResult.count > 0 ? '#4ade80' : '#fbbf24' }}>
                     {localMediaScanResult.count < 0
                       ? `⚠ ${localMediaScanResult.path}`
@@ -2061,9 +2140,11 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
           {'kiosk_coin_acceptor_enabled' in local && (
             <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 10 }}>Coin Acceptor Hardware</div>
-              <button onClick={() => handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings)} style={{ padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
+              <button onClick={() => handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings)} style={{
+                padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
                 background: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? 'rgba(34,197,94,0.18)' : 'rgba(251,191,36,0.15)') : 'rgba(59,130,246,0.15)',
-                color:      local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80'              : '#fbbf24')                  : '#60a5fa' }}>
+                color: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80' : '#fbbf24') : '#60a5fa'
+              }}>
                 {local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '🟢 Connected' : '🟡 Connecting…') : '🔵 Enable Coin Acceptor'}
               </button>
               {local.kiosk_coin_acceptor_device_id && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>Device: {local.kiosk_coin_acceptor_device_id}</div>}
@@ -2088,10 +2169,12 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       <div style={{ display: 'flex', gap: 8 }}>
         {['dark', 'light'].map(t => (
           <button key={t} onClick={() => set('branding', { ...local.branding, theme: t })}
-            style={{ flex: 1, padding: '9px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13,
+            style={{
+              flex: 1, padding: '9px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13,
               border: `1px solid ${local.branding?.theme === t ? 'var(--accent-border)' : 'rgba(255,255,255,0.08)'}`,
               background: local.branding?.theme === t ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)',
-              color: local.branding?.theme === t ? 'var(--accent)' : 'rgba(255,255,255,0.4)' }}>
+              color: local.branding?.theme === t ? 'var(--accent)' : 'rgba(255,255,255,0.4)'
+            }}>
             {t === 'dark' ? '🌙 Dark' : '☀️ Light'}
           </button>
         ))}
@@ -2115,9 +2198,9 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
   input?: { label: string; placeholder: string; required?: boolean };
 }) {
   const [inputVal, setInputVal] = useState('');
-  const [running, setRunning]   = useState(false);
-  const [logs, setLogs]         = useState<ScriptLog[]>([]);
-  const [done, setDone]         = useState(false);
+  const [running, setRunning] = useState(false);
+  const [logs, setLogs] = useState<ScriptLog[]>([]);
+  const [done, setDone] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((entry: ScriptLog) => {
@@ -2152,8 +2235,8 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
           {done
             ? <Btn variant="ghost" onClick={() => { setLogs([]); setDone(false); setInputVal(''); }}>Reset</Btn>
             : <Btn variant="solid" onClick={handleRun} disabled={running || (!!input?.required && !inputVal.trim())}>
-                {running ? <><Spinner size={12} /> Running…</> : '▶ Run'}
-              </Btn>
+              {running ? <><Spinner size={12} /> Running…</> : '▶ Run'}
+            </Btn>
           }
         </div>
       </div>
@@ -2358,7 +2441,7 @@ function ScriptsPanel({ user }: { user: AuthUser }) {
 function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
   const { accent, setAccent, fsIdx, setFsIdx } = prefs;
   const [hexInput, setHexInput] = useState(accent.replace('#', ''));
-  const [fsSaved,  setFsSaved]  = useState(false);
+  const [fsSaved, setFsSaved] = useState(false);
   const [colSaved, setColSaved] = useState(false);
 
   useEffect(() => { setHexInput(accent.replace('#', '')); }, [accent]);
@@ -2366,7 +2449,7 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
   const applyHex = (hex: string) => { if (/^[0-9a-fA-F]{6}$/.test(hex)) setAccent('#' + hex); };
 
   const handleFontSize = (idx: number) => { setFsIdx(idx); setFsSaved(true); setTimeout(() => setFsSaved(false), 2000); };
-  const handleColour   = (hex: string) => { setAccent(hex); setHexInput(hex.replace('#', '')); setColSaved(true); setTimeout(() => setColSaved(false), 2000); };
+  const handleColour = (hex: string) => { setAccent(hex); setHexInput(hex.replace('#', '')); setColSaved(true); setTimeout(() => setColSaved(false), 2000); };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -2384,9 +2467,11 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {FS_SCALES.map((s, i) => (
-                  <button key={i} onClick={() => handleFontSize(i)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '7px 9px', borderRadius: 10, cursor: 'pointer',
+                  <button key={i} onClick={() => handleFontSize(i)} style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '7px 9px', borderRadius: 10, cursor: 'pointer',
                     border: `1px solid ${fsIdx === i ? 'var(--accent-border)' : 'rgba(255,255,255,0.09)'}`,
-                    background: fsIdx === i ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)' }}>
+                    background: fsIdx === i ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)'
+                  }}>
                     <span style={{ fontFamily: 'var(--font-display)', fontSize: 10 + i * 2, lineHeight: 1, color: fsIdx === i ? 'var(--accent)' : 'rgba(255,255,255,0.5)' }}>Aa</span>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.3)' }}>{s.label}</span>
                   </button>
@@ -2403,7 +2488,7 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
               {/* Colour wheel */}
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'conic-gradient(hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))', border: `3px solid ${accent}60`, cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
-                  <input type="color" value={accent} onChange={e => { setAccent(e.target.value); setHexInput(e.target.value.replace('#','')); }} onBlur={e => handleColour(e.target.value)}
+                  <input type="color" value={accent} onChange={e => { setAccent(e.target.value); setHexInput(e.target.value.replace('#', '')); }} onBlur={e => handleColour(e.target.value)}
                     style={{ opacity: 0, position: 'absolute', inset: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
                 </div>
                 <div style={{ position: 'absolute', bottom: -2, right: -2, width: 16, height: 16, borderRadius: '50%', background: accent, border: '2px solid #111', boxShadow: `0 0 8px ${accent}60` }} />
@@ -2414,7 +2499,7 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>#</span>
                   <input value={hexInput}
-                    onChange={e => { const v = e.target.value.replace(/[^0-9a-fA-F]/g,'').slice(0,6); setHexInput(v); applyHex(v); }}
+                    onChange={e => { const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); setHexInput(v); applyHex(v); }}
                     onBlur={() => { if (hexInput.length === 6) handleColour('#' + hexInput); }}
                     style={{ width: 90, padding: '5px 9px', borderRadius: 8, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }} />
                   <button onClick={() => handleColour('#f59e0b')} style={{ padding: '5px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.07)', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11 }}>Reset</button>
@@ -2428,9 +2513,11 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
               {PRESET_COLOURS.map(p => (
                 <button key={p.hex} title={p.name} onClick={() => handleColour(p.hex)}
-                  style={{ width: 30, height: 30, borderRadius: 8, background: p.hex, cursor: 'pointer',
+                  style={{
+                    width: 30, height: 30, borderRadius: 8, background: p.hex, cursor: 'pointer',
                     border: `2px solid ${accent.toLowerCase() === p.hex.toLowerCase() ? '#fff' : 'transparent'}`,
-                    transform: accent.toLowerCase() === p.hex.toLowerCase() ? 'scale(1.15)' : 'scale(1)', transition: 'transform 0.12s' }} />
+                    transform: accent.toLowerCase() === p.hex.toLowerCase() ? 'scale(1.15)' : 'scale(1)', transition: 'transform 0.12s'
+                  }} />
               ))}
             </div>
 
@@ -2455,10 +2542,10 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LogsPanel() {
-  const [logs, setLogs]       = useState<SystemLog[]>([]);
+  const [logs, setLogs] = useState<SystemLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter]   = useState<'all' | 'info' | 'warn' | 'error'>('all');
-  const [search, setSearch]   = useState('');
+  const [filter, setFilter] = useState<'all' | 'info' | 'warn' | 'error'>('all');
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     const loadLogs = async () => {
@@ -2491,8 +2578,8 @@ function LogsPanel() {
 
   const lStyle = (s: string) => {
     if (s === 'error') return { bg: 'rgba(239,68,68,0.1)', color: '#f87171', border: 'rgba(239,68,68,0.2)' };
-    if (s === 'warn')  return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.2)' };
-    return                   { bg: 'rgba(59,130,246,0.1)',  color: '#60a5fa', border: 'rgba(59,130,246,0.2)' };
+    if (s === 'warn') return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.2)' };
+    return { bg: 'rgba(59,130,246,0.1)', color: '#60a5fa', border: 'rgba(59,130,246,0.2)' };
   };
 
   return (
@@ -2504,13 +2591,15 @@ function LogsPanel() {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
               style={{ background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 11, width: 130 }} />
           </div>
-          {(['all','info','warn','error'] as const).map(lv => {
+          {(['all', 'info', 'warn', 'error'] as const).map(lv => {
             const s = lStyle(lv); const active = filter === lv;
             return (
-              <button key={lv} onClick={() => setFilter(lv)} style={{ padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase',
+              <button key={lv} onClick={() => setFilter(lv)} style={{
+                padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase',
                 border: `1px solid ${active ? s.border : 'rgba(255,255,255,0.07)'}`,
                 background: active ? s.bg : 'rgba(255,255,255,0.04)',
-                color: active ? s.color : 'rgba(255,255,255,0.38)' }}>{lv}</button>
+                color: active ? s.color : 'rgba(255,255,255,0.38)'
+              }}>{lv}</button>
             );
           })}
         </>}
@@ -2518,7 +2607,7 @@ function LogsPanel() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
         {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
           : filtered.length === 0 ? <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 40 }}>No logs found</div>
-          : filtered.map(log => {
+            : filtered.map(log => {
               const s = lStyle(log.severity);
               return (
                 <div key={log.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px', borderRadius: 10, marginBottom: 4, background: 'rgba(255,255,255,0.018)', border: '1px solid rgba(255,255,255,0.04)' }}>
@@ -2527,7 +2616,7 @@ function LogsPanel() {
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0, width: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.event}</span>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.55)', flex: 1, wordBreak: 'break-word' }}>
                     {log.payload?.action && <span>{log.payload.action}</span>}
-                    {log.payload?.title  && <span> · {log.payload.title}</span>}
+                    {log.payload?.title && <span> · {log.payload.title}</span>}
                     {log.payload?.details && <span> · {log.payload.details}</span>}
                     {!log.payload?.action && !log.payload?.title && log.payload && Object.keys(log.payload).length > 0 && (
                       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>{JSON.stringify(log.payload)}</span>
@@ -2547,14 +2636,14 @@ function LogsPanel() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [user, setUser]         = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [view, setView]         = useState<ViewId>('queue');
-  const [queue, setQueue]       = useState<QueueItem[]>([]);
-  const [status, setStatus]     = useState<PlayerStatus | null>(null);
+  const [view, setView] = useState<ViewId>('queue');
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
-  const [isSkipping,  setIsSkipping]  = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
   const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
   const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
   const [masterOfflineWarning, setMasterOfflineWarning] = useState<string | null>(null);
@@ -2577,8 +2666,8 @@ function App() {
   // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
     if (!user) return;
-    const q  = subscribeToQueue(PLAYER_ID, setQueue);
-    const s  = subscribeToPlayerStatus(PLAYER_ID, (ns) => {
+    const q = subscribeToQueue(PLAYER_ID, setQueue);
+    const s = subscribeToPlayerStatus(PLAYER_ID, (ns) => {
       setStatus(ns);
       if (isSkippingRef.current && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
     });
@@ -2677,7 +2766,7 @@ function App() {
     evaluatePriorityHeartbeat();
     const interval = window.setInterval(evaluatePriorityHeartbeat, 5000);
     const sub = subscribeToTable<Player>('players', { column: 'id', value: PLAYER_ID }, () => {
-      evaluatePriorityHeartbeat().catch?.(() => {});
+      evaluatePriorityHeartbeat().catch?.(() => { });
     });
 
     return () => {
@@ -2702,11 +2791,11 @@ function App() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
-    const oldIdx  = normalQ.findIndex(i => i.id === active.id);
-    const newIdx  = normalQ.findIndex(i => i.id === over.id);
+    const oldIdx = normalQ.findIndex(i => i.id === active.id);
+    const newIdx = normalQ.findIndex(i => i.id === over.id);
     const reordered = arrayMove(normalQ, oldIdx, newIdx);
-    const priority  = queue.filter(i => i.type === 'priority');
-    const current   = queue.filter(i => i.media_item_id === status?.current_media_id);
+    const priority = queue.filter(i => i.type === 'priority');
+    const current = queue.filter(i => i.media_item_id === status?.current_media_id);
     setQueue([...current, ...priority, ...reordered]); // optimistic
     try {
       const ids = Array.from(new Set(reordered.map(i => i.id)));
@@ -2785,12 +2874,12 @@ function App() {
 
   if (!user) return <LoginForm onSignIn={setUser} />;
 
-  const isSearchView    = view === 'search';
-  const isLibraryView   = view === 'library';
-  const isQueueView     = view.startsWith('queue');
-  const isPlaylistView  = view.startsWith('playlists');
-  const isSettingsView  = view.startsWith('settings');
-  const isScriptsView   = view === 'settings-scripts';
+  const isSearchView = view === 'search';
+  const isLibraryView = view === 'library';
+  const isQueueView = view.startsWith('queue');
+  const isPlaylistView = view.startsWith('playlists');
+  const isSettingsView = view.startsWith('settings');
+  const isScriptsView = view === 'settings-scripts';
 
   return (
     <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -2820,7 +2909,7 @@ function App() {
               onStartRadio={handleStartRadio} isGeneratingRadio={isGeneratingRadio} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} />}
-          {isScriptsView  && <ScriptsPanel user={user} />}
+          {isScriptsView && <ScriptsPanel user={user} />}
           {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} />}
           {view === 'logs' && <LogsPanel />}
         </main>
@@ -2828,14 +2917,18 @@ function App() {
 
       {refreshPrompt && (
         <div
-          style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
-            background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)'
+          }}
           onClick={() => setRefreshPrompt(null)}
         >
           <div
-            style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+            style={{
+              background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, minWidth: 320,
-              boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+              boxShadow: '0 24px 80px rgba(0,0,0,0.9)'
+            }}
             onClick={e => e.stopPropagation()}
           >
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
