@@ -77,6 +77,8 @@ function App() {
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   const lastPlaybackFailureKeyRef = useRef<string | null>(null);
   const lastRecoveryKeyRef = useRef<string | null>(null);
+  const skipRestoreVolumeRef = useRef<number | null>(null);
+  const skipRestorePendingRef = useRef(false);
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -116,21 +118,58 @@ function App() {
     statusRef.current = status;
   }, [status]);
 
-  // Fade out audio and opacity over 2 seconds
-  const fadeOut = useCallback((): Promise<void> => {
-    return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
-        resolve();
-        return;
-      }
+  const clampVolume = (volume: number) => Math.max(0, Math.min(100, volume));
 
-      const startVolume = ((): number => {
-        if (!playerRef.current) return 100;
-        if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
-        // HTMLMediaElement uses 0..1 volume
-        if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
-        return 100;
-      })();
+  const getConfiguredVolume = useCallback(() => {
+    return clampVolume(settings?.volume ?? 100);
+  }, [settings?.volume]);
+
+  const getActivePlaybackVolume = useCallback((): number => {
+    if (localPlaybackUrlRef.current && localVideoRef.current) {
+      return clampVolume(localVideoRef.current.volume * 100);
+    }
+    if (playerRef.current) {
+      if (typeof playerRef.current.getVolume === 'function') return clampVolume(playerRef.current.getVolume());
+      if (typeof (playerRef.current as any).volume === 'number') return clampVolume((playerRef.current as any).volume * 100);
+    }
+    return getConfiguredVolume();
+  }, [getConfiguredVolume]);
+
+  const setActivePlaybackVolume = useCallback((volume: number) => {
+    const nextVolume = clampVolume(volume);
+
+    if (localVideoRef.current) {
+      localVideoRef.current.volume = nextVolume / 100;
+    }
+    if (playerRef.current) {
+      if (typeof playerRef.current.setVolume === 'function') {
+        playerRef.current.setVolume(nextVolume);
+      } else if (typeof (playerRef.current as any).volume === 'number') {
+        (playerRef.current as any).volume = nextVolume / 100;
+      }
+    }
+    if (playerModeRef.current === 'ytm_desktop') {
+      ytmFetch('/api/v1/command', {
+        method: 'POST',
+        body: JSON.stringify({ command: 'setVolume', data: Math.round(nextVolume) }),
+      }).catch(() => {});
+    }
+  }, []);
+
+  const setPlaybackOpacity = useCallback((opacity: number) => {
+    const nextOpacity = Math.max(0, Math.min(1, opacity));
+    if (playerDivRef.current) {
+      playerDivRef.current.style.opacity = String(nextOpacity);
+    }
+    if (localVideoRef.current) {
+      localVideoRef.current.style.opacity = String(nextOpacity);
+    }
+  }, []);
+
+  // Fade out audio and opacity over 2 seconds
+  const fadeOut = useCallback((fromVolume?: number): Promise<void> => {
+    return new Promise((resolve) => {
+      const startVolume = clampVolume(fromVolume ?? getActivePlaybackVolume());
       const startOpacity = 1;
       const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
@@ -148,16 +187,8 @@ function App() {
         const newVolume = startVolume * (1 - progress);
         const newOpacity = startOpacity * (1 - progress);
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.max(0, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.max(0, Math.min(1, Math.max(0, newVolume) / 100));
-          }
-        }
-        if (playerDivRef.current) {
-          playerDivRef.current.style.opacity = String(Math.max(0, newOpacity));
-        }
+        setActivePlaybackVolume(newVolume);
+        setPlaybackOpacity(newOpacity);
 
         if (currentStep >= steps) {
           if (fadeIntervalRef.current) {
@@ -168,7 +199,7 @@ function App() {
         }
       }, stepDuration);
     });
-  }, []);
+  }, [getActivePlaybackVolume, setActivePlaybackVolume, setPlaybackOpacity]);
 
   // Endpoint heartbeat — all connected players send this so the admin console
   // has an accurate real-time roster. The backend only updates the canonical
@@ -208,14 +239,15 @@ function App() {
   }, [currentEndpointId, currentSessionId, isSlavePlayer]);
 
   // YTM Desktop skip fade: step volume 100→0 over 2s via setVolume commands
-  const fadeOutYtm = useCallback((): Promise<void> => {
+  const fadeOutYtm = useCallback((fromVolume?: number): Promise<void> => {
     return new Promise((resolve) => {
       const steps = 10;
       const stepDuration = 2000 / steps; // 200ms per step
       let currentStep = 0;
+      const startVolume = clampVolume(fromVolume ?? getConfiguredVolume());
       const interval = window.setInterval(() => {
         currentStep++;
-        const vol = Math.round(100 * (1 - currentStep / steps));
+        const vol = Math.round(startVolume * (1 - currentStep / steps));
         ytmFetch('/api/v1/command', {
           method: 'POST',
           body: JSON.stringify({ command: 'setVolume', data: vol }),
@@ -226,17 +258,13 @@ function App() {
         }
       }, stepDuration);
     });
-  }, []);
+  }, [getConfiguredVolume]);
 
   // Fade in audio and opacity over 2 seconds
-  const fadeIn = useCallback((): Promise<void> => {
+  const fadeIn = useCallback((toVolume?: number): Promise<void> => {
     return new Promise((resolve) => {
-      if (!playerRef.current || !playerDivRef.current) {
-        resolve();
-        return;
-      }
-
-      const targetVolume = 100; // Can be made configurable later
+      const startVolume = getActivePlaybackVolume();
+      const targetVolume = clampVolume(toVolume ?? skipRestoreVolumeRef.current ?? getConfiguredVolume());
       const targetOpacity = 1;
       const duration = 2000; // 2 seconds
       const steps = 60; // 60 fps
@@ -251,19 +279,11 @@ function App() {
       fadeIntervalRef.current = window.setInterval(() => {
         currentStep++;
         const progress = currentStep / steps;
-        const newVolume = targetVolume * progress;
+        const newVolume = startVolume + (targetVolume - startVolume) * progress;
         const newOpacity = targetOpacity * progress;
 
-        if (playerRef.current) {
-          if (typeof playerRef.current.setVolume === 'function') {
-            playerRef.current.setVolume(Math.min(100, newVolume));
-          } else if (typeof (playerRef.current as any).volume === 'number') {
-            (playerRef.current as any).volume = Math.min(1, Math.max(0, Math.min(100, newVolume) / 100));
-          }
-        }
-        if (playerDivRef.current) {
-          playerDivRef.current.style.opacity = String(Math.min(1, newOpacity));
-        }
+        setActivePlaybackVolume(newVolume);
+        setPlaybackOpacity(newOpacity);
 
         if (currentStep >= steps) {
           if (fadeIntervalRef.current) {
@@ -274,7 +294,23 @@ function App() {
         }
       }, stepDuration);
     });
-  }, []);
+  }, [getActivePlaybackVolume, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
+
+  const restorePlaybackAfterSkip = useCallback((fade = true) => {
+    const targetVolume = clampVolume(skipRestoreVolumeRef.current ?? getConfiguredVolume());
+    skipRestorePendingRef.current = false;
+    skipRestoreVolumeRef.current = null;
+
+    if (fade) {
+      fadeIn(targetVolume).catch(() => {
+        setActivePlaybackVolume(targetVolume);
+        setPlaybackOpacity(1);
+      });
+    } else {
+      setActivePlaybackVolume(targetVolume);
+      setPlaybackOpacity(1);
+    }
+  }, [fadeIn, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
 
   const markYouTubeLoadStart = useCallback(() => {
     const now = Date.now();
@@ -422,6 +458,10 @@ function App() {
       console.log('[Slave Player] Skipping status report:', { state, progress });
       return;
     }
+    if (!endpointIdRef.current || !sessionIdRef.current) {
+      console.debug('[Player] Status report skipped until endpoint/session registration is ready', { state, progress });
+      return;
+    }
 
     console.log('[Player] Reporting status:', { state, progress });
     try {
@@ -445,6 +485,10 @@ function App() {
       console.log('[Slave Player] Skipping ended/next report');
       return;
     }
+    if (!endpointIdRef.current || !sessionIdRef.current) {
+      console.warn('[Player] Ignoring ended/skip until endpoint/session registration is ready');
+      return;
+    }
 
     // Prevent concurrent calls: natural end + status subscription can both fire simultaneously.
     // The primary guard is server-side (player-control skips the intermediate state='idle' write),
@@ -465,15 +509,16 @@ function App() {
 
     // Fade out if this is a skip
     if (isSkip) {
+      const restoreVolume = getActivePlaybackVolume();
+      skipRestoreVolumeRef.current = restoreVolume > 0 ? restoreVolume : getConfiguredVolume();
+      skipRestorePendingRef.current = true;
       if (playerModeRef.current === 'ytm_desktop') {
-        // YTM Desktop: fade volume to 0, pause, then restore volume for next track
-        await fadeOutYtm();
+        // YTM Desktop: fade volume to 0 and pause. Restore when the next item starts.
+        await fadeOutYtm(skipRestoreVolumeRef.current);
         await ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
-        ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'setVolume', data: 100 }) }).catch(() => {});
       } else {
-        await fadeOut();
+        await fadeOut(skipRestoreVolumeRef.current);
       }
-      // Don't set skip loading flag - we'll fade back in immediately after loading
     }
 
     try {
@@ -555,6 +600,9 @@ function App() {
       } else {
         console.log('[Player] No more items in queue - result:', result);
         setCurrentMedia(null);
+        if (isSkip && skipRestorePendingRef.current) {
+          restorePlaybackAfterSkip(false);
+        }
       }
     } catch (error) {
       logPlayerEvent('queue_advance_failed', 'error', {
@@ -562,6 +610,9 @@ function App() {
         message: error instanceof Error ? error.message : String(error),
       }, 'queue_next_failed').catch(() => {});
       console.error('[Player] Failed to call queue_next:', error);
+      if (isSkip && skipRestorePendingRef.current) {
+        restorePlaybackAfterSkip(false);
+      }
     } finally {
       // Hold the guard for 1000ms after completion.
       // A second Realtime state='idle' event (caused by the progress=1 write in player-control)
@@ -572,7 +623,7 @@ function App() {
         isEndingRef.current = false;
       }, 1000);
     }
-  }, [fadeOut, fadeOutYtm, isSlavePlayer, isYouTubePlaybackUrl, logPlayerEvent, teardownLocalAudioAnalyser]);
+  }, [fadeOut, fadeOutYtm, getActivePlaybackVolume, getConfiguredVolume, isSlavePlayer, isYouTubePlaybackUrl, logPlayerEvent, restorePlaybackAfterSkip, teardownLocalAudioAnalyser]);
 
   const evaluateTailSilence = useCallback(() => {
     if (!settings?.silence_skip_enabled) return;
@@ -698,14 +749,10 @@ function App() {
 
       // If we're at volume 0 (after skip), fade in
       if (playerRef.current) {
-        const currentVol = ((): number => {
-          if (typeof playerRef.current.getVolume === 'function') return playerRef.current.getVolume();
-          if (typeof (playerRef.current as any).volume === 'number') return (playerRef.current as any).volume * 100;
-          return 100;
-        })();
-        if (currentVol === 0) {
-          console.log('[Player] Auto-playing after skip - fading in...');
-          fadeIn();
+        const currentVol = getActivePlaybackVolume();
+        if (skipRestorePendingRef.current || currentVol <= 1) {
+          console.log('[Player] Auto-playing after skip - restoring volume...');
+          restorePlaybackAfterSkip(true);
         }
       }
     } else if (event.data === 2) {
@@ -794,7 +841,7 @@ function App() {
       console.log('[Player] Video BUFFERING');
       reportStatus('loading');
     }
-  }, [status?.playback_started_at, status?.state, reportStatus, reportEndedAndNext, fadeIn, logPlayerEvent]);
+  }, [status?.playback_started_at, status?.state, reportStatus, reportEndedAndNext, getActivePlaybackVolume, restorePlaybackAfterSkip, logPlayerEvent]);
 
   // Handle playback errors — any YouTube player error skips immediately to the next video.
   // Error codes:
@@ -1620,10 +1667,8 @@ function App() {
       if (isAfterSkip) {
         // After skip: start with volume 0 and opacity 0, then immediately fade in
         console.log('[Player] Loading after skip - will fade in on play');
-        if (playerDivRef.current) {
-          playerDivRef.current.style.opacity = '0';
-        }
-        playerRef.current.setVolume(0);
+        setPlaybackOpacity(0);
+        setActivePlaybackVolume(0);
         isSkipLoadingRef.current = false; // Reset flag
         
         // Load and explicitly play video (will trigger fade-in when playing state is detected)
@@ -1637,10 +1682,8 @@ function App() {
         }, 500);
       } else {
         // Normal load: restore volume and opacity
-        if (playerDivRef.current) {
-          playerDivRef.current.style.opacity = '1';
-        }
-        playerRef.current.setVolume(100);
+        setPlaybackOpacity(1);
+        setActivePlaybackVolume(getConfiguredVolume());
         
         // loadVideoById and explicitly play
         playerRef.current.loadVideoById(youtubeId);
@@ -1681,7 +1724,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, localPlaybackUrl, ytApiReady, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, teardownLocalAudioAnalyser]);
+  }, [currentMedia, localPlaybackUrl, ytApiReady, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, teardownLocalAudioAnalyser, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
@@ -1848,6 +1891,14 @@ function App() {
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);
             videoHasPlayedRef.current = true;
             resetSilenceTracking(false);
+            if (skipRestorePendingRef.current && v) {
+              v.volume = 0;
+              v.style.opacity = '0';
+              restorePlaybackAfterSkip(true);
+            } else if (v && v.volume <= 0.01) {
+              v.volume = getConfiguredVolume() / 100;
+              v.style.opacity = '1';
+            }
             await ensureLocalAudioAnalyser();
             reportStatus('playing');
           }}

@@ -3,6 +3,10 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function videoPlayabilityStatus(video: any): string {
   if (video?.playabilityStatus) return video.playabilityStatus;
   if (video?.embeddable === false) return 'embed_blocked';
@@ -105,7 +109,7 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      const updateData = {};
+      const updateData: Record<string, unknown> = {};
       if (name) updateData.name = name;
       if (description !== undefined) updateData.description = description;
       const { data: playlist, error: updateError } = await supabase.from('playlists').update(updateData).eq('id', playlist_id).select().maybeSingle();
@@ -474,7 +478,7 @@ Deno.serve(async (req)=>{
       if (importError) throw importError;
       // Reset now_playing_index to -1 (Now Playing position)
       // Only reset state/progress/current_media if player is not currently playing
-      const updateData = {
+      const updateData: Record<string, unknown> = {
         now_playing_index: -1
       };
       // If player is not playing or paused, reset the playback state
@@ -562,7 +566,7 @@ Deno.serve(async (req)=>{
   } catch (error) {
     console.error('Playlist manager error:', error);
     return new Response(JSON.stringify({
-      error: error.message
+      error: errorMessage(error)
     }), {
       status: 500,
       headers: {

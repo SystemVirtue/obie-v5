@@ -5,6 +5,10 @@ import { corsHeaders } from '../_shared/cors.ts';
 
 const BLOCKING_PLAYABILITY_STATUSES = new Set(['embed_blocked', 'restricted', 'unavailable', 'invalid']);
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function extractYouTubeId(value: string | null | undefined): string | null {
   if (!value) return null;
   const match = String(value).match(/([A-Za-z0-9_-]{11})$/) || String(value).match(/[?&]v=([A-Za-z0-9_-]{11})/) || String(value).match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
@@ -168,7 +172,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler search error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -435,7 +439,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler request error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+            error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -534,7 +538,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Check action error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -594,7 +598,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 search error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: errorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -687,7 +691,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 request error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: errorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -906,7 +910,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('admin_request error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: errorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -968,7 +972,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Credit action error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -990,7 +994,7 @@ Deno.serve(async (req)=>{
   } catch (error) {
     console.error('Kiosk handler error:', error);
     return new Response(JSON.stringify({
-      error: error.message
+      error: errorMessage(error)
     }), {
       status: 500,
       headers: {

@@ -3,7 +3,9 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
-async function logSystemEvent(supabase, playerId, event, severity = 'info', payload = {}) {
+const nonMasterStatusLogThrottle = new Map<string, number>();
+
+async function logSystemEvent(supabase: any, playerId: string, event: string, severity = 'info', payload: Record<string, unknown> = {}) {
   const { error } = await supabase.from('system_logs').insert({
     player_id: playerId,
     event,
@@ -15,7 +17,7 @@ async function logSystemEvent(supabase, playerId, event, severity = 'info', payl
   }
 }
 
-function isTransientDatabaseError(error) {
+function isTransientDatabaseError(error: any) {
   const message = `${error?.message ?? ''} ${error?.code ?? ''}`.toLowerCase();
   return message.includes('timeout')
     || message.includes('temporarily')
@@ -26,7 +28,7 @@ function isTransientDatabaseError(error) {
     || error?.code === '08006';
 }
 
-async function isMasterEndpoint(supabase, playerId, endpointId) {
+async function isMasterEndpoint(supabase: any, playerId: string, endpointId?: string | null) {
   const { data: player } = await supabase
     .from('players')
     .select('priority_player_id, priority_endpoint_id')
@@ -41,6 +43,20 @@ async function isMasterEndpoint(supabase, playerId, endpointId) {
   }
 
   return player?.priority_endpoint_id === endpointId;
+}
+
+function shouldLogNonMasterStatus(playerId: string, action: string, endpointId?: string | null): boolean {
+  if (endpointId || action !== 'update') return true;
+
+  const throttleKey = `${playerId}:missing-endpoint:update`;
+  const now = Date.now();
+  const lastLoggedAt = nonMasterStatusLogThrottle.get(throttleKey) ?? 0;
+  if (now - lastLoggedAt < 60_000) {
+    return false;
+  }
+
+  nonMasterStatusLogThrottle.set(throttleKey, now);
+  return true;
 }
 
 Deno.serve(async (req)=>{
@@ -612,19 +628,26 @@ Deno.serve(async (req)=>{
         : await isMasterEndpoint(supabase, player_id, endpoint_id);
 
       if (!callerIsMaster) {
-        console.log(`[player-control] Ignoring ${action} update from non-priority endpoint`, {
+        const shouldLog = shouldLogNonMasterStatus(player_id, action, endpoint_id);
+        const logPayload = {
           player_id,
           endpoint_id: endpoint_id || null,
           session_id: session_id || null,
           state: state || null,
-        });
-        await logSystemEvent(supabase, player_id, 'non_master_status_ignored', 'warn', {
-          source: initiator || 'player_client',
-          action,
-          state: state || null,
-          endpoint_id: endpoint_id || null,
-          session_id: session_id || null,
-        });
+        };
+        if (shouldLog) {
+          console.log(`[player-control] Ignoring ${action} update from non-priority endpoint`, logPayload);
+          await logSystemEvent(supabase, player_id, 'non_master_status_ignored', 'warn', {
+            source: initiator || 'player_client',
+            action,
+            state: state || null,
+            endpoint_id: endpoint_id || null,
+            session_id: session_id || null,
+            throttled: !endpoint_id && action === 'update',
+          });
+        } else {
+          console.debug(`[player-control] Non-master ${action} update suppressed by throttle`, logPayload);
+        }
         return new Response(JSON.stringify({
           success: false,
           reason: 'not_priority_player'
@@ -806,7 +829,7 @@ Deno.serve(async (req)=>{
               media_id: item.media_item_id?.slice(0, 8),
               type: item.type,
               position: item.position,
-              title: item.media_items?.title?.slice(0, 30) || 'none',
+              title: (Array.isArray(item.media_items) ? item.media_items[0] : item.media_items)?.title?.slice(0, 30) || 'none',
               played_at: item.played_at
             }))
           });
@@ -843,10 +866,11 @@ Deno.serve(async (req)=>{
       }
     });
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('Player control error:', error);
     const status = isTransientDatabaseError(error) ? 503 : 500;
     return new Response(JSON.stringify({
-      error: error.message
+      error: errorMessage
     }), {
       status,
       headers: {
