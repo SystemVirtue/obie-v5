@@ -21,16 +21,21 @@ CREATE TABLE IF NOT EXISTS r2_files (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(bucket_name, object_key)
 );
+
 CREATE INDEX idx_r2_files_bucket ON r2_files(bucket_name);
 CREATE INDEX idx_r2_files_content_type ON r2_files(content_type);
 CREATE INDEX idx_r2_files_title ON r2_files USING gin (to_tsvector('simple', COALESCE(title, '') || ' ' || COALESCE(file_name, '')));
+
 -- RLS
 ALTER TABLE r2_files ENABLE ROW LEVEL SECURITY;
+
 CREATE POLICY "Authenticated full access to r2_files"
   ON r2_files FOR ALL
   USING (auth.role() = 'authenticated');
+
 CREATE POLICY "Anon can read r2_files"
   ON r2_files FOR SELECT
   USING (true);
+
 -- Realtime
 ALTER PUBLICATION supabase_realtime ADD TABLE r2_files;

@@ -1527,6 +1527,17 @@ function App() {
       teardownLocalAudioAnalyser();
     }
 
+    // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
+    // Just update the ref so the status subscription doesn't re-trigger media changes.
+    if (localPlaybackUrl) {
+      if (currentMediaIdRef.current !== currentMedia.id) {
+        console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
+        currentMediaIdRef.current = currentMedia.id;
+        videoHasPlayedRef.current = false;
+      }
+      return;
+    }
+
     // YTM Desktop mode: dispatch changeVideo instead of creating an iframe
     if (playerModeRef.current === 'ytm_desktop') {
       if (currentMediaIdRef.current === currentMedia.id) {

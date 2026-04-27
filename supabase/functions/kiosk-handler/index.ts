@@ -556,6 +556,7 @@ Deno.serve(async (req)=>{
           .limit(50);
 
         if (query.length > 0) {
+          // Search across title, file_name, and artist using ilike
           dbQuery = supabase
             .from('r2_files')
             .select('*')
@@ -573,6 +574,7 @@ Deno.serve(async (req)=>{
           });
         }
 
+        // Map r2_files to the same SearchResult shape as YouTube results
         const videos = (files || []).map((f: any) => ({
           id: f.id,
           title: f.title || f.file_name,
@@ -612,6 +614,7 @@ Deno.serve(async (req)=>{
       }
 
       try {
+        // Fetch the R2 file metadata
         const { data: r2File, error: r2Error } = await supabase
           .from('r2_files')
           .select('*')
@@ -625,6 +628,7 @@ Deno.serve(async (req)=>{
           });
         }
 
+        // Create or get media item using the existing RPC
         const sourceId = `cloudflare:${r2File.object_key}`;
         const { data: mediaItemId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
           p_source_id: sourceId,
@@ -648,6 +652,7 @@ Deno.serve(async (req)=>{
           });
         }
 
+        // Enqueue using existing kiosk_request_enqueue RPC (handles credits)
         const { data: queueId, error: rpcError } = await supabase.rpc('kiosk_request_enqueue', {
           p_session_id: session_id,
           p_media_item_id: mediaItemId,
@@ -661,6 +666,7 @@ Deno.serve(async (req)=>{
           });
         }
 
+        // Log the request
         await supabase.from('system_logs').insert({
           player_id,
           event: 'kiosk_request_r2',

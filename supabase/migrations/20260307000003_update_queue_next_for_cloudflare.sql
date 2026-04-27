@@ -112,4 +112,5 @@ BEGIN
   WHERE  m.id = v_next_queue_item.media_item_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
+
 GRANT EXECUTE ON FUNCTION queue_next(UUID) TO authenticated, service_role;
