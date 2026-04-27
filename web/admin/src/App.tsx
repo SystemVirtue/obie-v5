@@ -18,6 +18,7 @@ import {
   callKioskHandler,
   callYouTubeAlternativeFinder,
   callYouTubePlayabilityAudit,
+  callYouTubeRemediationWorker,
   createAdminBroadcast,
   callRadioGenerator,
   getPlaylists,
@@ -2660,6 +2661,7 @@ function YouTubeHealthPanel() {
   const [alternatives, setAlternatives] = useState<Record<string, YouTubeAlternativeCandidate[]>>({});
   const [loading, setLoading] = useState(true);
   const [auditing, setAuditing] = useState(false);
+  const [remediating, setRemediating] = useState(false);
   const [findingFor, setFindingFor] = useState<string | null>(null);
   const [addingCandidate, setAddingCandidate] = useState<string | null>(null);
   const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
@@ -2748,6 +2750,31 @@ function YouTubeHealthPanel() {
     }
   };
 
+  const runRemediation = async () => {
+    setRemediating(true);
+    setMessage(null);
+    try {
+      const result = await callYouTubeRemediationWorker({
+        limit: 25,
+        audit_limit: 100,
+        stale_hours: 24,
+        max_results: 6,
+        checked_by: 'admin_youtube_health_panel',
+      });
+      setAuditSummary(result.audit?.summary || null);
+      setMessage({
+        text: `Processed ${result.summary.processed}; stored ${result.summary.candidates} candidates, ${result.summary.playable} playable`,
+        ok: result.summary.errors === 0,
+      });
+      await loadIssues();
+    } catch (error) {
+      console.error('[YouTube Health] Remediation failed:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Remediation failed', ok: false });
+    } finally {
+      setRemediating(false);
+    }
+  };
+
   const addCandidateToQueue = async (candidate: YouTubeAlternativeCandidate) => {
     if (!candidate.candidate_url) return;
     setAddingCandidate(candidate.id);
@@ -2784,6 +2811,7 @@ function YouTubeHealthPanel() {
         actions={<>
           <Btn variant="ghost" onClick={loadIssues} disabled={loading}>{loading ? <><Spinner size={12} /> Refreshing...</> : 'Refresh'}</Btn>
           <Btn variant="accent" onClick={() => runAudit(100)} disabled={auditing}>{auditing ? <><Spinner size={12} /> Auditing...</> : 'Audit Stale 100'}</Btn>
+          <Btn variant="accent" onClick={runRemediation} disabled={remediating}>{remediating ? <><Spinner size={12} /> Remediating...</> : 'Remediate 25'}</Btn>
         </>}
       />
 

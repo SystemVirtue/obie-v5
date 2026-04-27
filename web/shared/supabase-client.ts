@@ -904,6 +904,40 @@ export async function callYouTubeAlternativeFinder(params: {
 }
 
 /**
+ * Batch audit and generate alternative candidates for known-bad YouTube items.
+ */
+export async function callYouTubeRemediationWorker(params: {
+  limit?: number;
+  audit_limit?: number;
+  stale_hours?: number;
+  checked_by?: string;
+  audit_first?: boolean;
+  max_results?: number;
+  statuses?: string[];
+}) {
+  const { data, error } = await supabase.functions.invoke('youtube-remediation-worker', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as {
+    audit: null | {
+      checked_count: number;
+      candidate_count: number;
+      summary: Record<string, number>;
+    };
+    selected_count: number;
+    summary: {
+      processed: number;
+      candidates: number;
+      playable: number;
+      errors: number;
+    };
+    results: Array<Record<string, any>>;
+  };
+}
+
+/**
  * Initialize player with default playlist and start auto-play
  */
 export async function initializePlayerPlaylist(playerId: string) {
