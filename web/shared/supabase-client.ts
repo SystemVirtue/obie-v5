@@ -154,6 +154,37 @@ export interface SystemLog {
   timestamp: string;
 }
 
+export interface YouTubePlayabilityCheck {
+  id: string;
+  media_item_id: string | null;
+  youtube_id: string;
+  status: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
+  reason: string | null;
+  checked_by: string | null;
+  embeddable: boolean | null;
+  oembed_ok: boolean | null;
+  error_code: string | null;
+  details: Record<string, any>;
+  checked_at: string;
+}
+
+export interface YouTubeAlternativeCandidate {
+  id: string;
+  source_media_item_id: string | null;
+  source_youtube_id: string;
+  candidate_youtube_id: string;
+  candidate_title: string;
+  candidate_artist: string | null;
+  candidate_url: string | null;
+  candidate_duration: number | null;
+  candidate_thumbnail: string | null;
+  score: number;
+  playability_status: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
+  playability_reason: string | null;
+  details: Record<string, any>;
+  created_at: string;
+}
+
 export interface R2File {
   id: string;
   bucket_name: string;
@@ -195,6 +226,8 @@ export interface Database {
       player_settings: { Row: PlayerSettings; Update: Partial<PlayerSettings> };
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
+      youtube_playability_checks: { Row: YouTubePlayabilityCheck };
+      youtube_alternative_candidates: { Row: YouTubeAlternativeCandidate };
       r2_files: { Row: R2File };
       admin_broadcasts: {
         Row: AdminBroadcast;
@@ -815,6 +848,59 @@ export async function callPlaylistManager(params: {
 
   if (error) throw error;
   return data;
+}
+
+/**
+ * Run a YouTube iframe playability audit over stale, playlist, or explicit media items.
+ */
+export async function callYouTubePlayabilityAudit(params: {
+  limit?: number;
+  stale_hours?: number;
+  checked_by?: string;
+  playlist_id?: string;
+  media_item_ids?: string[];
+}) {
+  const { data, error } = await supabase.functions.invoke('youtube-playability-audit', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as {
+    checked_count: number;
+    candidate_count: number;
+    summary: Record<string, number>;
+    videos: Array<Record<string, any>>;
+  };
+}
+
+/**
+ * Find embeddable YouTube alternatives for a known-bad or suspicious media item.
+ */
+export async function callYouTubeAlternativeFinder(params: {
+  media_item_id?: string;
+  youtube_id?: string;
+  title?: string;
+  artist?: string | null;
+  duration?: number | null;
+  query?: string;
+  max_results?: number;
+}) {
+  const { data, error } = await supabase.functions.invoke('youtube-alternative-finder', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as {
+    source: {
+      media_item_id: string | null;
+      youtube_id: string | null;
+      title: string;
+      artist: string;
+      duration: number;
+    };
+    candidates: Array<Record<string, any>>;
+    count: number;
+  };
 }
 
 /**

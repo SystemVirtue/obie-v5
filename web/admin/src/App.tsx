@@ -16,6 +16,8 @@ import {
   callPlayerControl,
   callPlaylistManager,
   callKioskHandler,
+  callYouTubeAlternativeFinder,
+  callYouTubePlayabilityAudit,
   createAdminBroadcast,
   callRadioGenerator,
   getPlaylists,
@@ -33,6 +35,7 @@ import {
   type MediaItem,
   type AdminBroadcast,
   type R2File,
+  type YouTubeAlternativeCandidate,
   signIn,
   signOut,
   getCurrentUser,
@@ -610,6 +613,7 @@ type ViewId =
   | 'search'
   | 'library'
   | 'queue'
+  | 'youtube-health'
   | 'playlists-all' | 'playlists-import'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
   | 'logs';
@@ -618,6 +622,7 @@ const NAV = [
   { id: 'search', icon: '🔍', label: 'Search', children: [] as { id: ViewId; label: string }[] },
   { id: 'library', icon: '💾', label: 'Browse Library', children: [] as { id: ViewId; label: string }[] },
   { id: 'queue', icon: '🎵', label: 'Queue', children: [] as { id: ViewId; label: string }[] },
+  { id: 'youtube-health', icon: 'YT', label: 'YouTube Health', children: [] as { id: ViewId; label: string }[] },
   {
     id: 'playlists', icon: '📋', label: 'Playlists', children: [
       { id: 'playlists-all' as ViewId, label: 'All Playlists' },
@@ -2632,6 +2637,258 @@ function LogsPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// YOUTUBE HEALTH PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BLOCKING_YOUTUBE_STATUSES = ['embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed'] as const;
+
+function extractYouTubeId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const text = String(value);
+  const match = text.match(/([A-Za-z0-9_-]{11})$/) || text.match(/[?&]v=([A-Za-z0-9_-]{11})/) || text.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  return match?.[1] || null;
+}
+
+function playabilityTone(status: string) {
+  if (status === 'playable') return { bg: 'rgba(34,197,94,0.1)', color: '#86efac', border: 'rgba(34,197,94,0.24)' };
+  if (status === 'check_failed' || status === 'unknown') return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.22)' };
+  return { bg: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: 'rgba(248,113,113,0.28)' };
+}
+
+function YouTubeHealthPanel() {
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [alternatives, setAlternatives] = useState<Record<string, YouTubeAlternativeCandidate[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [auditing, setAuditing] = useState(false);
+  const [findingFor, setFindingFor] = useState<string | null>(null);
+  const [addingCandidate, setAddingCandidate] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [auditSummary, setAuditSummary] = useState<Record<string, number> | null>(null);
+
+  const loadIssues = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('media_items')
+        .select('*')
+        .eq('source_type', 'youtube')
+        .in('youtube_playability_status', [...BLOCKING_YOUTUBE_STATUSES])
+        .order('youtube_playability_checked_at', { ascending: false, nullsFirst: false })
+        .limit(150);
+      if (error) throw error;
+
+      const media = (data as unknown as MediaItem[]) || [];
+      setItems(media);
+
+      const ids = media.map(item => item.id);
+      if (ids.length === 0) {
+        setAlternatives({});
+        return;
+      }
+
+      const { data: candidateRows, error: candidateError } = await supabase
+        .from('youtube_alternative_candidates')
+        .select('*')
+        .in('source_media_item_id', ids)
+        .order('score', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (candidateError) throw candidateError;
+
+      const grouped: Record<string, YouTubeAlternativeCandidate[]> = {};
+      for (const candidate of ((candidateRows as unknown as YouTubeAlternativeCandidate[]) || [])) {
+        if (!candidate.source_media_item_id) continue;
+        grouped[candidate.source_media_item_id] = [...(grouped[candidate.source_media_item_id] || []), candidate];
+      }
+      setAlternatives(grouped);
+    } catch (error) {
+      console.error('[YouTube Health] Failed to load issues:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Failed to load YouTube health data', ok: false });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadIssues(); }, [loadIssues]);
+
+  const runAudit = async (limit: number) => {
+    setAuditing(true);
+    setMessage(null);
+    try {
+      const result = await callYouTubePlayabilityAudit({
+        limit,
+        stale_hours: 24,
+        checked_by: 'admin_youtube_health_panel',
+      });
+      setAuditSummary(result.summary || {});
+      setMessage({ text: `Checked ${result.checked_count} YouTube item${result.checked_count === 1 ? '' : 's'}`, ok: true });
+      await loadIssues();
+    } catch (error) {
+      console.error('[YouTube Health] Audit failed:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Audit failed', ok: false });
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  const findAlternatives = async (media: MediaItem) => {
+    setFindingFor(media.id);
+    setMessage(null);
+    try {
+      const result = await callYouTubeAlternativeFinder({
+        media_item_id: media.id,
+        max_results: 6,
+      });
+      setMessage({ text: `Found ${result.count} candidate${result.count === 1 ? '' : 's'} for ${cleanDisplayText(media.title)}`, ok: true });
+      await loadIssues();
+    } catch (error) {
+      console.error('[YouTube Health] Alternative lookup failed:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Alternative lookup failed', ok: false });
+    } finally {
+      setFindingFor(null);
+    }
+  };
+
+  const addCandidateToQueue = async (candidate: YouTubeAlternativeCandidate) => {
+    if (!candidate.candidate_url) return;
+    setAddingCandidate(candidate.id);
+    setMessage(null);
+    try {
+      await callKioskHandler({
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        url: candidate.candidate_url,
+        title: candidate.candidate_title,
+        artist: candidate.candidate_artist,
+        thumbnail: candidate.candidate_thumbnail,
+        duration: candidate.candidate_duration,
+        add_to_queue: true,
+      });
+      setMessage({ text: `Queued ${cleanDisplayText(candidate.candidate_title)}`, ok: true });
+    } catch (error) {
+      console.error('[YouTube Health] Failed to queue candidate:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Failed to queue candidate', ok: false });
+    } finally {
+      setAddingCandidate(null);
+    }
+  };
+
+  const counts = items.reduce((acc, item) => {
+    const status = item.youtube_playability_status || 'unknown';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="YouTube Health" subtitle={`${items.length} YouTube-only item${items.length === 1 ? '' : 's'} need attention`}
+        actions={<>
+          <Btn variant="ghost" onClick={loadIssues} disabled={loading}>{loading ? <><Spinner size={12} /> Refreshing...</> : 'Refresh'}</Btn>
+          <Btn variant="accent" onClick={() => runAudit(100)} disabled={auditing}>{auditing ? <><Spinner size={12} /> Auditing...</> : 'Audit Stale 100'}</Btn>
+        </>}
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+        {message && (
+          <div style={{
+            marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+            background: message.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${message.ok ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)'}`,
+            color: message.ok ? '#86efac' : '#fca5a5', fontFamily: 'var(--font-mono)', fontSize: 11
+          }}>{message.text}</div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 14 }}>
+          {BLOCKING_YOUTUBE_STATUSES.map(status => {
+            const tone = playabilityTone(status);
+            return (
+              <div key={status} style={{ borderRadius: 10, padding: '12px 14px', background: tone.bg, border: `1px solid ${tone.border}` }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase', color: tone.color }}>{status.replace(/_/g, ' ')}</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: '#fff', marginTop: 4 }}>{counts[status] || 0}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {auditSummary && (
+          <div style={{ marginBottom: 14, borderRadius: 10, padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {Object.entries(auditSummary).map(([status, count]) => {
+              const tone = playabilityTone(status);
+              return <span key={status} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: tone.color }}>{status.replace(/_/g, ' ')}: {count}</span>;
+            })}
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
+        ) : items.length === 0 ? (
+          <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 40 }}>
+            No known unplayable YouTube-only items.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {items.map(item => {
+              const tone = playabilityTone(item.youtube_playability_status || 'unknown');
+              const youtubeId = extractYouTubeId(item.source_id);
+              const candidates = alternatives[item.id] || [];
+              const playableCandidates = candidates.filter(candidate => candidate.playability_status === 'playable');
+
+              return (
+                <div key={item.id} style={{ borderRadius: 12, background: 'rgba(255,255,255,0.022)', border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px' }}>
+                    {item.thumbnail && <img src={item.thumbnail} alt="" style={{ width: 54, height: 40, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(item.title || 'Unknown')}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 3, flexWrap: 'wrap' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{item.artist ? cleanDisplayText(item.artist) : 'Unknown artist'}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)' }}>{youtubeId || 'no youtube id'}</span>
+                        <span title={item.youtube_playability_reason || undefined} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '1px 6px', borderRadius: 99, background: tone.bg, color: tone.color, border: `1px solid ${tone.border}` }}>
+                          {(item.youtube_playability_status || 'unknown').replace(/_/g, ' ').toUpperCase()}
+                        </span>
+                        {item.youtube_last_error_code && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#fca5a5' }}>YT {item.youtube_last_error_code}</span>}
+                      </div>
+                    </div>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(item.duration)}</span>
+                    <Btn variant="ghost" disabled={findingFor === item.id} onClick={() => findAlternatives(item)}>
+                      {findingFor === item.id ? <><Spinner size={12} /> Finding...</> : 'Find Alternatives'}
+                    </Btn>
+                  </div>
+
+                  {candidates.length > 0 && (
+                    <div style={{ padding: '0 14px 12px 80px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: playableCandidates.length > 0 ? '#86efac' : '#fbbf24', textTransform: 'uppercase' }}>
+                        {playableCandidates.length > 0 ? `${playableCandidates.length} playable candidate${playableCandidates.length === 1 ? '' : 's'}` : 'No playable candidates stored yet'}
+                      </div>
+                      {candidates.slice(0, 3).map(candidate => {
+                        const candidateTone = playabilityTone(candidate.playability_status);
+                        return (
+                          <div key={candidate.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            {candidate.candidate_thumbnail && <img src={candidate.candidate_thumbnail} alt="" style={{ width: 42, height: 30, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(candidate.candidate_title)}</div>
+                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)', marginTop: 1 }}>{candidate.candidate_youtube_id} · score {Math.round(candidate.score)}</div>
+                            </div>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 99, background: candidateTone.bg, color: candidateTone.color, border: `1px solid ${candidateTone.border}` }}>
+                              {candidate.playability_status.replace(/_/g, ' ').toUpperCase()}
+                            </span>
+                            <Btn variant="ghost" disabled={candidate.playability_status !== 'playable' || addingCandidate === candidate.id} onClick={() => addCandidateToQueue(candidate)}>
+                              {addingCandidate === candidate.id ? <><Spinner size={12} /> Queuing...</> : 'Queue'}
+                            </Btn>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2876,6 +3133,7 @@ function App() {
 
   const isSearchView = view === 'search';
   const isLibraryView = view === 'library';
+  const isYouTubeHealthView = view === 'youtube-health';
   const isQueueView = view.startsWith('queue');
   const isPlaylistView = view.startsWith('playlists');
   const isSettingsView = view.startsWith('settings');
@@ -2902,6 +3160,7 @@ function App() {
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
           {isSearchView && <SearchPanel />}
           {isLibraryView && <BrowseLibraryPanel />}
+          {isYouTubeHealthView && <YouTubeHealthPanel />}
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
