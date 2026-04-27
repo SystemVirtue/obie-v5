@@ -315,6 +315,9 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
     : 'YouTube iframe';
   const playbackConfirmed = !!status?.playback_started_at;
   const playbackError = status?.playback_error;
+  const youtubePlayabilityStatus = cm?.youtube_playability_status || cm?.metadata?.youtube_playability_status || 'unknown';
+  const youtubePlayabilityReason = cm?.youtube_playability_reason || cm?.metadata?.youtube_playability_reason || null;
+  const showYoutubePlayability = playbackSource === 'youtube' && youtubePlayabilityStatus !== 'unknown';
   const handlePlayPauseClick = () => {
     if (isSkipping) return;
     if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
@@ -416,6 +419,15 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
                     color: playbackConfirmed ? '#86efac' : '#fbbf24',
                     border: `1px solid ${playbackConfirmed ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.25)'}` }}>
                   {playbackConfirmed ? 'START CONFIRMED' : 'AWAITING START'}
+                </span>
+              )}
+              {showYoutubePlayability && (
+                <span title={youtubePlayabilityReason || 'YouTube playability precheck'}
+                  style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                    background: youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.12)',
+                    color: youtubePlayabilityStatus === 'playable' ? '#86efac' : '#fca5a5',
+                    border: `1px solid ${youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.22)' : 'rgba(248,113,113,0.28)'}` }}>
+                  YT {String(youtubePlayabilityStatus).replace(/_/g, ' ').toUpperCase()}
                 </span>
               )}
             </div>
@@ -1201,6 +1213,9 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const m = (item as any).media_item as any;
   const sourceType = m?.source_type === 'cloudflare' ? 'cloudflare' : 'youtube';
+  const ytPlayability = m?.youtube_playability_status || m?.metadata?.youtube_playability_status || 'unknown';
+  const ytPlayabilityReason = m?.youtube_playability_reason || m?.metadata?.youtube_playability_reason || '';
+  const showYtWarning = sourceType === 'youtube' && ['embed_blocked', 'restricted', 'unavailable', 'invalid'].includes(ytPlayability);
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
@@ -1217,6 +1232,12 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
               border: `1px solid ${sourceType === 'cloudflare' ? 'rgba(34,197,94,0.22)' : 'rgba(251,191,36,0.22)'}` }}>
               {sourceType === 'cloudflare' ? 'CACHED' : 'YOUTUBE'}
             </span>
+            {showYtWarning && (
+              <span title={ytPlayabilityReason || 'Known YouTube iframe playback failure'} style={{ fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
+                background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.28)' }}>
+                {String(ytPlayability).replace(/_/g, ' ').toUpperCase()}
+              </span>
+            )}
           </div>
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>

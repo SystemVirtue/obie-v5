@@ -2,6 +2,38 @@
 // Handles playlist CRUD operations and media scraping
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+
+function videoPlayabilityStatus(video: any): string {
+  if (video?.playabilityStatus) return video.playabilityStatus;
+  if (video?.embeddable === false) return 'embed_blocked';
+  return 'unknown';
+}
+
+function videoPlayabilityReason(video: any): string | null {
+  if (video?.playabilityReason) return video.playabilityReason;
+  if (video?.embeddable === false) return 'youtube_status_not_embeddable';
+  return null;
+}
+
+async function recordVideoPlayability(supabase: any, mediaItemId: string | null, video: any, checkedBy: string): Promise<void> {
+  if (!mediaItemId && !video?.id) return;
+  await supabase.rpc('record_youtube_playability', {
+    p_media_item_id: mediaItemId,
+    p_youtube_id: video?.id || null,
+    p_status: videoPlayabilityStatus(video),
+    p_reason: videoPlayabilityReason(video),
+    p_checked_by: checkedBy,
+    p_embeddable: typeof video?.embeddable === 'boolean' ? video.embeddable : null,
+    p_oembed_ok: typeof video?.oembedOk === 'boolean' ? video.oembedOk : null,
+    p_error_code: null,
+    p_details: {
+      title: video?.title || null,
+      artist: video?.artist || null,
+      url: video?.url || null,
+    },
+  });
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -276,7 +308,23 @@ Deno.serve(async (req)=>{
       }
       // Insert media items — canonical deduplication via create_or_get_media_item RPC
       const mediaItems = [];
+      const playabilitySummary = {
+        playable: 0,
+        embed_blocked: 0,
+        restricted: 0,
+        unavailable: 0,
+        invalid: 0,
+        check_failed: 0,
+        unknown: 0,
+      };
       for (const video of videos){
+        const playabilityStatus = videoPlayabilityStatus(video);
+        if (playabilityStatus in playabilitySummary) {
+          playabilitySummary[playabilityStatus as keyof typeof playabilitySummary]++;
+        } else {
+          playabilitySummary.unknown++;
+        }
+
         const { data: mediaId } = await supabase.rpc('create_or_get_media_item', {
           p_source_id:   video.id,
           p_source_type: 'youtube',
@@ -285,9 +333,15 @@ Deno.serve(async (req)=>{
           p_url:         video.url,
           p_duration:    video.duration || null,
           p_thumbnail:   video.thumbnail || null,
-          p_metadata:    {},
+          p_metadata:    {
+            youtube_playability_status: playabilityStatus,
+            youtube_playability_reason: videoPlayabilityReason(video),
+            youtube_embeddable: typeof video.embeddable === 'boolean' ? video.embeddable : null,
+            youtube_oembed_ok: typeof video.oembedOk === 'boolean' ? video.oembedOk : null,
+          },
         });
         if (mediaId) {
+          await recordVideoPlayability(supabase, mediaId, video, playlist_id ? 'playlist_import' : 'playlist_scrape');
           const { data: fullItem } = await supabase.from('media_items').select('*').eq('id', mediaId).maybeSingle();
           if (fullItem) mediaItems.push(fullItem);
         }
@@ -310,6 +364,7 @@ Deno.serve(async (req)=>{
       return new Response(JSON.stringify({
         media_items: mediaItems,
         count: mediaItems.length,
+        playability_summary: playabilitySummary,
         playlist_id: playlist_id || null
       }), {
         status: 200,

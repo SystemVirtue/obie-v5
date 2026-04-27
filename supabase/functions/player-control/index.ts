@@ -561,6 +561,41 @@ Deno.serve(async (req)=>{
         .eq('player_id', player_id);
       if (failureUpdateError) throw failureUpdateError;
 
+      const failurePayload = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+      const mediaItemId = typeof failurePayload.media_item_id === 'string' ? failurePayload.media_item_id : null;
+      const youtubeId = typeof failurePayload.youtube_id === 'string' ? failurePayload.youtube_id : null;
+      const errorCode = 'error_code' in failurePayload ? String(failurePayload.error_code) : null;
+      const playabilityStatus =
+        reason === 'youtube_embed_blocked' ? 'embed_blocked'
+        : reason === 'youtube_video_unavailable' ? 'unavailable'
+        : reason === 'youtube_invalid_parameter_or_restricted' ? 'restricted'
+        : reason === 'youtube_html5_playback_error' ? 'check_failed'
+        : String(reason || '').startsWith('youtube_') ? 'check_failed'
+        : null;
+
+      if (playabilityStatus && (mediaItemId || youtubeId)) {
+        const { error: playabilityError } = await supabase.rpc('record_youtube_playability', {
+          p_media_item_id: mediaItemId,
+          p_youtube_id: youtubeId,
+          p_status: playabilityStatus,
+          p_reason: reason || 'playback_failed',
+          p_checked_by: 'player_runtime',
+          p_embeddable: playabilityStatus === 'embed_blocked' ? false : null,
+          p_oembed_ok: null,
+          p_error_code: errorCode,
+          p_details: failurePayload,
+        });
+
+        if (playabilityError) {
+          await logSystemEvent(supabase, player_id, 'youtube_playability_record_failed', 'warn', {
+            media_item_id: mediaItemId,
+            youtube_id: youtubeId,
+            playability_status: playabilityStatus,
+            error: playabilityError.message || playabilityError,
+          });
+        }
+      }
+
       return new Response(JSON.stringify({ success: true }), {
         status: 200,
         headers: {

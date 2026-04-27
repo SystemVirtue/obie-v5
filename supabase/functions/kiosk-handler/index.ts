@@ -2,6 +2,85 @@
 // Handles kiosk operations: search, credits, song requests
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+
+const BLOCKING_PLAYABILITY_STATUSES = new Set(['embed_blocked', 'restricted', 'unavailable', 'invalid']);
+
+function extractYouTubeId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = String(value).match(/([A-Za-z0-9_-]{11})$/) || String(value).match(/[?&]v=([A-Za-z0-9_-]{11})/) || String(value).match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  return match?.[1] || null;
+}
+
+function videoPlayabilityStatus(video: any): string {
+  if (video?.playabilityStatus) return video.playabilityStatus;
+  if (video?.embeddable === false) return 'embed_blocked';
+  return 'unknown';
+}
+
+function videoPlayabilityReason(video: any): string | null {
+  if (video?.playabilityReason) return video.playabilityReason;
+  if (video?.embeddable === false) return 'youtube_status_not_embeddable';
+  return null;
+}
+
+async function hasCloudflareFallback(supabase: any, youtubeId: string | null): Promise<boolean> {
+  if (!youtubeId) return false;
+  const { data } = await supabase
+    .from('r2_files')
+    .select('id')
+    .eq('youtube_id', youtubeId)
+    .limit(1)
+    .maybeSingle();
+  return Boolean(data?.id);
+}
+
+async function recordVideoPlayability(supabase: any, mediaItemId: string | null, video: any, checkedBy: string): Promise<void> {
+  const youtubeId = video?.id || extractYouTubeId(video?.url);
+  if (!youtubeId && !mediaItemId) return;
+
+  const status = videoPlayabilityStatus(video);
+  await supabase.rpc('record_youtube_playability', {
+    p_media_item_id: mediaItemId,
+    p_youtube_id: youtubeId,
+    p_status: status,
+    p_reason: videoPlayabilityReason(video),
+    p_checked_by: checkedBy,
+    p_embeddable: typeof video?.embeddable === 'boolean' ? video.embeddable : null,
+    p_oembed_ok: typeof video?.oembedOk === 'boolean' ? video.oembedOk : null,
+    p_error_code: null,
+    p_details: {
+      title: video?.title || null,
+      artist: video?.artist || null,
+      url: video?.url || null,
+    },
+  });
+}
+
+async function getMediaRequestBlocker(supabase: any, mediaItemId: string): Promise<{ blocked: boolean; reason?: string; media?: any }> {
+  const { data: media } = await supabase
+    .from('media_items')
+    .select('id, source_id, source_type, title, artist, youtube_playability_status, youtube_playability_reason')
+    .eq('id', mediaItemId)
+    .maybeSingle();
+
+  if (!media || media.source_type !== 'youtube') {
+    return { blocked: false, media };
+  }
+
+  const youtubeId = extractYouTubeId(media.source_id);
+  const cached = await hasCloudflareFallback(supabase, youtubeId);
+  const status = media.youtube_playability_status || 'unknown';
+  if (!cached && BLOCKING_PLAYABILITY_STATUSES.has(status)) {
+    return {
+      blocked: true,
+      reason: media.youtube_playability_reason || status,
+      media,
+    };
+  }
+
+  return { blocked: false, media };
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -185,6 +264,8 @@ Deno.serve(async (req)=>{
 
           // Use video.id directly for source_id
           const sourceId = `youtube:${video.id}`;
+          const hasFallback = await hasCloudflareFallback(supabase, video.id);
+          const playabilityStatus = videoPlayabilityStatus(video);
 
           // Create or update media item — canonical dedup via create_or_get_media_item RPC
           const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
@@ -195,7 +276,12 @@ Deno.serve(async (req)=>{
             p_url:         video.url,
             p_duration:    video.duration || null,
             p_thumbnail:   video.thumbnail || null,
-            p_metadata:    {},
+            p_metadata:    {
+              youtube_playability_status: playabilityStatus,
+              youtube_playability_reason: videoPlayabilityReason(video),
+              youtube_embeddable: typeof video.embeddable === 'boolean' ? video.embeddable : null,
+              youtube_oembed_ok: typeof video.oembedOk === 'boolean' ? video.oembedOk : null,
+            },
           });
 
           if (mediaError || !resolvedId) {
@@ -217,6 +303,32 @@ Deno.serve(async (req)=>{
               video
             }), {
               status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+          }
+
+          await recordVideoPlayability(supabase, resolvedId, video, 'kiosk_request_url');
+
+          if (!hasFallback && BLOCKING_PLAYABILITY_STATUSES.has(playabilityStatus)) {
+            await supabase.from('system_logs').insert({
+              player_id,
+              event: 'kiosk_request_rejected_unplayable',
+              severity: 'warn',
+              payload: {
+                media_item_id: resolvedId,
+                youtube_id: video.id,
+                title: video.title,
+                playability_status: playabilityStatus,
+                playability_reason: videoPlayabilityReason(video),
+              }
+            });
+            return new Response(JSON.stringify({
+              error: 'This YouTube video is not available for direct player playback.',
+              reason: videoPlayabilityReason(video) || playabilityStatus,
+              playability_status: playabilityStatus,
+              media_item_id: resolvedId,
+            }), {
+              status: 400,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' }
             });
           }
@@ -245,6 +357,31 @@ Deno.serve(async (req)=>{
             ...corsHeaders,
             'Content-Type': 'application/json'
           }
+        });
+      }
+
+      const blocker = await getMediaRequestBlocker(supabase, mediaItemId);
+      if (blocker.blocked) {
+        await supabase.from('system_logs').insert({
+          player_id,
+          event: 'kiosk_request_rejected_unplayable',
+          severity: 'warn',
+          payload: {
+            session_id,
+            media_item_id: mediaItemId,
+            title: blocker.media?.title || null,
+            playability_status: blocker.media?.youtube_playability_status || null,
+            playability_reason: blocker.reason || null,
+          }
+        });
+        return new Response(JSON.stringify({
+          error: 'This YouTube video is not available for direct player playback.',
+          reason: blocker.reason,
+          playability_status: blocker.media?.youtube_playability_status || null,
+          media_item_id: mediaItemId,
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
@@ -609,6 +746,7 @@ Deno.serve(async (req)=>{
           let videoUrl = url;
           const videoIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
           let videoId = videoIdMatch?.[1] || null;
+          let checkedVideo: any = null;
 
           if (!videoTitle || !videoId) {
             const scraperResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
@@ -643,6 +781,7 @@ Deno.serve(async (req)=>{
               });
             }
 
+            checkedVideo = video;
             videoId = video.id;
             videoTitle = video.title;
             videoArtist = video.artist || null;
@@ -650,6 +789,27 @@ Deno.serve(async (req)=>{
             videoDuration = video.duration || null;
             videoUrl = video.url;
           }
+
+          if (videoId && !checkedVideo) {
+            const checkResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+              },
+              body: JSON.stringify({ video_id: videoId, type: 'check' })
+            });
+
+            if (checkResp.ok) {
+              const { videos } = await checkResp.json();
+              checkedVideo = videos?.[0] || null;
+            } else {
+              console.warn('admin_request: YouTube playability check failed open:', await checkResp.text());
+            }
+          }
+
+          const playabilityStatus = checkedVideo ? videoPlayabilityStatus(checkedVideo) : 'unknown';
+          const hasFallback = await hasCloudflareFallback(supabase, videoId);
 
           const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
             p_source_id: `youtube:${videoId}`,
@@ -659,13 +819,46 @@ Deno.serve(async (req)=>{
             p_url: videoUrl,
             p_duration: videoDuration,
             p_thumbnail: videoThumbnail,
-            p_metadata: {},
+            p_metadata: {
+              youtube_playability_status: playabilityStatus,
+              youtube_playability_reason: checkedVideo ? videoPlayabilityReason(checkedVideo) : null,
+              youtube_embeddable: typeof checkedVideo?.embeddable === 'boolean' ? checkedVideo.embeddable : null,
+              youtube_oembed_ok: typeof checkedVideo?.oembedOk === 'boolean' ? checkedVideo.oembedOk : null,
+            },
           });
 
           if (mediaError || !resolvedId) {
             console.error('admin_request: failed to create media item:', mediaError);
             return new Response(JSON.stringify({ error: 'Failed to create media item' }), {
               status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          if (checkedVideo) {
+            await recordVideoPlayability(supabase, resolvedId, checkedVideo, 'admin_request');
+          }
+
+          if (!hasFallback && BLOCKING_PLAYABILITY_STATUSES.has(playabilityStatus)) {
+            await supabase.from('system_logs').insert({
+              player_id,
+              event: 'admin_request_rejected_unplayable',
+              severity: 'warn',
+              payload: {
+                media_item_id: resolvedId,
+                youtube_id: videoId,
+                title: videoTitle,
+                playability_status: playabilityStatus,
+                playability_reason: checkedVideo ? videoPlayabilityReason(checkedVideo) : null,
+              },
+            });
+            return new Response(JSON.stringify({
+              error: 'This YouTube video is not available for direct player playback.',
+              reason: checkedVideo ? videoPlayabilityReason(checkedVideo) : playabilityStatus,
+              playability_status: playabilityStatus,
+              media_item_id: resolvedId,
+            }), {
+              status: 400,
               headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             });
           }

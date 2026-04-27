@@ -64,6 +64,13 @@ export interface MediaItem {
   thumbnail: string | null;
   fetched_at: string;
   metadata: Record<string, any>;
+  youtube_playability_status?: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
+  youtube_playability_reason?: string | null;
+  youtube_playability_checked_at?: string | null;
+  youtube_embeddable?: boolean | null;
+  youtube_oembed_ok?: boolean | null;
+  youtube_last_error_code?: string | null;
+  youtube_last_error_at?: string | null;
 }
 
 export interface QueueItem {
