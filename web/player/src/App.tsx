@@ -79,7 +79,7 @@ function App() {
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   const lastPlaybackFailureKeyRef = useRef<string | null>(null);
   const lastRecoveryKeyRef = useRef<string | null>(null);
-  const lastStaleLocalClearKeyRef = useRef<string | null>(null);
+  //const lastStaleLocalClearKeyRef = useRef<string | null>(null);
   const skipRestoreVolumeRef = useRef<number | null>(null);
   const skipRestorePendingRef = useRef(false);
   const skipFadePromiseRef = useRef<Promise<void> | null>(null);
@@ -1291,7 +1291,7 @@ function App() {
       // Check if current_media changed
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
-      const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
+      //const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
       const adminSkipNewMedia = newMediaId && newMediaId !== oldMediaId && newStatus.last_recovery_reason === 'admin_skip';
 
       if (adminSkipNewMedia) {
