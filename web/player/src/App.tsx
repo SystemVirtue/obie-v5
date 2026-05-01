@@ -19,6 +19,7 @@ import {
 } from '@shared/supabase-client';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
+const YOUTUBE_EMBED_HOST = 'https://www.youtube-nocookie.com';
 
 // ── YTM Desktop Companion ────────────────────────────────────────────────────
 const YTM_BASE = 'http://localhost:9863';
@@ -520,6 +521,20 @@ function App() {
       } else {
         await fadeOut(skipRestoreVolumeRef.current);
       }
+
+      try {
+        if (localVideoRef.current) {
+          localVideoRef.current.pause();
+          localVideoRef.current.removeAttribute('src');
+          localVideoRef.current.load();
+        }
+        if (playerRef.current) {
+          playerRef.current.pauseVideo?.();
+          playerRef.current.stopVideo?.();
+        }
+      } catch (error) {
+        console.warn('[Player] Failed to stop skipped playback cleanly:', error);
+      }
     }
 
     try {
@@ -584,7 +599,11 @@ function App() {
         if (isSkip) {
           isSkipLoadingRef.current = true;
         }
-        
+
+        if (nextMedia.id !== expectedMediaId) {
+          currentMediaIdRef.current = null;
+          currentYouTubeIdRef.current = null;
+        }
         setCurrentMedia(nextMedia);
         
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
@@ -599,6 +618,53 @@ function App() {
           playerDivRef.current.style.opacity = '1';
         }
       } else {
+        const { data: latestStatus, error: latestStatusError } = await supabase
+          .from('player_status')
+          .select('*, current_media:media_items(*)')
+          .eq('player_id', PLAYER_ID)
+          .single();
+
+        const latest = latestStatus as PlayerStatus | null;
+        if (!latestStatusError && latest?.current_media_id && latest.current_media_id !== expectedMediaId) {
+          console.log('[Player] Queue advance response had no next_item; using latest player_status instead:', {
+            expected_media_id: expectedMediaId,
+            current_media_id: latest.current_media_id,
+            title: latest.current_media?.title,
+            source: latest.source,
+          });
+
+          shouldAutoplayCurrentMediaRef.current = latest.state === 'playing' || latest.state === 'loading';
+          setStatus(latest);
+
+          const latestMediaIsYouTube = isYouTubePlaybackUrl(latest.current_media?.url);
+          if ((latest.source === 'local' || latest.source === 'cloudflare') && latest.local_url && !latestMediaIsYouTube) {
+            setLocalPlaybackUrl(latest.local_url);
+          } else if (localPlaybackUrlRef.current) {
+            setLocalPlaybackUrl(null);
+            localPlaybackUrlRef.current = null;
+            try {
+              localVideoRef.current?.pause();
+              localVideoRef.current?.removeAttribute('src');
+              localVideoRef.current?.load();
+            } catch (error) {
+              console.warn('[Player] Failed to tear down local video before status recovery handoff:', error);
+            }
+            teardownLocalAudioAnalyser();
+          }
+
+          setCurrentMedia(latest.current_media || null);
+          if (latest.current_media_id !== expectedMediaId) {
+            currentMediaIdRef.current = null;
+            currentYouTubeIdRef.current = null;
+            isSkipLoadingRef.current = isSkip;
+          }
+          recentlyLoadedRef.current = true;
+          setTimeout(() => {
+            recentlyLoadedRef.current = false;
+          }, 5000);
+          return;
+        }
+
         console.log('[Player] No more items in queue - result:', result);
         setCurrentMedia(null);
         if (isSkip && skipRestorePendingRef.current) {
@@ -1090,7 +1156,10 @@ function App() {
           console.log('[Player] Skip detected from Admin - triggering fade and skip');
           await reportEndedAndNext(true); // Skip with fade
           prevStateRef.current = newState;
-          setStatus(newStatus);
+          // Do not write this stale idle/old-media status into local state after
+          // the skip completes. reportEndedAndNext loads the latest queue state;
+          // re-applying the original admin skip update can leave the endpoint
+          // paused on the skipped iframe while Admin already shows the next track.
           return; // Exit early, don't process other state changes
         }
         
@@ -1163,7 +1232,7 @@ function App() {
       }
 
       if (newMediaId && newMediaId !== oldMediaId) {
-        shouldAutoplayCurrentMediaRef.current = newState === 'playing';
+        shouldAutoplayCurrentMediaRef.current = newState === 'playing' || newState === 'loading';
         console.log('[Player] New media from status (CHANGED):', {
           old_id: oldMediaId,
           new_id: newMediaId,
@@ -1713,6 +1782,7 @@ function App() {
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
     playerRef.current = new window.YT.Player(playerDivRef.current, {
+      host: YOUTUBE_EMBED_HOST,
       videoId: youtubeId,
       playerVars: {
         enablejsapi: 1,

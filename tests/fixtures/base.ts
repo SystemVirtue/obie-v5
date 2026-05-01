@@ -10,6 +10,21 @@ import * as path from 'path';
 
 type ConsoleEntry = { type: string; text: string; location: string };
 
+const BENIGN_EXTERNAL_CONSOLE_PATTERNS = [
+  'chrome-extension://',
+  'net::ERR_BLOCKED_BY_CLIENT',
+  'web_accessible_resources/noop.txt',
+  'web_accessible_resources/doubleclick_instream_ad_status.js',
+  'youtube.com/youtubei/v1/log_event',
+  'www.youtube.com/generate_204',
+];
+
+function isBenignExternalConsoleNoise(entry: ConsoleEntry): boolean {
+  if (entry.type !== 'error') return false;
+  const haystack = `${entry.text} ${entry.location}`;
+  return BENIGN_EXTERNAL_CONSOLE_PATTERNS.some(pattern => haystack.includes(pattern));
+}
+
 export type TestFixtures = {
   consoleLogs: ConsoleEntry[];
   isLoggedIn: boolean;
@@ -28,6 +43,11 @@ export const test = base.extend<TestFixtures>({
         text:     msg.text(),
         location: msg.location().url,
       };
+
+      if (isBenignExternalConsoleNoise(entry)) {
+        return;
+      }
+
       logs.push(entry);
       // Mirror to test runner stdout so Console Ninja picks them up inline
       const prefix = msg.type() === 'error' ? '🔴' : msg.type() === 'warn' ? '🟡' : '📋';
