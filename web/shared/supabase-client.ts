@@ -185,6 +185,20 @@ export interface YouTubeAlternativeCandidate {
   created_at: string;
 }
 
+export interface SystemHealthCheck {
+  name: string;
+  status: 'ok' | 'warn' | 'error';
+  message: string;
+  details?: Record<string, any>;
+}
+
+export interface SystemHealthReport {
+  checked_at: string;
+  status: 'ok' | 'warn' | 'error';
+  duration_ms: number;
+  checks: SystemHealthCheck[];
+}
+
 export interface R2File {
   id: string;
   bucket_name: string;
@@ -935,6 +949,19 @@ export async function callYouTubeRemediationWorker(params: {
     };
     results: Array<Record<string, any>>;
   };
+}
+
+/**
+ * Run a redacted production canary over environment, database, player endpoint,
+ * catalog, logs, and YouTube API key health.
+ */
+export async function callSystemHealth(params: Record<string, never> = {}): Promise<SystemHealthReport> {
+  const { data, error } = await supabase.functions.invoke('system-health', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as SystemHealthReport;
 }
 
 /**

@@ -21,6 +21,7 @@ import {
   callYouTubeRemediationWorker,
   createAdminBroadcast,
   callRadioGenerator,
+  callSystemHealth,
   getPlaylists,
   getPlaylistItems,
   getTotalCredits,
@@ -36,6 +37,7 @@ import {
   type MediaItem,
   type AdminBroadcast,
   type R2File,
+  type SystemHealthReport,
   type YouTubeAlternativeCandidate,
   signIn,
   signOut,
@@ -614,6 +616,7 @@ type ViewId =
   | 'search'
   | 'library'
   | 'queue'
+  | 'system-health'
   | 'youtube-health'
   | 'playlists-all' | 'playlists-import'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
@@ -623,6 +626,7 @@ const NAV = [
   { id: 'search', icon: '🔍', label: 'Search', children: [] as { id: ViewId; label: string }[] },
   { id: 'library', icon: '💾', label: 'Browse Library', children: [] as { id: ViewId; label: string }[] },
   { id: 'queue', icon: '🎵', label: 'Queue', children: [] as { id: ViewId; label: string }[] },
+  { id: 'system-health', icon: 'OK', label: 'System Health', children: [] as { id: ViewId; label: string }[] },
   { id: 'youtube-health', icon: 'YT', label: 'YouTube Health', children: [] as { id: ViewId; label: string }[] },
   {
     id: 'playlists', icon: '📋', label: 'Playlists', children: [
@@ -2638,6 +2642,96 @@ function LogsPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SYSTEM HEALTH PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+function healthTone(status: 'ok' | 'warn' | 'error') {
+  if (status === 'ok') return { bg: 'rgba(34,197,94,0.1)', color: '#86efac', border: 'rgba(34,197,94,0.24)' };
+  if (status === 'warn') return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.22)' };
+  return { bg: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: 'rgba(248,113,113,0.28)' };
+}
+
+function SystemHealthPanel() {
+  const [report, setReport] = useState<SystemHealthReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runHealthCheck = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await callSystemHealth();
+      setReport(result);
+    } catch (err) {
+      console.error('[System Health] Failed:', err);
+      setError(err instanceof Error ? err.message : 'System health check failed');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { runHealthCheck(); }, [runHealthCheck]);
+
+  const status = report?.status || (error ? 'error' : 'warn');
+  const tone = healthTone(status);
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="System Health" subtitle={report ? `Checked ${new Date(report.checked_at).toLocaleTimeString()} · ${report.duration_ms}ms` : 'Production canary checks'}
+        actions={<Btn variant="accent" onClick={runHealthCheck} disabled={loading}>{loading ? <><Spinner size={12} /> Checking...</> : 'Run Health Check'}</Btn>}
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 12, marginBottom: 14, background: tone.bg, border: `1px solid ${tone.border}` }}>
+          <div style={{ width: 42, height: 42, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.2)', color: tone.color, fontFamily: 'var(--font-display)', fontWeight: 800 }}>
+            {status.toUpperCase()}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', color: '#fff', fontSize: 16, fontWeight: 700 }}>Production Canary</div>
+            <div style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }}>
+              Environment, Supabase database, player endpoint, catalog, log, and YouTube key checks.
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#fca5a5', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+            {error}
+          </div>
+        )}
+
+        {loading && !report ? (
+          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(report?.checks || []).map((check) => {
+              const checkTone = healthTone(check.status);
+              return (
+                <div key={check.name} style={{ borderRadius: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.022)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 7px', borderRadius: 99, background: checkTone.bg, color: checkTone.color, border: `1px solid ${checkTone.border}`, textTransform: 'uppercase' }}>
+                      {check.status}
+                    </span>
+                    <div style={{ fontFamily: 'var(--font-display)', color: '#fff', fontSize: 13, fontWeight: 600 }}>{check.name.replace(/_/g, ' ')}</div>
+                    <div style={{ flex: 1 }} />
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 7 }}>{check.message}</div>
+                  {check.details && (
+                    <pre style={{ margin: '8px 0 0', padding: '8px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.22)', color: 'rgba(255,255,255,0.42)', fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+                      {JSON.stringify(check.details, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // YOUTUBE HEALTH PANEL
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3161,6 +3255,7 @@ function App() {
 
   const isSearchView = view === 'search';
   const isLibraryView = view === 'library';
+  const isSystemHealthView = view === 'system-health';
   const isYouTubeHealthView = view === 'youtube-health';
   const isQueueView = view.startsWith('queue');
   const isPlaylistView = view.startsWith('playlists');
@@ -3188,6 +3283,7 @@ function App() {
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
           {isSearchView && <SearchPanel />}
           {isLibraryView && <BrowseLibraryPanel />}
+          {isSystemHealthView && <SystemHealthPanel />}
           {isYouTubeHealthView && <YouTubeHealthPanel />}
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
