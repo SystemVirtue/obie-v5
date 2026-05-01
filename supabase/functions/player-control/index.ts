@@ -728,6 +728,14 @@ Deno.serve(async (req)=>{
       // ownership must live server-side so a YouTube pause/retry event cannot
       // restart the skipped iframe and strand Admin/Player on different tracks.
       if (action === 'skip' && state === 'idle') {
+        if (preUpdateState === 'playing' || preUpdateState === 'paused') {
+          console.log('[player-control] Admin skip - waiting for player fade before queue_next', {
+            player_id,
+            pre_update_state: preUpdateState,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+
         console.log('[player-control] Admin skip - calling queue_next directly', {
           player_id,
           pre_update_state: preUpdateState,
