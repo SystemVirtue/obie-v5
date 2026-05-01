@@ -368,7 +368,9 @@ function App() {
 
   // Extract YouTube video ID from URL
   const extractYouTubeId = (url: string): string | null => {
-    const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\s]+)/);
+    const match = url.match(
+      /(?:youtube\.com\/watch\?v=|music\.youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtube-nocookie\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([^&?\s/]+)/
+    );
     return match ? match[1] : null;
   };
 
@@ -624,17 +626,28 @@ function App() {
           setLocalPlaybackUrl(result.next_item.url);
         }
         
+        const nextMediaId =
+          result.next_item.media_item_id ??
+          result.next_item.id ??
+          result.next_item.current_media_id ??
+          null;
+
+        if (!nextMediaId || !result.next_item.url) {
+          console.error('[Player] queue_next returned invalid next_item:', result.next_item);
+          return;
+        }
+
         const nextMedia: MediaItem = {
-          id: result.next_item.media_item_id,
+          id: nextMediaId,
           title: result.next_item.title || 'Unknown',
-          artist: 'Unknown',
+          artist: result.next_item.artist || 'Unknown',
           url: result.next_item.url,
           duration: result.next_item.duration || 0,
-          source_id: '',
-          source_type: 'youtube',
-          thumbnail: null,
+          source_id: result.next_item.source_id || '',
+          source_type: result.next_item.source_type || 'youtube',
+          thumbnail: result.next_item.thumbnail || null,
           fetched_at: new Date().toISOString(),
-          metadata: {},
+          metadata: result.next_item.metadata || {},
         };
         console.log('[Player] Loading next media from queue_next result:', nextMedia);
         
@@ -1663,7 +1676,6 @@ function App() {
           return;
         }
         lyricsDataRef.current = lyrics;
-        currentMediaIdRef.current = currentMedia.id;
         if (overlayRef.current) overlayRef.current.style.display = 'block';
         if (!lyricsRafRef.current) lyricsRafRef.current = requestAnimationFrame(syncLyrics);
       } catch (err) {
@@ -1798,47 +1810,65 @@ function App() {
       return;
     }
 
-    // If player already exists, just load the new video
+    // If player already exists, force-load the new video.
+    // Do not let an ended iframe keep/replay the old video while Supabase has advanced.
     if (playerRef.current && playerRef.current.loadVideoById) {
-      console.log('[Player] Loading new video in existing player:', youtubeId);
+      const currentlyLoadedYoutubeId = currentYouTubeIdRef.current;
+
+      if (currentlyLoadedYoutubeId === youtubeId && currentMediaIdRef.current === currentMedia.id) {
+        console.log('[Player] Requested media is already loaded; not reloading:', {
+          media_id: currentMedia.id,
+          youtube_id: youtubeId,
+        });
+        return;
+      }
+
+      console.log('[Player] Force-loading new video in existing player:', {
+        media_id: currentMedia.id,
+        youtube_id: youtubeId,
+        previous_media_id: currentMediaIdRef.current,
+        previous_youtube_id: currentlyLoadedYoutubeId,
+      });
+
       currentMediaIdRef.current = currentMedia.id;
       currentYouTubeIdRef.current = youtubeId;
       markYouTubeLoadStart();
-      
-      // Check if this is loading after a skip
+
       const isAfterSkip = isSkipLoadingRef.current;
-      
+
       if (isAfterSkip) {
-        // After skip: start with volume 0 and opacity 0, then immediately fade in
         console.log('[Player] Loading after skip - will fade in on play');
         setPlaybackOpacity(0);
         setActivePlaybackVolume(0);
-        isSkipLoadingRef.current = false; // Reset flag
-        
-        // Load and explicitly play video (will trigger fade-in when playing state is detected)
-        playerRef.current.loadVideoById(youtubeId);
-        // Ensure playback starts
-        setTimeout(() => {
-          if (playerRef.current && playerRef.current.playVideo) {
-            console.log('[Player] Explicitly calling playVideo() after skip load');
-            playerRef.current.playVideo();
-          }
-        }, 500);
+        isSkipLoadingRef.current = false;
       } else {
-        // Normal load: restore volume and opacity
         setPlaybackOpacity(1);
         setActivePlaybackVolume(getConfiguredVolume());
-        
-        // loadVideoById and explicitly play
-        playerRef.current.loadVideoById(youtubeId);
-        // Ensure playback starts
-        setTimeout(() => {
-          if (playerRef.current && playerRef.current.playVideo) {
-            console.log('[Player] Explicitly calling playVideo() after normal load');
-            playerRef.current.playVideo();
-          }
-        }, 500);
       }
+
+      try {
+        playerRef.current.stopVideo?.();
+        playerRef.current.clearVideo?.();
+      } catch (error) {
+        console.warn('[Player] Failed to clear previous YouTube iframe before load:', error);
+      }
+
+      playerRef.current.loadVideoById({
+        videoId: youtubeId,
+        startSeconds: 0,
+      });
+
+      window.setTimeout(() => {
+        if (playerRef.current && playerRef.current.playVideo) {
+          console.log('[Player] Explicitly calling playVideo() after force load');
+          try {
+            playerRef.current.playVideo();
+          } catch (error) {
+            console.error('[Player] Failed to play after force load:', error);
+          }
+        }
+      }, 500);
+
       return;
     }
 
