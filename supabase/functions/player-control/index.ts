@@ -720,44 +720,35 @@ Deno.serve(async (req)=>{
           });
         }
       }
-      // If action is 'skip' from Admin, check if player was already idle.
-      // If idle: call queue_next directly (no fade needed, nothing is playing).
-      // If playing/paused: let the Player handle the fade and then call queue_next.
+      // If action is 'skip' from Admin, advance the queue immediately. The player
+      // endpoint is responsible for stopping/fading its current media, but queue
+      // ownership must live server-side so a YouTube pause/retry event cannot
+      // restart the skipped iframe and strand Admin/Player on different tracks.
       if (action === 'skip' && state === 'idle') {
-        if (preUpdateState === 'idle') {
-          // Player was already idle — no video playing, skip the fade and advance queue now.
-          console.log('[player-control] Skip while idle - calling queue_next directly (no fade needed)');
-          const { data: idleStatus } = await supabase
-            .from('player_status')
-            .select('current_media_id')
-            .eq('player_id', player_id)
-            .single();
-          const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
-            p_player_id: player_id,
-            p_expected_media_id: typeof expected_media_id === 'string' ? expected_media_id : idleStatus?.current_media_id ?? null,
-          });
-          if (nextError) {
-            console.error('[player-control] ❌ Failed to get next item on idle-skip:', nextError);
-          } else {
-            console.log('[player-control] 🎵 Idle-skip queue_next returned:', nextItem?.[0]?.title?.slice(0, 30) || 'none');
-          }
-          return new Response(JSON.stringify({
-            success: true,
-            next_item: nextItem?.[0] || null,
-            action: 'skip_idle'
-          }), {
-            status: 200,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
+        console.log('[player-control] Admin skip - calling queue_next directly', {
+          player_id,
+          pre_update_state: preUpdateState,
+          expected_media_id: typeof expected_media_id === 'string' ? expected_media_id : null,
+        });
+        const { data: skipStatus } = await supabase
+          .from('player_status')
+          .select('current_media_id')
+          .eq('player_id', player_id)
+          .single();
+        const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
+          p_player_id: player_id,
+          p_expected_media_id: typeof expected_media_id === 'string' ? expected_media_id : skipStatus?.current_media_id ?? null,
+        });
+        if (nextError) {
+          console.error('[player-control] ❌ Failed to get next item on admin skip:', nextError);
+          throw nextError;
+        } else {
+          console.log('[player-control] 🎵 Admin skip queue_next returned:', nextItem?.[0]?.title?.slice(0, 30) || 'none');
         }
-
-        console.log('[player-control] Skip action from Admin - state updated, Player will handle fade');
         return new Response(JSON.stringify({
           success: true,
-          skip_pending: true
+          next_item: nextItem?.[0] || null,
+          action: 'skip'
         }), {
           status: 200,
           headers: {

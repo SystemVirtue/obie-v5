@@ -805,6 +805,10 @@ function App() {
 
     if (event.data === 1) {
       // PLAYING
+      if (isEndingRef.current && statusRef.current?.state === 'idle') {
+        console.log('[Player] Ignoring PLAYING from skipped media while queue advance is in progress');
+        return;
+      }
       console.log('[Player] Video PLAYING');
       const now = Date.now();
       videoHasPlayedRef.current = true; // Video confirmed playing — any subsequent pause is user-initiated
@@ -826,7 +830,18 @@ function App() {
       // PAUSED
       console.log('[Player] Video PAUSED');
       const pauseAfterConfirmedStart = videoHasPlayedRef.current || firstPlayAtRef.current > 0 || !!status?.playback_started_at;
-      const adminRequestedPause = status?.state === 'paused';
+      const backendState = statusRef.current?.state ?? status?.state;
+      const adminRequestedPause = backendState === 'paused';
+      const skipOrAdvanceInProgress = isEndingRef.current || backendState === 'idle';
+      if (skipOrAdvanceInProgress) {
+        console.log('[Player] Ignoring YouTube PAUSED during skip/queue advance', {
+          media_item_id: currentMediaIdRef.current,
+          youtube_id: currentYouTubeIdRef.current,
+          backend_state: backendState,
+          isEnding: isEndingRef.current,
+        });
+        return;
+      }
       if (!videoHasPlayedRef.current && playerRef.current && typeof playerRef.current.playVideo === 'function') {
         console.log('[Player] Video paused before first play — treating as startup pause and retrying play...');
         try {
@@ -1153,13 +1168,36 @@ function App() {
       if ((playerRef.current || playerModeRef.current === 'ytm_desktop') && prevState !== newState) {
         // SKIP: Admin set state to 'idle' while video was playing
         if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
-          console.log('[Player] Skip detected from Admin - triggering fade and skip');
-          await reportEndedAndNext(true); // Skip with fade
+          console.log('[Player] Skip detected from Admin - stopping current media and waiting for server queue advance');
+          isEndingRef.current = true;
+          isSkipLoadingRef.current = true;
+          const restoreVolume = getActivePlaybackVolume();
+          skipRestoreVolumeRef.current = restoreVolume > 0 ? restoreVolume : getConfiguredVolume();
+          skipRestorePendingRef.current = true;
+          fadeOut(skipRestoreVolumeRef.current)
+            .catch(() => {})
+            .finally(() => {
+              try {
+                if (localVideoRef.current) {
+                  localVideoRef.current.pause();
+                  localVideoRef.current.removeAttribute('src');
+                  localVideoRef.current.load();
+                }
+                if (playerRef.current) {
+                  playerRef.current.pauseVideo?.();
+                  playerRef.current.stopVideo?.();
+                }
+              } catch (error) {
+                console.warn('[Player] Failed to stop skipped playback after admin skip:', error);
+              }
+              window.setTimeout(() => {
+                isEndingRef.current = false;
+              }, 2000);
+            });
           prevStateRef.current = newState;
           // Do not write this stale idle/old-media status into local state after
-          // the skip completes. reportEndedAndNext loads the latest queue state;
-          // re-applying the original admin skip update can leave the endpoint
-          // paused on the skipped iframe while Admin already shows the next track.
+          // the skip starts. player-control advances the queue immediately and
+          // the next status event loads the authoritative current media.
           return; // Exit early, don't process other state changes
         }
         
@@ -1256,7 +1294,7 @@ function App() {
       console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
     };
-  }, [fadeIn, fadeOut, isYouTubePlaybackUrl, reportEndedAndNext, teardownLocalAudioAnalyser]);
+  }, [fadeIn, fadeOut, getActivePlaybackVolume, getConfiguredVolume, isYouTubePlaybackUrl, reportEndedAndNext, teardownLocalAudioAnalyser]);
 
   // Subscribe to player settings (to watch karaoke_mode)
   useEffect(() => {
