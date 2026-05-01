@@ -514,6 +514,7 @@ function App() {
         state,
         progress,
         action: 'update',
+        expected_media_id: currentMediaIdRef.current ?? undefined,
         session_id: sessionIdRef.current ?? undefined,
         endpoint_id: endpointIdRef.current ?? undefined,
       });

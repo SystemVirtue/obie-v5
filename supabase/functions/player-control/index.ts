@@ -628,6 +628,54 @@ Deno.serve(async (req)=>{
         : await isMasterEndpoint(supabase, player_id, endpoint_id);
 
       if (!callerIsMaster) {
+        if (action === 'update' && state === 'playing' && typeof expected_media_id === 'string') {
+          const { data: currentStatusForConfirmation } = await supabase
+            .from('player_status')
+            .select('state, current_media_id, playback_started_at')
+            .eq('player_id', player_id)
+            .single();
+
+          if (
+            currentStatusForConfirmation?.state === 'loading'
+            && currentStatusForConfirmation?.current_media_id === expected_media_id
+          ) {
+            const playbackStartedAt = currentStatusForConfirmation.playback_started_at || new Date().toISOString();
+            const { error: confirmError } = await supabase
+              .from('player_status')
+              .update({
+                state: 'playing',
+                progress: progress !== undefined ? Math.min(1, Math.max(0, progress)) : 0,
+                playback_started_at: playbackStartedAt,
+                playback_error: null,
+                playback_error_code: null,
+                playback_error_at: null,
+                last_recovery_reason: null,
+                last_updated: new Date().toISOString(),
+              })
+              .eq('player_id', player_id)
+              .eq('current_media_id', expected_media_id);
+            if (confirmError) throw confirmError;
+
+            await logSystemEvent(supabase, player_id, 'playback_started_confirmed_by_non_master', 'info', {
+              source: initiator || 'player_client',
+              endpoint_id: endpoint_id || null,
+              session_id: session_id || null,
+              media_item_id: expected_media_id,
+            });
+
+            return new Response(JSON.stringify({
+              success: true,
+              confirmed_by_non_master: true
+            }), {
+              status: 200,
+              headers: {
+                ...corsHeaders,
+                'Content-Type': 'application/json'
+              }
+            });
+          }
+        }
+
         const shouldLog = shouldLogNonMasterStatus(player_id, action, endpoint_id);
         const logPayload = {
           player_id,
