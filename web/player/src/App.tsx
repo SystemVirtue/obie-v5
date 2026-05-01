@@ -623,6 +623,7 @@ function App() {
           }
         } else if (result.next_item.url && result.next_item.url !== localPlaybackUrlRef.current) {
           console.log('[Player] queue_next result is local/Cloudflare — activating <video> immediately');
+          localPlaybackUrlRef.current = result.next_item.url;
           setLocalPlaybackUrl(result.next_item.url);
         }
         
@@ -648,7 +649,7 @@ function App() {
           url: result.next_item.url,
           duration: result.next_item.duration || 0,
           source_id: result.next_item.source_id || '',
-          source_type: result.next_item.source_type || 'youtube',
+          source_type: result.next_item.source_type || (isYouTubePlaybackUrl(result.next_item.url) ? 'youtube' : 'cloudflare'),
           thumbnail: result.next_item.thumbnail || null,
           fetched_at: new Date().toISOString(),
           metadata: result.next_item.metadata || {},
@@ -1278,7 +1279,14 @@ function App() {
       // Check if current_media changed
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
-      const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
+      const statusPlaybackUrl =
+        newStatus.local_url ||
+        newStatus.current_media?.url ||
+        null;
+      const statusIsLocalOrCloudflare =
+        (newStatus.source === 'local' || newStatus.source === 'cloudflare') &&
+        !!statusPlaybackUrl &&
+        !isYouTubePlaybackUrl(statusPlaybackUrl);
       const adminSkipNewMedia = newMediaId && newMediaId !== oldMediaId && newStatus.last_recovery_reason === 'admin_skip';
 
       if (adminSkipNewMedia) {
@@ -1291,19 +1299,20 @@ function App() {
       }
 
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
-      if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url && !statusMediaIsYouTube) {
-        // Only activate when the local_url is actually new (avoid redundant sets)
-        if (newStatus.local_url !== localPlaybackUrlRef.current) {
+      // Important: player_status.local_url can be null even when the joined media
+      // URL is a valid Cloudflare/R2 .mp4. In that case, fall back to
+      // current_media.url. Do not reset back to iframe mode for R2/local URLs.
+      if (statusIsLocalOrCloudflare) {
+        if (statusPlaybackUrl !== localPlaybackUrlRef.current) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
-          console.log(`[Player][realtime]   media_id=${newMediaId}  url=${newStatus.local_url}`);
+          console.log(`[Player][realtime]   media_id=${newMediaId}  url=${statusPlaybackUrl}`);
           lastPlaybackFailureKeyRef.current = null;
           lastRecoveryKeyRef.current = null;
-          setLocalPlaybackUrl(newStatus.local_url);
+          localPlaybackUrlRef.current = statusPlaybackUrl;
+          setLocalPlaybackUrl(statusPlaybackUrl);
         }
       } else if (localPlaybackUrlRef.current) {
-        // Any non-local source should tear down the local <video> path immediately.
-        // Otherwise a finished Cloudflare/local element can stay mounted and block
-        // a requested YouTube track if the transition status arrives late.
+        // Any real non-local source should tear down the local <video> path.
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
         localPlaybackUrlRef.current = null;
