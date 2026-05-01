@@ -368,6 +368,7 @@ function App() {
 
   // Extract YouTube video ID from URL
   const extractYouTubeId = (url: string): string | null => {
+    if (!url) return null;
     const match = url.match(
       /(?:youtube\.com\/watch\?v=|music\.youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtube-nocookie\.com\/embed\/|youtube\.com\/shorts\/|youtu\.be\/)([^&?\s/]+)/
     );
@@ -635,12 +636,10 @@ function App() {
 
         if (!nextMediaId || !result.next_item.url) {
           console.error('[Player] Invalid next_item from queue_next:', result.next_item);
-          logPlayerEvent('queue_next_invalid_next_item', 'error', {
-            expected_media_id: expectedMediaId,
-            next_item: result.next_item,
-          }, 'invalid_next_item').catch(() => {});
           return;
         }
+
+        const nextItemIsYouTube = isYouTubePlaybackUrl(result.next_item.url);
 
         const nextMedia: MediaItem = {
           id: nextMediaId,
@@ -649,7 +648,7 @@ function App() {
           url: result.next_item.url,
           duration: result.next_item.duration || 0,
           source_id: result.next_item.source_id || '',
-          source_type: result.next_item.source_type || (isYouTubePlaybackUrl(result.next_item.url) ? 'youtube' : 'cloudflare'),
+          source_type: result.next_item.source_type || (nextItemIsYouTube ? 'youtube' : 'cloudflare'),
           thumbnail: result.next_item.thumbnail || null,
           fetched_at: new Date().toISOString(),
           metadata: result.next_item.metadata || {},
@@ -665,7 +664,6 @@ function App() {
           currentMediaIdRef.current = null;
           currentYouTubeIdRef.current = null;
         }
-        shouldAutoplayCurrentMediaRef.current = true;
         setCurrentMedia(nextMedia);
         
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
@@ -698,9 +696,11 @@ function App() {
           shouldAutoplayCurrentMediaRef.current = latest.state === 'playing' || latest.state === 'loading';
           setStatus(latest);
 
-          const latestMediaIsYouTube = isYouTubePlaybackUrl(latest.current_media?.url);
-          if ((latest.source === 'local' || latest.source === 'cloudflare') && latest.local_url && !latestMediaIsYouTube) {
-            setLocalPlaybackUrl(latest.local_url);
+          const latestPlaybackUrl = latest.local_url || latest.current_media?.url || null;
+          const latestMediaIsYouTube = isYouTubePlaybackUrl(latestPlaybackUrl);
+          if ((latest.source === 'local' || latest.source === 'cloudflare') && latestPlaybackUrl && !latestMediaIsYouTube) {
+            localPlaybackUrlRef.current = latestPlaybackUrl;
+            setLocalPlaybackUrl(latestPlaybackUrl);
           } else if (localPlaybackUrlRef.current) {
             setLocalPlaybackUrl(null);
             localPlaybackUrlRef.current = null;
@@ -714,7 +714,19 @@ function App() {
             teardownLocalAudioAnalyser();
           }
 
-          setCurrentMedia(latest.current_media || null);
+          const latestMediaForState = latest.current_media
+            ? {
+                ...latest.current_media,
+                url:
+                  (latest.source === 'local' || latest.source === 'cloudflare') && latestPlaybackUrl
+                    ? latestPlaybackUrl
+                    : latest.current_media.url,
+                source_type:
+                  latest.current_media.source_type ||
+                  ((latest.source === 'local' || latest.source === 'cloudflare') ? 'cloudflare' : 'youtube'),
+              }
+            : null;
+          setCurrentMedia(latestMediaForState);
           if (latest.current_media_id !== expectedMediaId) {
             currentMediaIdRef.current = null;
             currentYouTubeIdRef.current = null;
@@ -1279,14 +1291,7 @@ function App() {
       // Check if current_media changed
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
-      const statusPlaybackUrl =
-        newStatus.local_url ||
-        newStatus.current_media?.url ||
-        null;
-      const statusIsLocalOrCloudflare =
-        (newStatus.source === 'local' || newStatus.source === 'cloudflare') &&
-        !!statusPlaybackUrl &&
-        !isYouTubePlaybackUrl(statusPlaybackUrl);
+      const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
       const adminSkipNewMedia = newMediaId && newMediaId !== oldMediaId && newStatus.last_recovery_reason === 'admin_skip';
 
       if (adminSkipNewMedia) {
@@ -1299,9 +1304,16 @@ function App() {
       }
 
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
-      // Important: player_status.local_url can be null even when the joined media
-      // URL is a valid Cloudflare/R2 .mp4. In that case, fall back to
-      // current_media.url. Do not reset back to iframe mode for R2/local URLs.
+      const statusPlaybackUrl =
+        newStatus.local_url ||
+        newStatus.current_media?.url ||
+        null;
+
+      const statusIsLocalOrCloudflare =
+        (newStatus.source === 'local' || newStatus.source === 'cloudflare') &&
+        !!statusPlaybackUrl &&
+        !isYouTubePlaybackUrl(statusPlaybackUrl);
+
       if (statusIsLocalOrCloudflare) {
         if (statusPlaybackUrl !== localPlaybackUrlRef.current) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
@@ -1312,7 +1324,7 @@ function App() {
           setLocalPlaybackUrl(statusPlaybackUrl);
         }
       } else if (localPlaybackUrlRef.current) {
-        // Any real non-local source should tear down the local <video> path.
+        // Any non-local source should tear down the local <video> path immediately.
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
         localPlaybackUrlRef.current = null;
@@ -1334,7 +1346,16 @@ function App() {
           title: newStatus.current_media?.title,
           artist: newStatus.current_media?.artist
         });
-        setCurrentMedia(newStatus.current_media || null);
+        const mediaForState = newStatus.current_media
+          ? {
+              ...newStatus.current_media,
+              url: statusIsLocalOrCloudflare && statusPlaybackUrl ? statusPlaybackUrl : newStatus.current_media.url,
+              source_type:
+                newStatus.current_media.source_type ||
+                (statusIsLocalOrCloudflare ? 'cloudflare' : 'youtube'),
+            }
+          : null;
+        setCurrentMedia(mediaForState);
 
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
         recentlyLoadedRef.current = true;
@@ -1705,64 +1726,71 @@ function App() {
   // Create or update YouTube player when media changes
   useEffect(() => {
     if (!currentMedia) return;
-    const currentMediaIsYouTube = isYouTubePlaybackUrl(currentMedia.url);
+
+    const statusSnapshot = statusRef.current ?? status;
+    const statusSource = statusSnapshot?.source;
+    const statusLocalUrl = statusSnapshot?.local_url ?? null;
+    const statusMediaId = statusSnapshot?.current_media_id ?? null;
     const localUrlAtEffectStart = localPlaybackUrlRef.current || localPlaybackUrl;
 
-    // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
-    // Just update the ref so the status subscription doesn't re-trigger media changes.
-    if (localUrlAtEffectStart && !currentMediaIsYouTube) {
-      if (currentMediaIdRef.current !== currentMedia.id) {
-        console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
-        currentMediaIdRef.current = currentMedia.id;
-        videoHasPlayedRef.current = false;
-        lastPlaybackFailureKeyRef.current = null;
-        lastRecoveryKeyRef.current = null;
+    const lockedLocalPlaybackUrl =
+      statusLocalUrl ||
+      (!isYouTubePlaybackUrl(currentMedia.url) ? currentMedia.url : null) ||
+      localUrlAtEffectStart ||
+      null;
+
+    const shouldUseLocalVideo =
+      (statusSource === 'local' || statusSource === 'cloudflare' || currentMedia.source_type === 'cloudflare' || currentMedia.source_type === 'local') &&
+      (!statusMediaId || currentMedia.id === statusMediaId) &&
+      !!lockedLocalPlaybackUrl &&
+      !isYouTubePlaybackUrl(lockedLocalPlaybackUrl);
+
+    if (shouldUseLocalVideo) {
+      console.log('[Player] Cloudflare/local media locked to <video>; skipping YouTube iframe load', {
+        media_id: currentMedia.id,
+        source: statusSource ?? currentMedia.source_type,
+        playback_url: lockedLocalPlaybackUrl,
+        current_media_url: currentMedia.url,
+      });
+
+      if (lockedLocalPlaybackUrl && lockedLocalPlaybackUrl !== localPlaybackUrlRef.current) {
+        localPlaybackUrlRef.current = lockedLocalPlaybackUrl;
+        setLocalPlaybackUrl(lockedLocalPlaybackUrl);
       }
+
+      currentMediaIdRef.current = currentMedia.id;
+      currentYouTubeIdRef.current = null;
+      videoHasPlayedRef.current = false;
+      lastPlaybackFailureKeyRef.current = null;
+      lastRecoveryKeyRef.current = null;
+
+      if (playerRef.current) {
+        try {
+          playerRef.current.stopVideo?.();
+          playerRef.current.clearVideo?.();
+          playerRef.current.destroy?.();
+        } catch (error) {
+          console.warn('[Player] Failed to destroy YouTube player while switching to local video:', error);
+        }
+        playerRef.current = null;
+        setPlayerReady(false);
+        if (playerDivRef.current) playerDivRef.current.innerHTML = '';
+      }
+
       return;
-    } else if (localUrlAtEffectStart && currentMediaIsYouTube) {
-      // React state can briefly still hold the previous Cloudflare/local URL when
-      // a queue transition has already selected a YouTube item. Do not mark the
-      // YouTube media as loaded until the iframe path actually loads it.
-      const staleClearKey = `${currentMedia.id}:${localUrlAtEffectStart}`;
-      if (lastStaleLocalClearKeyRef.current !== staleClearKey) {
-        lastStaleLocalClearKeyRef.current = staleClearKey;
-        console.warn('[Player] Clearing stale local/Cloudflare URL before YouTube load', {
-          media_id: currentMedia.id,
-          youtube_id: extractYouTubeId(currentMedia.url),
-          stale_url: localUrlAtEffectStart,
-        });
-      }
-      setLocalPlaybackUrl(null);
-      localPlaybackUrlRef.current = null;
-      try {
-        localVideoRef.current?.pause();
-        localVideoRef.current?.removeAttribute('src');
-        localVideoRef.current?.load();
-      } catch (error) {
-        console.warn('[Player] Failed to tear down stale local video:', error);
-      }
-      teardownLocalAudioAnalyser();
     }
 
-    // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
-    // Just update the ref so the status subscription doesn't re-trigger media changes.
-    if (!currentMediaIsYouTube && localPlaybackUrlRef.current) {
-      if (currentMediaIdRef.current !== currentMedia.id) {
-        console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
-        currentMediaIdRef.current = currentMedia.id;
-        videoHasPlayedRef.current = false;
-      }
-      return;
-    }
-
-    // YTM Desktop mode: dispatch changeVideo instead of creating an iframe
+    // YTM Desktop mode: dispatch changeVideo instead of creating an iframe.
     if (playerModeRef.current === 'ytm_desktop') {
       if (currentMediaIdRef.current === currentMedia.id) {
         console.log('[Player] Same media (YTM), skipping');
         return;
       }
       const videoId = extractYouTubeId(currentMedia.url);
-      if (!videoId) { console.error('[YTM] Could not extract YouTube ID from:', currentMedia.url); return; }
+      if (!videoId) {
+        console.error('[YTM] Could not extract YouTube ID from:', currentMedia.url);
+        return;
+      }
       currentMediaIdRef.current = currentMedia.id;
       ytmCurrentVideoIdRef.current = videoId;
       ytmPlayingReportedRef.current = false;
@@ -1784,8 +1812,12 @@ function App() {
               reportEndedAndNext(false);
             }
           }, 10000);
-        } else if (res.status === 401) { setYtmConnected(false); setYtmError('YTM auth failed — please reconnect'); }
-        else setYtmError(`YTM command failed (HTTP ${res.status})`);
+        } else if (res.status === 401) {
+          setYtmConnected(false);
+          setYtmError('YTM auth failed — please reconnect');
+        } else {
+          setYtmError(`YTM command failed (HTTP ${res.status})`);
+        }
       }).catch(() => {
         setYtmError('YTM Desktop offline — start YTM Desktop with Companion Server enabled');
         setYtmConnected(false);
@@ -1800,13 +1832,6 @@ function App() {
 
     if (!ytApiReady || !playerDivRef.current) return;
 
-    console.log('[Player] Loading NEW media:', {
-      id: currentMedia.id,
-      title: currentMedia.title,
-      artist: currentMedia.artist,
-      url: currentMedia.url
-    });
-
     const youtubeId = extractYouTubeId(currentMedia.url);
     if (!youtubeId) {
       console.error('[Player] Could not extract YouTube ID from:', currentMedia.url);
@@ -1818,18 +1843,33 @@ function App() {
       return;
     }
 
-    // If a YouTube iframe already exists, destroy it completely before loading the next media.
-    // Reusing the same YouTube iframe with loadVideoById has been observed to replay the
-    // just-ended video even after Supabase queue_next has advanced. A fresh iframe is slower
-    // but much more reliable for a venue player.
+    if (currentMediaIdRef.current === currentMedia.id && currentYouTubeIdRef.current === youtubeId && playerRef.current) {
+      console.log('[Player] Same YouTube media already loaded; skipping iframe rebuild', {
+        media_id: currentMedia.id,
+        youtube_id: youtubeId,
+      });
+      return;
+    }
+
+    console.log('[Player] Loading NEW YouTube media:', {
+      id: currentMedia.id,
+      title: currentMedia.title,
+      artist: currentMedia.artist,
+      url: currentMedia.url,
+      youtube_id: youtubeId,
+    });
+
+    const isAfterSkip = isSkipLoadingRef.current;
+    currentMediaIdRef.current = currentMedia.id;
+    currentYouTubeIdRef.current = youtubeId;
+    markYouTubeLoadStart();
+    setPlayerReady(false);
+
     if (playerRef.current) {
       console.log('[Player] Destroying existing YouTube player before loading new media:', {
-        old_media_id: currentMediaIdRef.current,
-        old_youtube_id: currentYouTubeIdRef.current,
         new_media_id: currentMedia.id,
         new_youtube_id: youtubeId,
       });
-
       try {
         playerRef.current.stopVideo?.();
         playerRef.current.clearVideo?.();
@@ -1837,24 +1877,12 @@ function App() {
       } catch (error) {
         console.warn('[Player] Failed to destroy old YouTube player cleanly:', error);
       }
-
       playerRef.current = null;
-      setPlayerReady(false);
-
-      if (playerDivRef.current) {
-        playerDivRef.current.innerHTML = '';
-      }
+      if (playerDivRef.current) playerDivRef.current.innerHTML = '';
     }
 
-    // Fresh setup for every YouTube media change.
-    currentMediaIdRef.current = currentMedia.id;
-    currentYouTubeIdRef.current = youtubeId;
-    markYouTubeLoadStart();
-    setPlayerReady(false);
-
-    const isAfterSkip = isSkipLoadingRef.current;
     if (isAfterSkip) {
-      console.log('[Player] Creating fresh YouTube player after skip - starting muted/transparent for fade-in');
+      console.log('[Player] Loading after skip - will fade in on play');
       setPlaybackOpacity(0);
       setActivePlaybackVolume(0);
       isSkipLoadingRef.current = false;
@@ -1871,12 +1899,12 @@ function App() {
         enablejsapi: 1,
         origin: window.location.origin,
         autoplay: shouldAutoplayCurrentMediaRef.current ? 1 : 0,
-        controls: 0,        // Hide controls to prevent accidental clicks
-        disablekb: 1,       // Disable keyboard controls
-        modestbranding: 1,  // Hide YouTube logo
-        rel: 0,             // Don't show related videos
-        iv_load_policy: 3,  // Hide annotations
-        vq: 'auto',         // Set quality to auto (let YouTube choose best quality)
+        controls: 0,
+        disablekb: 1,
+        modestbranding: 1,
+        rel: 0,
+        iv_load_policy: 3,
+        vq: 'auto',
       },
       events: {
         onReady: onPlayerReady,
@@ -1884,7 +1912,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, localPlaybackUrl, ytApiReady, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, teardownLocalAudioAnalyser, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
+  }, [currentMedia, localPlaybackUrl, ytApiReady, status?.source, status?.local_url, status?.current_media_id, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
