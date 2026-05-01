@@ -633,7 +633,11 @@ function App() {
           null;
 
         if (!nextMediaId || !result.next_item.url) {
-          console.error('[Player] queue_next returned invalid next_item:', result.next_item);
+          console.error('[Player] Invalid next_item from queue_next:', result.next_item);
+          logPlayerEvent('queue_next_invalid_next_item', 'error', {
+            expected_media_id: expectedMediaId,
+            next_item: result.next_item,
+          }, 'invalid_next_item').catch(() => {});
           return;
         }
 
@@ -660,6 +664,7 @@ function App() {
           currentMediaIdRef.current = null;
           currentYouTubeIdRef.current = null;
         }
+        shouldAutoplayCurrentMediaRef.current = true;
         setCurrentMedia(nextMedia);
         
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
@@ -1786,12 +1791,6 @@ function App() {
 
     if (!ytApiReady || !playerDivRef.current) return;
 
-    // Check if this is actually a new media item
-    if (currentMediaIdRef.current === currentMedia.id) {
-      console.log('[Player] Same media, skipping player update');
-      return;
-    }
-
     console.log('[Player] Loading NEW media:', {
       id: currentMedia.id,
       title: currentMedia.title,
@@ -1810,73 +1809,50 @@ function App() {
       return;
     }
 
-    // If player already exists, force-load the new video.
-    // Do not let an ended iframe keep/replay the old video while Supabase has advanced.
-    if (playerRef.current && playerRef.current.loadVideoById) {
-      const currentlyLoadedYoutubeId = currentYouTubeIdRef.current;
-
-      if (currentlyLoadedYoutubeId === youtubeId && currentMediaIdRef.current === currentMedia.id) {
-        console.log('[Player] Requested media is already loaded; not reloading:', {
-          media_id: currentMedia.id,
-          youtube_id: youtubeId,
-        });
-        return;
-      }
-
-      console.log('[Player] Force-loading new video in existing player:', {
-        media_id: currentMedia.id,
-        youtube_id: youtubeId,
-        previous_media_id: currentMediaIdRef.current,
-        previous_youtube_id: currentlyLoadedYoutubeId,
+    // If a YouTube iframe already exists, destroy it completely before loading the next media.
+    // Reusing the same YouTube iframe with loadVideoById has been observed to replay the
+    // just-ended video even after Supabase queue_next has advanced. A fresh iframe is slower
+    // but much more reliable for a venue player.
+    if (playerRef.current) {
+      console.log('[Player] Destroying existing YouTube player before loading new media:', {
+        old_media_id: currentMediaIdRef.current,
+        old_youtube_id: currentYouTubeIdRef.current,
+        new_media_id: currentMedia.id,
+        new_youtube_id: youtubeId,
       });
-
-      currentMediaIdRef.current = currentMedia.id;
-      currentYouTubeIdRef.current = youtubeId;
-      markYouTubeLoadStart();
-
-      const isAfterSkip = isSkipLoadingRef.current;
-
-      if (isAfterSkip) {
-        console.log('[Player] Loading after skip - will fade in on play');
-        setPlaybackOpacity(0);
-        setActivePlaybackVolume(0);
-        isSkipLoadingRef.current = false;
-      } else {
-        setPlaybackOpacity(1);
-        setActivePlaybackVolume(getConfiguredVolume());
-      }
 
       try {
         playerRef.current.stopVideo?.();
         playerRef.current.clearVideo?.();
+        playerRef.current.destroy?.();
       } catch (error) {
-        console.warn('[Player] Failed to clear previous YouTube iframe before load:', error);
+        console.warn('[Player] Failed to destroy old YouTube player cleanly:', error);
       }
 
-      playerRef.current.loadVideoById({
-        videoId: youtubeId,
-        startSeconds: 0,
-      });
+      playerRef.current = null;
+      setPlayerReady(false);
 
-      window.setTimeout(() => {
-        if (playerRef.current && playerRef.current.playVideo) {
-          console.log('[Player] Explicitly calling playVideo() after force load');
-          try {
-            playerRef.current.playVideo();
-          } catch (error) {
-            console.error('[Player] Failed to play after force load:', error);
-          }
-        }
-      }, 500);
-
-      return;
+      if (playerDivRef.current) {
+        playerDivRef.current.innerHTML = '';
+      }
     }
 
-    // First time setup - create new player
-      currentMediaIdRef.current = currentMedia.id;
-      currentYouTubeIdRef.current = youtubeId;
-      markYouTubeLoadStart();
-      setPlayerReady(false);
+    // Fresh setup for every YouTube media change.
+    currentMediaIdRef.current = currentMedia.id;
+    currentYouTubeIdRef.current = youtubeId;
+    markYouTubeLoadStart();
+    setPlayerReady(false);
+
+    const isAfterSkip = isSkipLoadingRef.current;
+    if (isAfterSkip) {
+      console.log('[Player] Creating fresh YouTube player after skip - starting muted/transparent for fade-in');
+      setPlaybackOpacity(0);
+      setActivePlaybackVolume(0);
+      isSkipLoadingRef.current = false;
+    } else {
+      setPlaybackOpacity(1);
+      setActivePlaybackVolume(getConfiguredVolume());
+    }
 
     console.log('[Player] Creating YouTube player for video:', youtubeId);
     playerRef.current = new window.YT.Player(playerDivRef.current, {
