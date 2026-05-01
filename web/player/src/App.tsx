@@ -73,6 +73,7 @@ function App() {
   const ignoreEndedUntilRef = useRef(0); // Ignore YouTube ENDED events until this timestamp for the current load
   const firstPlayAtRef = useRef(0); // Timestamp of the first confirmed PLAYING state for the current load
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  const isAdminSkipStoppingRef = useRef(false);
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
@@ -319,6 +320,7 @@ function App() {
     if (skipFadePromiseRef.current) return skipFadePromiseRef.current;
 
     isEndingRef.current = true;
+    isAdminSkipStoppingRef.current = true;
     isSkipLoadingRef.current = true;
     const restoreVolume = getActivePlaybackVolume();
     skipRestoreVolumeRef.current = restoreVolume > 0 ? restoreVolume : getConfiguredVolume();
@@ -343,6 +345,7 @@ function App() {
       })
       .finally(() => {
         skipFadePromiseRef.current = null;
+        isAdminSkipStoppingRef.current = false;
         window.setTimeout(() => {
           if (!skipFadePromiseRef.current) {
             isEndingRef.current = false;
@@ -844,7 +847,7 @@ function App() {
 
     if (event.data === 1) {
       // PLAYING
-      if (isEndingRef.current && statusRef.current?.state === 'idle') {
+      if (isAdminSkipStoppingRef.current && statusRef.current?.state === 'idle') {
         console.log('[Player] Ignoring PLAYING from skipped media while queue advance is in progress');
         return;
       }
@@ -871,13 +874,14 @@ function App() {
       const pauseAfterConfirmedStart = videoHasPlayedRef.current || firstPlayAtRef.current > 0 || !!status?.playback_started_at;
       const backendState = statusRef.current?.state ?? status?.state;
       const adminRequestedPause = backendState === 'paused';
-      const skipOrAdvanceInProgress = isEndingRef.current || backendState === 'idle';
+      const skipOrAdvanceInProgress = isAdminSkipStoppingRef.current || backendState === 'idle';
       if (skipOrAdvanceInProgress) {
         console.log('[Player] Ignoring YouTube PAUSED during skip/queue advance', {
           media_item_id: currentMediaIdRef.current,
           youtube_id: currentYouTubeIdRef.current,
           backend_state: backendState,
           isEnding: isEndingRef.current,
+          isAdminSkipStopping: isAdminSkipStoppingRef.current,
         });
         return;
       }
