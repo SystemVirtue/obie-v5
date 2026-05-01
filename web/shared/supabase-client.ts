@@ -353,6 +353,7 @@ export function subscribeToPlayerStatus(
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
+  let latestStatusTimestamp = 0;
 
   const fetchStatus = (label: 'Initial' | 'Updated') => {
     supabase
@@ -367,6 +368,16 @@ export function subscribeToPlayerStatus(
         }
 
         if (data) {
+          const nextTimestamp = Date.parse((data as any).last_updated ?? '') || 0;
+          if (nextTimestamp && nextTimestamp < latestStatusTimestamp) {
+            console.warn(`[subscribeToPlayerStatus] Ignoring stale ${label.toLowerCase()} status snapshot:`, {
+              state: (data as any).state,
+              current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
+              last_updated: (data as any).last_updated,
+            });
+            return;
+          }
+          latestStatusTimestamp = Math.max(latestStatusTimestamp, nextTimestamp);
           console.log(`[subscribeToPlayerStatus] 📺 ${label} status:`, {
             state: (data as any).state,
             current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',

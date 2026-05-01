@@ -99,6 +99,7 @@ function App() {
   const localPlaybackUrlRef = useRef<string | null>(null); // Mirror of localPlaybackUrl for use inside callbacks
   // Karaoke / lyrics refs
   const lyricsDataRef = useRef<Array<{ startTimeMs?: number; endTimeMs?: number; words: string }> | null>(null);
+  const lyricsMediaIdRef = useRef<string | null>(null);
   const lyricsRafRef = useRef<number | null>(null);
   const overlayRef = useRef<HTMLDivElement | null>(null);
 
@@ -1654,6 +1655,7 @@ function App() {
       overlayRef.current.innerHTML = '';
     }
     lyricsDataRef.current = null;
+    lyricsMediaIdRef.current = null;
   }
 
   // Escape HTML content to avoid XSS when inserting lyrics
@@ -1695,7 +1697,7 @@ function App() {
     if (!currentMedia) return; // wait until media available
 
     // If we already have lyrics for this media id, reuse
-    if (lyricsDataRef.current && currentMediaIdRef.current === currentMedia.id) {
+    if (lyricsDataRef.current && lyricsMediaIdRef.current === currentMedia.id) {
       if (overlayRef.current) overlayRef.current.style.display = 'block';
       if (!lyricsRafRef.current) lyricsRafRef.current = requestAnimationFrame(syncLyrics);
       return;
@@ -1711,6 +1713,7 @@ function App() {
           return;
         }
         lyricsDataRef.current = lyrics;
+        lyricsMediaIdRef.current = currentMedia.id;
         if (overlayRef.current) overlayRef.current.style.display = 'block';
         if (!lyricsRafRef.current) lyricsRafRef.current = requestAnimationFrame(syncLyrics);
       } catch (err) {
@@ -2039,11 +2042,48 @@ function App() {
       return;
     }
 
-    if (!playerRef.current || !playerRef.current.playVideo) return;
+    const statusSourceIsLocal = status.source === 'cloudflare' || status.source === 'local';
+    const statusMediaIsYouTube = isYouTubePlaybackUrl(status.current_media?.url);
+    if (statusSourceIsLocal && !statusMediaIsYouTube) {
+      if (localVideoRef.current) {
+        if (status.state === 'playing') {
+          localVideoRef.current.play().catch(() => {});
+        } else if (status.state === 'paused') {
+          localVideoRef.current.pause();
+        }
+      } else {
+        console.warn('[Player] Ignoring iframe command for local/Cloudflare status before <video> is mounted', {
+          state: status.state,
+          media_id: status.current_media_id,
+          source: status.source,
+        });
+      }
+      return;
+    }
 
-    // Don't send commands to the YouTube iframe when a local/Cloudflare video is active —
-    // the <video> element controls its own playback state.
+    if (!playerRef.current || !playerRef.current.playVideo) return;
     if (localPlaybackUrl) return;
+
+    const expectedYouTubeId = extractYouTubeId(status.current_media?.url || '');
+    if (
+      expectedYouTubeId
+      && (
+        currentMediaIdRef.current !== status.current_media_id
+        || currentYouTubeIdRef.current !== expectedYouTubeId
+      )
+    ) {
+      console.warn('[Player] Ignoring iframe command because loaded iframe media does not match player_status', {
+        state: status.state,
+        status_media_id: status.current_media_id,
+        loaded_media_id: currentMediaIdRef.current,
+        expected_youtube_id: expectedYouTubeId,
+        loaded_youtube_id: currentYouTubeIdRef.current,
+      });
+      if (status.current_media) {
+        setCurrentMedia(status.current_media);
+      }
+      return;
+    }
 
     const player = playerRef.current;
 
@@ -2053,7 +2093,7 @@ function App() {
     } else if (status.state === 'paused') {
       player.pauseVideo();
     }
-  }, [status?.state, localPlaybackUrl]);
+  }, [status, localPlaybackUrl, isYouTubePlaybackUrl]);
 
   return (
     <div className="relative w-screen h-screen bg-black">
@@ -2241,6 +2281,31 @@ function App() {
 
           // Allow clicking to PLAY when video is paused
           if (status?.state === 'paused' && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+            const statusSourceIsLocal = status.source === 'cloudflare' || status.source === 'local';
+            const statusMediaIsYouTube = isYouTubePlaybackUrl(status.current_media?.url);
+            const expectedYouTubeId = extractYouTubeId(status.current_media?.url || '');
+            if (statusSourceIsLocal && !statusMediaIsYouTube) {
+              console.log('[Player] Click PLAY ignored for local/Cloudflare status; <video> owns playback');
+              return false;
+            }
+            if (
+              expectedYouTubeId
+              && (
+                currentMediaIdRef.current !== status.current_media_id
+                || currentYouTubeIdRef.current !== expectedYouTubeId
+              )
+            ) {
+              console.warn('[Player] Click PLAY ignored because iframe media does not match player_status', {
+                status_media_id: status.current_media_id,
+                loaded_media_id: currentMediaIdRef.current,
+                expected_youtube_id: expectedYouTubeId,
+                loaded_youtube_id: currentYouTubeIdRef.current,
+              });
+              if (status.current_media) {
+                setCurrentMedia(status.current_media);
+              }
+              return false;
+            }
             console.log('[Player] User clicked to PLAY paused video');
             try {
               playerRef.current.playVideo();

@@ -855,6 +855,7 @@ Deno.serve(async (req)=>{
         });
         if (nextError) {
           console.error('[player-control] ❌ Failed to get next item:', nextError);
+          throw nextError;
         } else {
           console.log('[player-control] 🎵 Queue_next returned:', {
             next_item: nextItem,
