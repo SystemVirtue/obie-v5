@@ -77,6 +77,7 @@ function App() {
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   const lastPlaybackFailureKeyRef = useRef<string | null>(null);
   const lastRecoveryKeyRef = useRef<string | null>(null);
+  const lastStaleLocalClearKeyRef = useRef<string | null>(null);
   const skipRestoreVolumeRef = useRef<number | null>(null);
   const skipRestorePendingRef = useRef(false);
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
@@ -1132,9 +1133,10 @@ function App() {
       // Check if current_media changed
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
+      const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
 
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
-      if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url) {
+      if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url && !statusMediaIsYouTube) {
         // Only activate when the local_url is actually new (avoid redundant sets)
         if (newStatus.local_url !== localPlaybackUrlRef.current) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
@@ -1185,7 +1187,7 @@ function App() {
       console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
     };
-  }, [fadeIn, fadeOut, reportEndedAndNext, teardownLocalAudioAnalyser]);
+  }, [fadeIn, fadeOut, isYouTubePlaybackUrl, reportEndedAndNext, teardownLocalAudioAnalyser]);
 
   // Subscribe to player settings (to watch karaoke_mode)
   useEffect(() => {
@@ -1541,10 +1543,11 @@ function App() {
   useEffect(() => {
     if (!currentMedia) return;
     const currentMediaIsYouTube = isYouTubePlaybackUrl(currentMedia.url);
+    const localUrlAtEffectStart = localPlaybackUrlRef.current || localPlaybackUrl;
 
     // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
     // Just update the ref so the status subscription doesn't re-trigger media changes.
-    if (localPlaybackUrl && !currentMediaIsYouTube) {
+    if (localUrlAtEffectStart && !currentMediaIsYouTube) {
       if (currentMediaIdRef.current !== currentMedia.id) {
         console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
         currentMediaIdRef.current = currentMedia.id;
@@ -1553,15 +1556,19 @@ function App() {
         lastRecoveryKeyRef.current = null;
       }
       return;
-    } else if (localPlaybackUrl && currentMediaIsYouTube) {
+    } else if (localUrlAtEffectStart && currentMediaIsYouTube) {
       // React state can briefly still hold the previous Cloudflare/local URL when
       // a queue transition has already selected a YouTube item. Do not mark the
       // YouTube media as loaded until the iframe path actually loads it.
-      console.warn('[Player] Clearing stale local/Cloudflare URL before YouTube load', {
-        media_id: currentMedia.id,
-        youtube_id: extractYouTubeId(currentMedia.url),
-        stale_url: localPlaybackUrl,
-      });
+      const staleClearKey = `${currentMedia.id}:${localUrlAtEffectStart}`;
+      if (lastStaleLocalClearKeyRef.current !== staleClearKey) {
+        lastStaleLocalClearKeyRef.current = staleClearKey;
+        console.warn('[Player] Clearing stale local/Cloudflare URL before YouTube load', {
+          media_id: currentMedia.id,
+          youtube_id: extractYouTubeId(currentMedia.url),
+          stale_url: localUrlAtEffectStart,
+        });
+      }
       setLocalPlaybackUrl(null);
       localPlaybackUrlRef.current = null;
       try {
@@ -1576,7 +1583,7 @@ function App() {
 
     // Cloudflare / local source: handled by the <video> element, not the YouTube iframe.
     // Just update the ref so the status subscription doesn't re-trigger media changes.
-    if (localPlaybackUrl) {
+    if (!currentMediaIsYouTube && localPlaybackUrlRef.current) {
       if (currentMediaIdRef.current !== currentMedia.id) {
         console.log('[Player] Cloudflare/local media — handled by <video>, skipping YouTube load');
         currentMediaIdRef.current = currentMedia.id;
