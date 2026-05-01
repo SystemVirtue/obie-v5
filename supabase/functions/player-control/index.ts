@@ -693,6 +693,9 @@ Deno.serve(async (req)=>{
         updateData.playback_error_at = null;
         updateData.last_recovery_reason = null;
       }
+      if (action === 'skip' && initiator === 'admin_ui') {
+        updateData.last_recovery_reason = 'admin_skip';
+      }
       const { error: updateError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
       if (updateError) throw updateError;
       if (state === 'playing' && !currentStatusForUpdate?.playback_started_at) {

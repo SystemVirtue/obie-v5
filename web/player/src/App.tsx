@@ -81,6 +81,7 @@ function App() {
   const lastStaleLocalClearKeyRef = useRef<string | null>(null);
   const skipRestoreVolumeRef = useRef<number | null>(null);
   const skipRestorePendingRef = useRef(false);
+  const skipFadePromiseRef = useRef<Promise<void> | null>(null);
   // ── Local video fallback (yt-dlp) ──────────────────────────────────────────
   const [localPlaybackUrl, setLocalPlaybackUrl] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -313,6 +314,44 @@ function App() {
       setPlaybackOpacity(1);
     }
   }, [fadeIn, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
+
+  const stopSkippedPlaybackAfterFade = useCallback(() => {
+    if (skipFadePromiseRef.current) return skipFadePromiseRef.current;
+
+    isEndingRef.current = true;
+    isSkipLoadingRef.current = true;
+    const restoreVolume = getActivePlaybackVolume();
+    skipRestoreVolumeRef.current = restoreVolume > 0 ? restoreVolume : getConfiguredVolume();
+    skipRestorePendingRef.current = true;
+
+    skipFadePromiseRef.current = fadeOut(skipRestoreVolumeRef.current)
+      .catch(() => {})
+      .then(() => {
+        try {
+          if (localVideoRef.current) {
+            localVideoRef.current.pause();
+            localVideoRef.current.removeAttribute('src');
+            localVideoRef.current.load();
+          }
+          if (playerRef.current) {
+            playerRef.current.pauseVideo?.();
+            playerRef.current.stopVideo?.();
+          }
+        } catch (error) {
+          console.warn('[Player] Failed to stop skipped playback after fade:', error);
+        }
+      })
+      .finally(() => {
+        skipFadePromiseRef.current = null;
+        window.setTimeout(() => {
+          if (!skipFadePromiseRef.current) {
+            isEndingRef.current = false;
+          }
+        }, 2000);
+      });
+
+    return skipFadePromiseRef.current;
+  }, [fadeOut, getActivePlaybackVolume, getConfiguredVolume]);
 
   const markYouTubeLoadStart = useCallback(() => {
     const now = Date.now();
@@ -1169,31 +1208,7 @@ function App() {
         // SKIP: Admin set state to 'idle' while video was playing
         if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
           console.log('[Player] Skip detected from Admin - stopping current media and waiting for server queue advance');
-          isEndingRef.current = true;
-          isSkipLoadingRef.current = true;
-          const restoreVolume = getActivePlaybackVolume();
-          skipRestoreVolumeRef.current = restoreVolume > 0 ? restoreVolume : getConfiguredVolume();
-          skipRestorePendingRef.current = true;
-          fadeOut(skipRestoreVolumeRef.current)
-            .catch(() => {})
-            .finally(() => {
-              try {
-                if (localVideoRef.current) {
-                  localVideoRef.current.pause();
-                  localVideoRef.current.removeAttribute('src');
-                  localVideoRef.current.load();
-                }
-                if (playerRef.current) {
-                  playerRef.current.pauseVideo?.();
-                  playerRef.current.stopVideo?.();
-                }
-              } catch (error) {
-                console.warn('[Player] Failed to stop skipped playback after admin skip:', error);
-              }
-              window.setTimeout(() => {
-                isEndingRef.current = false;
-              }, 2000);
-            });
+          stopSkippedPlaybackAfterFade();
           prevStateRef.current = newState;
           // Do not write this stale idle/old-media status into local state after
           // the skip starts. player-control advances the queue immediately and
@@ -1241,6 +1256,16 @@ function App() {
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
       const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
+      const adminSkipNewMedia = newMediaId && newMediaId !== oldMediaId && newStatus.last_recovery_reason === 'admin_skip';
+
+      if (adminSkipNewMedia) {
+        console.log('[Player] Admin skip advanced queue - waiting for local fade before loading next media', {
+          old_id: oldMediaId,
+          new_id: newMediaId,
+          title: newStatus.current_media?.title,
+        });
+        await stopSkippedPlaybackAfterFade();
+      }
 
       // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
       if ((newStatus.source === 'local' || newStatus.source === 'cloudflare') && newStatus.local_url && !statusMediaIsYouTube) {
@@ -1294,7 +1319,7 @@ function App() {
       console.log('[Player] Unsubscribing from player status');
       subscription.unsubscribe();
     };
-  }, [fadeIn, fadeOut, getActivePlaybackVolume, getConfiguredVolume, isYouTubePlaybackUrl, reportEndedAndNext, teardownLocalAudioAnalyser]);
+  }, [fadeIn, fadeOut, isYouTubePlaybackUrl, reportEndedAndNext, stopSkippedPlaybackAfterFade, teardownLocalAudioAnalyser]);
 
   // Subscribe to player settings (to watch karaoke_mode)
   useEffect(() => {
