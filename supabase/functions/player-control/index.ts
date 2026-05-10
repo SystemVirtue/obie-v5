@@ -28,7 +28,7 @@ function isTransientDatabaseError(error: any) {
     || error?.code === '08006';
 }
 
-async function isMasterEndpoint(supabase: any, playerId: string, endpointId?: string | null) {
+async function isMasterEndpoint(supabase: any, playerId: string, endpointId?: string | null, sessionId?: string | null) {
   const { data: player } = await supabase
     .from('players')
     .select('priority_player_id, priority_endpoint_id')
@@ -42,7 +42,21 @@ async function isMasterEndpoint(supabase: any, playerId: string, endpointId?: st
     return player?.priority_player_id === playerId && !player?.priority_endpoint_id;
   }
 
-  return player?.priority_endpoint_id === endpointId;
+  if (player?.priority_endpoint_id !== endpointId) return false;
+
+  const { data: endpoint } = await supabase
+    .from('player_endpoints')
+    .select('session_id, status, last_seen')
+    .eq('player_id', playerId)
+    .eq('endpoint_id', endpointId)
+    .maybeSingle();
+
+  if (!endpoint || endpoint.status !== 'connected') return false;
+  if (sessionId && endpoint.session_id && endpoint.session_id !== sessionId) {
+    return false;
+  }
+
+  return true;
 }
 
 function shouldLogNonMasterStatus(playerId: string, action: string, endpointId?: string | null): boolean {
@@ -103,7 +117,7 @@ Deno.serve(async (req)=>{
     }
     // Handle heartbeat
     if (action === 'heartbeat') {
-      const { error } = endpoint_id && session_id
+      const { data, error } = endpoint_id && session_id
         ? await supabase.rpc('player_endpoint_heartbeat', {
             p_player_id: player_id,
             p_endpoint_id: endpoint_id,
@@ -114,7 +128,9 @@ Deno.serve(async (req)=>{
           });
       if (error) throw error;
       return new Response(JSON.stringify({
-        success: true
+        success: data?.success !== false,
+        ignored: data?.ignored || false,
+        reason: data?.reason || null,
       }), {
         status: 200,
         headers: {
@@ -539,7 +555,7 @@ Deno.serve(async (req)=>{
     if (action === 'playback_failed') {
       const callerIsMaster = initiator === 'admin_ui'
         ? true
-        : await isMasterEndpoint(supabase, player_id, endpoint_id);
+        : await isMasterEndpoint(supabase, player_id, endpoint_id, session_id);
 
       await logSystemEvent(supabase, player_id, typeof event_name === 'string' && event_name ? event_name : 'playback_failed', 'error', {
         source: initiator || 'player_client',
@@ -625,7 +641,7 @@ Deno.serve(async (req)=>{
     if (action === 'update' || action === 'ended' || action === 'skip') {
       const callerIsMaster = initiator === 'admin_ui'
         ? true
-        : await isMasterEndpoint(supabase, player_id, endpoint_id);
+        : await isMasterEndpoint(supabase, player_id, endpoint_id, session_id);
 
       if (!callerIsMaster) {
         if (action === 'update' && state === 'playing' && typeof expected_media_id === 'string') {

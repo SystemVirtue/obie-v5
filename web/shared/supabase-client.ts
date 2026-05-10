@@ -468,6 +468,7 @@ export function subscribeToQueue(
       .then(({ data, error }) => {
         if (error) {
           console.error('[subscribeToQueue] ❌ Database error:', error);
+          finishFetch();
           return;
         }
         

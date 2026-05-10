@@ -997,6 +997,10 @@ function App() {
     } else if (event.data === 3) {
       // BUFFERING
       console.log('[Player] Video BUFFERING');
+      if (videoHasPlayedRef.current || firstPlayAtRef.current > 0 || !!statusRef.current?.playback_started_at) {
+        console.log('[Player] Ignoring BUFFERING after confirmed playback start');
+        return;
+      }
       reportStatus('loading');
     }
   }, [status?.playback_started_at, status?.state, reportStatus, reportEndedAndNext, getActivePlaybackVolume, restorePlaybackAfterSkip, logPlayerEvent]);
@@ -1237,62 +1241,48 @@ function App() {
       console.log('[Player] Status update:', newStatus);
       const prevState = prevStateRef.current;
       const newState = newStatus.state;
-      
-      // Handle state transitions with fades.
-      // In YTM Desktop mode playerRef.current is null (no iframe), so we must also
-      // allow the block when playerModeRef indicates ytm_desktop.
-      if ((playerRef.current || playerModeRef.current === 'ytm_desktop') && prevState !== newState) {
-        // SKIP: Admin set state to 'idle' while video was playing
-        if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
-          console.log('[Player] Skip detected from Admin - stopping current media and waiting for server queue advance');
-          stopSkippedPlaybackAfterFade();
-          prevStateRef.current = newState;
-          // Do not write this stale idle/old-media status into local state after
-          // the skip starts. player-control advances the queue immediately and
-          // the next status event loads the authoritative current media.
-          return; // Exit early, don't process other state changes
-        }
-        
-        if (newState === 'paused' && prevState === 'playing') {
-          if (playerModeRef.current === 'ytm_desktop') {
-            // Mark that this pause is admin-initiated so end detection ignores the
-            // resulting trackState 1→0 transition in the state-update handler.
-            ytmAdminPausedRef.current = true;
-            setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
-            ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
-          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            // Cloudflare/local: pause the <video> element
-            console.log('[Player] Pausing local/Cloudflare video...');
-            localVideoRef.current.pause();
-          } else if (playerRef.current) {
-            // Fade out when pausing
-            console.log('[Player] Pausing - fading out...');
-            await fadeOut();
-            playerRef.current.pauseVideo();
-          }
-        } else if (newState === 'playing' && prevState === 'paused') {
-          if (playerModeRef.current === 'ytm_desktop') {
-            ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
-          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
-            // Cloudflare/local: resume the <video> element
-            console.log('[Player] Resuming local/Cloudflare video...');
-            localVideoRef.current.play().catch(() => {});
-          } else if (playerRef.current) {
-            // Fade in when resuming
-            console.log('[Player] Resuming - fading in...');
-            playerRef.current.playVideo();
-            await fadeIn();
-          }
-        }
-      }
-      
-      prevStateRef.current = newState;
-      setStatus(newStatus);
-
-      // Check if current_media changed
       const newMediaId = newStatus.current_media_id;
       const oldMediaId = currentMediaIdRef.current;
-      //const statusMediaIsYouTube = isYouTubePlaybackUrl(newStatus.current_media?.url);
+      const statusPlaybackUrl =
+        newStatus.local_url ||
+        newStatus.current_media?.url ||
+        null;
+
+      const statusIsLocalOrCloudflare =
+        (newStatus.source === 'local' || newStatus.source === 'cloudflare') &&
+        !!statusPlaybackUrl &&
+        !isYouTubePlaybackUrl(statusPlaybackUrl);
+
+      const mediaForState = newStatus.current_media
+        ? {
+            ...newStatus.current_media,
+            url: statusIsLocalOrCloudflare && statusPlaybackUrl ? statusPlaybackUrl : newStatus.current_media.url,
+            source_type:
+              newStatus.current_media.source_type ||
+              (statusIsLocalOrCloudflare ? 'cloudflare' : 'youtube'),
+          }
+        : null;
+
+      const expectedStatusYouTubeId = statusPlaybackUrl ? extractYouTubeId(statusPlaybackUrl) : null;
+      const iframeMatchesStatus =
+        !!newStatus.current_media_id &&
+        currentMediaIdRef.current === newStatus.current_media_id &&
+        (
+          !expectedStatusYouTubeId ||
+          currentYouTubeIdRef.current === expectedStatusYouTubeId
+        );
+      
+      // SKIP: Admin set state to 'idle' while video was playing.
+      if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
+        console.log('[Player] Skip detected from Admin - stopping current media and waiting for server queue advance');
+        stopSkippedPlaybackAfterFade();
+        prevStateRef.current = newState;
+        // Do not write this stale idle/old-media status into local state after
+        // the skip starts. player-control advances the queue immediately and
+        // the next status event loads the authoritative current media.
+        return;
+      }
+
       const adminSkipNewMedia = newMediaId && newMediaId !== oldMediaId && newStatus.last_recovery_reason === 'admin_skip';
 
       if (adminSkipNewMedia) {
@@ -1304,17 +1294,8 @@ function App() {
         await stopSkippedPlaybackAfterFade();
       }
 
-      // ── Non-YouTube source (yt-dlp download or Cloudflare R2) ─────────────
-      const statusPlaybackUrl =
-        newStatus.local_url ||
-        newStatus.current_media?.url ||
-        null;
-
-      const statusIsLocalOrCloudflare =
-        (newStatus.source === 'local' || newStatus.source === 'cloudflare') &&
-        !!statusPlaybackUrl &&
-        !isYouTubePlaybackUrl(statusPlaybackUrl);
-
+      // Reconcile renderer/source before applying play/pause commands. This keeps
+      // stale YouTube iframes from receiving commands for Cloudflare/local media.
       if (statusIsLocalOrCloudflare) {
         if (statusPlaybackUrl !== localPlaybackUrlRef.current) {
           console.log(`[Player][realtime] source=${newStatus.source} → activating <video>`);
@@ -1325,7 +1306,6 @@ function App() {
           setLocalPlaybackUrl(statusPlaybackUrl);
         }
       } else if (localPlaybackUrlRef.current) {
-        // Any non-local source should tear down the local <video> path immediately.
         console.log(`[Player][realtime] source=${newStatus.source ?? 'youtube'} → reset to iframe mode`);
         setLocalPlaybackUrl(null);
         localPlaybackUrlRef.current = null;
@@ -1339,6 +1319,67 @@ function App() {
         teardownLocalAudioAnalyser();
       }
 
+      // Handle state transitions with fades.
+      // In YTM Desktop mode playerRef.current is null (no iframe), so we must also
+      // allow the block when playerModeRef indicates ytm_desktop.
+      if ((playerRef.current || playerModeRef.current === 'ytm_desktop' || statusIsLocalOrCloudflare) && prevState !== newState) {
+        if (newState === 'paused' && prevState === 'playing') {
+          if (playerModeRef.current === 'ytm_desktop') {
+            // Mark that this pause is admin-initiated so end detection ignores the
+            // resulting trackState 1→0 transition in the state-update handler.
+            ytmAdminPausedRef.current = true;
+            setTimeout(() => { ytmAdminPausedRef.current = false; }, 3000);
+            ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'pause' }) }).catch(() => {});
+          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
+            // Cloudflare/local: pause the <video> element
+            console.log('[Player] Pausing local/Cloudflare video...');
+            localVideoRef.current.pause();
+          } else if (statusIsLocalOrCloudflare) {
+            console.log('[Player] Pause ignored until local/Cloudflare <video> mounts');
+          } else if (!iframeMatchesStatus) {
+            console.warn('[Player] Pause ignored because iframe media does not match player_status', {
+              status_media_id: newStatus.current_media_id,
+              loaded_media_id: currentMediaIdRef.current,
+              expected_youtube_id: expectedStatusYouTubeId,
+              loaded_youtube_id: currentYouTubeIdRef.current,
+            });
+          } else if (playerRef.current) {
+            // Fade out when pausing
+            console.log('[Player] Pausing - fading out...');
+            await fadeOut();
+            playerRef.current.pauseVideo();
+          }
+        } else if (newState === 'playing' && prevState === 'paused') {
+          if (playerModeRef.current === 'ytm_desktop') {
+            ytmFetch('/api/v1/command', { method: 'POST', body: JSON.stringify({ command: 'play' }) }).catch(() => {});
+          } else if (localPlaybackUrlRef.current && localVideoRef.current) {
+            // Cloudflare/local: resume the <video> element
+            console.log('[Player] Resuming local/Cloudflare video...');
+            localVideoRef.current.play().catch(() => {});
+          } else if (statusIsLocalOrCloudflare) {
+            console.log('[Player] Resume waiting for local/Cloudflare <video> to mount');
+            shouldAutoplayCurrentMediaRef.current = true;
+          } else if (!iframeMatchesStatus) {
+            console.warn('[Player] Resume ignored because iframe media does not match player_status', {
+              status_media_id: newStatus.current_media_id,
+              loaded_media_id: currentMediaIdRef.current,
+              expected_youtube_id: expectedStatusYouTubeId,
+              loaded_youtube_id: currentYouTubeIdRef.current,
+            });
+            shouldAutoplayCurrentMediaRef.current = true;
+            if (mediaForState) setCurrentMedia(mediaForState);
+          } else if (playerRef.current) {
+            // Fade in when resuming
+            console.log('[Player] Resuming - fading in...');
+            playerRef.current.playVideo();
+            await fadeIn();
+          }
+        }
+      }
+      
+      prevStateRef.current = newState;
+      setStatus(newStatus);
+
       if (newMediaId && newMediaId !== oldMediaId) {
         shouldAutoplayCurrentMediaRef.current = newState === 'playing' || newState === 'loading';
         console.log('[Player] New media from status (CHANGED):', {
@@ -1347,15 +1388,6 @@ function App() {
           title: newStatus.current_media?.title,
           artist: newStatus.current_media?.artist
         });
-        const mediaForState = newStatus.current_media
-          ? {
-              ...newStatus.current_media,
-              url: statusIsLocalOrCloudflare && statusPlaybackUrl ? statusPlaybackUrl : newStatus.current_media.url,
-              source_type:
-                newStatus.current_media.source_type ||
-                (statusIsLocalOrCloudflare ? 'cloudflare' : 'youtube'),
-            }
-          : null;
         setCurrentMedia(mediaForState);
 
         // Mark that video was recently loaded and should auto-play if it pauses unexpectedly
@@ -2042,8 +2074,9 @@ function App() {
       return;
     }
 
+    const statusPlaybackUrl = status.local_url || status.current_media?.url || null;
     const statusSourceIsLocal = status.source === 'cloudflare' || status.source === 'local';
-    const statusMediaIsYouTube = isYouTubePlaybackUrl(status.current_media?.url);
+    const statusMediaIsYouTube = isYouTubePlaybackUrl(statusPlaybackUrl);
     if (statusSourceIsLocal && !statusMediaIsYouTube) {
       if (localVideoRef.current) {
         if (status.state === 'playing') {
@@ -2064,7 +2097,7 @@ function App() {
     if (!playerRef.current || !playerRef.current.playVideo) return;
     if (localPlaybackUrl) return;
 
-    const expectedYouTubeId = extractYouTubeId(status.current_media?.url || '');
+    const expectedYouTubeId = extractYouTubeId(statusPlaybackUrl || '');
     if (
       expectedYouTubeId
       && (
@@ -2281,9 +2314,10 @@ function App() {
 
           // Allow clicking to PLAY when video is paused
           if (status?.state === 'paused' && playerRef.current && typeof playerRef.current.playVideo === 'function') {
+            const statusPlaybackUrl = status.local_url || status.current_media?.url || null;
             const statusSourceIsLocal = status.source === 'cloudflare' || status.source === 'local';
-            const statusMediaIsYouTube = isYouTubePlaybackUrl(status.current_media?.url);
-            const expectedYouTubeId = extractYouTubeId(status.current_media?.url || '');
+            const statusMediaIsYouTube = isYouTubePlaybackUrl(statusPlaybackUrl);
+            const expectedYouTubeId = extractYouTubeId(statusPlaybackUrl || '');
             if (statusSourceIsLocal && !statusMediaIsYouTube) {
               console.log('[Player] Click PLAY ignored for local/Cloudflare status; <video> owns playback');
               return false;

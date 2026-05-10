@@ -12,6 +12,12 @@
 // On success, player_status is updated with:
 //   { source: 'local', local_url: <publicUrl>, state: 'playing' }
 // The Player app's realtime subscription fires and switches to the <video> element.
+//
+// Production egress note:
+//   Serving MP4 files from Supabase Storage can quickly exceed the project egress
+//   quota. This fallback is disabled unless
+//   ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK=true is set. Prefer Cloudflare R2 for
+//   cached video playback.
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
@@ -56,6 +62,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // ── Env vars ──────────────────────────────────────────────────────────────
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serviceKey  = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const allowSupabaseStorageVideoFallback =
+      Deno.env.get('ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK') === 'true';
 
     if (!supabaseUrl || !serviceKey) {
       console.error('[download-video] Misconfiguration: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY not set');
@@ -74,6 +82,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return new Response(
         JSON.stringify({ error: 'videoId is required and must be a valid 11-character YouTube ID' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
+
+    if (!allowSupabaseStorageVideoFallback) {
+      return new Response(
+        JSON.stringify({
+          error: 'Supabase Storage video fallback is disabled to protect project egress. Use Cloudflare R2 cached playback or set ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK=true for a controlled maintenance run.',
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 

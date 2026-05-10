@@ -8,6 +8,12 @@
  * source='local' so the Player's Realtime subscription switches from
  * the YouTube iframe to a native <video> element.
  *
+ * Production egress note:
+ *   Serving video bytes from Supabase Storage can quickly exceed the project
+ *   egress quota. This fallback is disabled unless
+ *   ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK=true is set. Prefer Cloudflare R2
+ *   for cached video playback.
+ *
  * Prerequisites:
  *   yt-dlp   in PATH  (brew install yt-dlp  |  pip install yt-dlp)
  *   ffmpeg   in PATH  (brew install ffmpeg)
@@ -65,6 +71,8 @@ const SERVICE_KEY    = process.env.VITE_SUPABASE_SERVICE_ROLE_KEY
 const DEFAULT_PLAYER = '00000000-0000-0000-0000-000000000001';
 const YOUTUBE_ID_RE  = /^[A-Za-z0-9_-]{11}$/;
 const BUCKET         = 'downloads';
+const ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK =
+  process.env.ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK === 'true';
 
 if (!SUPABASE_URL || !SERVICE_KEY) {
   console.error('[download-service] ✖ Missing required env vars.');
@@ -185,6 +193,13 @@ async function handleDownload(req, res) {
   if (inFlight.has(videoId)) {
     console.log(`[download-service] ${videoId}: already in flight — returning 409`);
     sendJson(res, 409, { error: `Download already in progress for ${videoId}` });
+    return;
+  }
+
+  if (!ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK) {
+    sendJson(res, 503, {
+      error: 'Supabase Storage video fallback is disabled to protect project egress. Use Cloudflare R2 cached playback or set ALLOW_SUPABASE_STORAGE_VIDEO_FALLBACK=true for a controlled maintenance run.',
+    });
     return;
   }
 
