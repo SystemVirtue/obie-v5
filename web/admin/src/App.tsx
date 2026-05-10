@@ -2348,7 +2348,7 @@ function ScriptsPanel({ user }: { user: AuthUser }) {
       event_type: 'refresh_prompt',
       payload: {
         title: 'Update available',
-        message: 'A newer admin console version is available. Refresh now?',
+        message: 'A newer Obie build is available. Refresh this screen now. Connected admin consoles and player screens should all be refreshed.',
       },
       created_by: user.id,
     });
@@ -2436,7 +2436,7 @@ function ScriptsPanel({ user }: { user: AuthUser }) {
           onRun={runScrapeYtScraper}
         />
         <ScriptCard icon="🔄" name="refresh-all-connections" category="Admin"
-          desc="Prompt every connected admin console instance to refresh and load the latest deployed build."
+          desc="Prompt connected admin console and player instances to refresh and load the latest deployed build."
           onRun={runRefreshAllConnections}
         />
       </div>
@@ -3318,7 +3318,7 @@ function App() {
               {typeof refreshPrompt.payload?.title === 'string' ? refreshPrompt.payload.title : 'Update available'}
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5, color: 'rgba(255,255,255,0.6)', textAlign: 'center', maxWidth: 360 }}>
-              {typeof refreshPrompt.payload?.message === 'string' ? refreshPrompt.payload.message : 'A newer admin console version is available. Refresh now?'}
+              {typeof refreshPrompt.payload?.message === 'string' ? refreshPrompt.payload.message : 'A newer Obie build is available. Refresh this screen now.'}
             </div>
             <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
               <Btn variant="ghost" onClick={() => setRefreshPrompt(null)}>Cancel</Btn>

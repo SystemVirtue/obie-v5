@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import {
   supabase,
+  subscribeToAdminBroadcasts,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
   subscribeToPlayerEndpoint,
@@ -16,6 +17,7 @@ import {
   type MediaItem,
   type PlayerSettings,
   type PlayerEndpoint,
+  type AdminBroadcast,
 } from '@shared/supabase-client';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
@@ -55,6 +57,7 @@ function App() {
   const [identifyUntil, setIdentifyUntil] = useState<number | null>(null);
   const [currentEndpointId, setCurrentEndpointId] = useState<string | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
   const [playerReady, setPlayerReady] = useState(false); // Track if YouTube player is ready
   const [ytApiReady, setYtApiReady] = useState(false); // Track if YouTube API is loaded
   const playerRef = useRef<any>(null);
@@ -64,6 +67,7 @@ function App() {
   const currentMediaIdRef = useRef<string | null>(null);
   const endpointIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef<string | null>(null);
+  const playerSessionStartedAtRef = useRef(new Date().toISOString());
   const shouldAutoplayCurrentMediaRef = useRef(false);
   const consecutiveHeartbeatFailuresRef = useRef(0);
   const fadeIntervalRef = useRef<number | null>(null);
@@ -122,6 +126,16 @@ function App() {
   useEffect(() => {
     statusRef.current = status;
   }, [status]);
+
+  useEffect(() => {
+    playerSessionStartedAtRef.current = new Date().toISOString();
+    const sub = subscribeToAdminBroadcasts((broadcast) => {
+      if (broadcast.event_type !== 'refresh_prompt') return;
+      setRefreshPrompt(broadcast);
+    }, playerSessionStartedAtRef.current);
+
+    return () => { sub.unsubscribe(); };
+  }, []);
 
   const clampVolume = (volume: number) => Math.max(0, Math.min(100, volume));
 
@@ -2455,6 +2469,76 @@ function App() {
           <div className="text-center">
             <div className="text-4xl font-bold text-white mb-4">⚠️ Playback Error</div>
             <div className="text-lg text-gray-200">Check logs for details</div>
+          </div>
+        </div>
+      )}
+
+      {refreshPrompt && (
+        <div
+          className="absolute inset-0 flex items-center justify-center"
+          style={{
+            zIndex: 80,
+            background: 'rgba(0,0,0,0.78)',
+            backdropFilter: 'blur(5px)',
+          }}
+          onClick={() => setRefreshPrompt(null)}
+        >
+          <div
+            style={{
+              width: 'min(520px, calc(100vw - 48px))',
+              padding: '30px 34px',
+              borderRadius: 14,
+              border: '1px solid rgba(255,255,255,0.16)',
+              background: 'rgba(17,17,17,0.96)',
+              boxShadow: '0 24px 90px rgba(0,0,0,0.86)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 14,
+              textAlign: 'center',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontSize: 22, fontWeight: 800, color: '#fff' }}>
+              {typeof refreshPrompt.payload?.title === 'string' ? refreshPrompt.payload.title : 'Update available'}
+            </div>
+            <div style={{ fontSize: 14, lineHeight: 1.55, color: 'rgba(255,255,255,0.72)', maxWidth: 430 }}>
+              {typeof refreshPrompt.payload?.message === 'string'
+                ? refreshPrompt.payload.message
+                : 'A newer Obie build is available. Refresh this screen now.'}
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 6 }}>
+              <button
+                type="button"
+                onClick={() => setRefreshPrompt(null)}
+                style={{
+                  padding: '11px 18px',
+                  borderRadius: 8,
+                  border: '1px solid rgba(255,255,255,0.16)',
+                  background: 'rgba(255,255,255,0.06)',
+                  color: 'rgba(255,255,255,0.82)',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                style={{
+                  padding: '11px 20px',
+                  borderRadius: 8,
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  background: '#fff',
+                  color: '#111',
+                  fontWeight: 800,
+                  cursor: 'pointer',
+                }}
+              >
+                Refresh Now
+              </button>
+            </div>
           </div>
         </div>
       )}
