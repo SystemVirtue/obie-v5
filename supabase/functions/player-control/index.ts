@@ -296,7 +296,7 @@ Deno.serve(async (req)=>{
       }
 
       const shouldRestorePriority = stored_endpoint_id === endpoint_id
-        || stored_player_id === player_id;
+        && stored_player_id === player_id;
 
       if (existingPriority?.priority_endpoint_id === endpoint_id || (shouldRestorePriority && !existingPriority?.priority_endpoint_id)) {
         const { error: assignError } = await supabase.rpc('assign_priority_endpoint', {

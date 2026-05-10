@@ -1156,7 +1156,7 @@ function App() {
         }
 
         const storedPlayerId = localStorage.getItem('obie_priority_player_id');
-        const storedEndpointId = localStorage.getItem('obie_player_endpoint_id');
+        const storedEndpointId = localStorage.getItem('obie_priority_endpoint_id');
 
         sessionIdRef.current = sessionId;
         endpointIdRef.current = endpointId;
@@ -1197,8 +1197,10 @@ function App() {
       setIsSlavePlayer(slave);
       if (!slave) {
         localStorage.setItem('obie_priority_player_id', PLAYER_ID);
+        localStorage.setItem('obie_priority_endpoint_id', currentEndpointId);
       } else {
         localStorage.removeItem('obie_priority_player_id');
+        localStorage.removeItem('obie_priority_endpoint_id');
       }
 
       if (endpoint.identify_until) {

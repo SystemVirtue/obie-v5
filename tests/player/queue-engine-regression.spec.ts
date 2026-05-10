@@ -48,9 +48,16 @@ test.describe('queue engine regression guardrails', () => {
 
   test('player-control validates endpoint session ownership', () => {
     const fn = read('supabase/functions/player-control/index.ts');
+    const app = read('web/player/src/App.tsx');
+    const sql = read('supabase/migrations/20260511054500_harden_endpoint_session_takeover.sql');
 
     expect(fn).toContain('endpoint.session_id && endpoint.session_id !== sessionId');
     expect(fn).toContain('isMasterEndpoint(supabase, player_id, endpoint_id, session_id)');
+    expect(fn).toContain('stored_endpoint_id === endpoint_id');
+    expect(fn).toContain('stored_player_id === player_id');
+    expect(app).toContain("localStorage.getItem('obie_priority_endpoint_id')");
+    expect(sql).toContain('endpoint_session_takeover');
+    expect(sql).toContain("v_current_last_seen >= now() - interval '45 seconds'");
   });
 
   test('Supabase Storage video fallback is explicit opt-in to protect egress', () => {
