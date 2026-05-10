@@ -694,6 +694,25 @@ export async function callQueueManager(params: {
 /**
  * Call player control edge function
  */
+async function getFunctionInvokeErrorMessage(error: any): Promise<string> {
+  const context = error?.context;
+  if (context && typeof context.clone === 'function') {
+    try {
+      const body = await context.clone().text();
+      if (body) return `${error?.message || 'Edge Function error'}: ${body.slice(0, 500)}`;
+    } catch {
+      // Fall through to the generic message below.
+    }
+  }
+
+  if (error?.message && error.message !== '[object Object]') return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
@@ -723,7 +742,7 @@ export async function callPlayerControl(params: {
 
     lastError = error;
     const status = (error as any)?.context?.status;
-    const message = error.message || JSON.stringify(error);
+    const message = await getFunctionInvokeErrorMessage(error);
     const transient = status === 502 || status === 503 || status === 504 || /\b(502|503|504)\b|network|timeout/i.test(message);
     if (!transient || attempt === 3) {
       throw new Error(message);

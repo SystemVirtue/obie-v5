@@ -83,6 +83,7 @@ function App() {
   const unexpectedPauseTimeoutRef = useRef<number | null>(null); // Timeout to auto-advance if paused before video ever played
   const lastPlaybackFailureKeyRef = useRef<string | null>(null);
   const lastRecoveryKeyRef = useRef<string | null>(null);
+  const lastSuppressedPauseKeyRef = useRef<string | null>(null);
   //const lastStaleLocalClearKeyRef = useRef<string | null>(null);
   const skipRestoreVolumeRef = useRef<number | null>(null);
   const skipRestorePendingRef = useRef(false);
@@ -185,6 +186,37 @@ function App() {
     }
   }, []);
 
+  const clearYouTubeMount = useCallback(() => {
+    if (playerDivRef.current) {
+      playerDivRef.current.replaceChildren();
+    }
+  }, []);
+
+  const destroyYouTubePlayer = useCallback((reason: string) => {
+    const player = playerRef.current;
+    playerRef.current = null;
+
+    if (player) {
+      try {
+        player.destroy?.();
+      } catch (error) {
+        console.warn('[Player] Failed to destroy YouTube player cleanly:', { reason, error });
+      }
+    }
+
+    setPlayerReady(false);
+    clearYouTubeMount();
+  }, [clearYouTubeMount]);
+
+  const createYouTubeMount = useCallback(() => {
+    if (!playerDivRef.current) return null;
+    clearYouTubeMount();
+    const mount = document.createElement('div');
+    mount.dataset.youtubeMount = 'true';
+    playerDivRef.current.appendChild(mount);
+    return mount;
+  }, [clearYouTubeMount]);
+
   // Fade out audio and opacity over 2 seconds
   const fadeOut = useCallback((fromVolume?: number): Promise<void> => {
     return new Promise((resolve) => {
@@ -223,27 +255,59 @@ function App() {
   // Endpoint heartbeat — all connected players send this so the admin console
   // has an accurate real-time roster. The backend only updates the canonical
   // player heartbeat when the calling endpoint currently owns master.
+  const recoverHeartbeatSession = useCallback(async () => {
+    const endpointId = endpointIdRef.current;
+    const sessionId = sessionIdRef.current;
+    if (!endpointId || !sessionId) return false;
+
+    const result = await callPlayerControl({
+      player_id: PLAYER_ID,
+      action: 'register_session',
+      session_id: sessionId,
+      endpoint_id: endpointId,
+      stored_player_id: localStorage.getItem('obie_priority_player_id') || undefined,
+      stored_endpoint_id: localStorage.getItem('obie_priority_endpoint_id') || undefined,
+      origin: window.location.origin,
+      user_agent: navigator.userAgent,
+      initiator: 'player_client',
+      reason: 'heartbeat_recovery',
+    });
+
+    setIsSlavePlayer(!result?.is_priority);
+    return true;
+  }, []);
+
   useEffect(() => {
     if (!endpointIdRef.current || !sessionIdRef.current) return;
 
     let cancelled = false;
     const sendHeartbeat = async () => {
       try {
-        await callPlayerControl({
+        const result = await callPlayerControl({
           player_id: PLAYER_ID,
           action: 'heartbeat',
           endpoint_id: endpointIdRef.current ?? undefined,
           session_id: sessionIdRef.current ?? undefined,
         });
+        if (result?.success === false) {
+          if (result?.ignored && result?.reason === 'stale_session') {
+            console.warn('[Player] Heartbeat session is stale; re-registering endpoint session', {
+              endpoint_id: endpointIdRef.current,
+            });
+            await recoverHeartbeatSession();
+          } else {
+            throw new Error(result?.reason || 'heartbeat_rejected');
+          }
+        }
         consecutiveHeartbeatFailuresRef.current = 0;
       } catch (error) {
         if (!cancelled) {
           consecutiveHeartbeatFailuresRef.current += 1;
           const failures = consecutiveHeartbeatFailuresRef.current;
-          const logMethod = failures === 1 || failures % 6 === 0 ? console.warn : console.debug;
+          const logMethod = failures === 1 || failures % 12 === 0 ? console.warn : console.debug;
           logMethod('[Player] Heartbeat failed:', {
             failures,
-            message: error instanceof Error ? error.message : String(error),
+            message: error instanceof Error ? error.message : JSON.stringify(error),
           });
         }
       }
@@ -255,7 +319,7 @@ function App() {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [currentEndpointId, currentSessionId, isSlavePlayer]);
+  }, [currentEndpointId, currentSessionId, isSlavePlayer, recoverHeartbeatSession]);
 
   // YTM Desktop skip fade: step volume 100→0 over 2s via setVolume commands
   const fadeOutYtm = useCallback((fromVolume?: number): Promise<void> => {
@@ -350,10 +414,7 @@ function App() {
             localVideoRef.current.removeAttribute('src');
             localVideoRef.current.load();
           }
-          if (playerRef.current) {
-            playerRef.current.pauseVideo?.();
-            playerRef.current.stopVideo?.();
-          }
+          destroyYouTubePlayer('skip fade completed');
         } catch (error) {
           console.warn('[Player] Failed to stop skipped playback after fade:', error);
         }
@@ -369,7 +430,7 @@ function App() {
       });
 
     return skipFadePromiseRef.current;
-  }, [fadeOut, getActivePlaybackVolume, getConfiguredVolume]);
+  }, [destroyYouTubePlayer, fadeOut, getActivePlaybackVolume, getConfiguredVolume]);
 
   const markYouTubeLoadStart = useCallback(() => {
     const now = Date.now();
@@ -379,6 +440,7 @@ function App() {
     ignoreEndedUntilRef.current = now + 4000;
     lastPlaybackFailureKeyRef.current = null;
     lastRecoveryKeyRef.current = null;
+    lastSuppressedPauseKeyRef.current = null;
   }, []);
 
   // Extract YouTube video ID from URL
@@ -589,10 +651,7 @@ function App() {
           localVideoRef.current.removeAttribute('src');
           localVideoRef.current.load();
         }
-        if (playerRef.current) {
-          playerRef.current.pauseVideo?.();
-          playerRef.current.stopVideo?.();
-        }
+        destroyYouTubePlayer('skip command completed');
       } catch (error) {
         console.warn('[Player] Failed to stop skipped playback cleanly:', error);
       }
@@ -779,7 +838,7 @@ function App() {
         isEndingRef.current = false;
       }, 1000);
     }
-  }, [fadeOut, fadeOutYtm, getActivePlaybackVolume, getConfiguredVolume, isSlavePlayer, isYouTubePlaybackUrl, logPlayerEvent, restorePlaybackAfterSkip, teardownLocalAudioAnalyser]);
+  }, [destroyYouTubePlayer, fadeOut, fadeOutYtm, getActivePlaybackVolume, getConfiguredVolume, isSlavePlayer, isYouTubePlaybackUrl, logPlayerEvent, restorePlaybackAfterSkip, teardownLocalAudioAnalyser]);
 
   const evaluateTailSilence = useCallback(() => {
     if (!settings?.silence_skip_enabled) return;
@@ -950,20 +1009,26 @@ function App() {
 
       if (pauseAfterConfirmedStart && !adminRequestedPause) {
         const secondsSinceFirstPlay = firstPlayAtRef.current ? (Date.now() - firstPlayAtRef.current) / 1000 : null;
-        console.warn('[Player] Ignoring transient YouTube PAUSED after confirmed start', {
-          media_item_id: currentMediaIdRef.current,
-          youtube_id: currentYouTubeIdRef.current,
-          secondsSinceFirstPlay,
-          backend_state: status?.state,
-          playback_started_at: status?.playback_started_at ?? null,
-        });
-        logPlayerEvent('youtube_pause_suppressed', 'warn', {
-          media_item_id: currentMediaIdRef.current,
-          youtube_id: currentYouTubeIdRef.current,
-          seconds_since_first_play: secondsSinceFirstPlay,
-          backend_state: status?.state,
-          playback_started_at: status?.playback_started_at ?? null,
-        }, 'transient_pause_after_start').catch(() => {});
+        const pauseKey = `${currentMediaIdRef.current ?? 'none'}:${currentYouTubeIdRef.current ?? 'none'}`;
+        const shouldLogSuppressedPause = lastSuppressedPauseKeyRef.current !== pauseKey;
+        lastSuppressedPauseKeyRef.current = pauseKey;
+
+        if (shouldLogSuppressedPause) {
+          console.debug('[Player] Ignoring transient YouTube PAUSED after confirmed start', {
+            media_item_id: currentMediaIdRef.current,
+            youtube_id: currentYouTubeIdRef.current,
+            secondsSinceFirstPlay,
+            backend_state: status?.state,
+            playback_started_at: status?.playback_started_at ?? null,
+          });
+          logPlayerEvent('youtube_pause_suppressed', 'info', {
+            media_item_id: currentMediaIdRef.current,
+            youtube_id: currentYouTubeIdRef.current,
+            seconds_since_first_play: secondsSinceFirstPlay,
+            backend_state: status?.state,
+            playback_started_at: status?.playback_started_at ?? null,
+          }, 'transient_pause_after_start').catch(() => {});
+        }
         if (playerRef.current && typeof playerRef.current.playVideo === 'function') {
           window.setTimeout(() => {
             try {
@@ -1127,18 +1192,9 @@ function App() {
 
   useEffect(() => {
     return () => {
-      try {
-        if (playerRef.current?.destroy) {
-          console.log('[Player] Destroying YouTube player instance');
-          playerRef.current.destroy();
-        }
-      } catch (error) {
-        console.warn('[Player] Failed to destroy YouTube player cleanly:', error);
-      } finally {
-        playerRef.current = null;
-      }
+      destroyYouTubePlayer('component unmount');
     };
-  }, []);
+  }, [destroyYouTubePlayer]);
 
   // Initialize player with default playlist
   useEffect(() => {
@@ -1816,16 +1872,7 @@ function App() {
       lastRecoveryKeyRef.current = null;
 
       if (playerRef.current) {
-        try {
-          playerRef.current.stopVideo?.();
-          playerRef.current.clearVideo?.();
-          playerRef.current.destroy?.();
-        } catch (error) {
-          console.warn('[Player] Failed to destroy YouTube player while switching to local video:', error);
-        }
-        playerRef.current = null;
-        setPlayerReady(false);
-        if (playerDivRef.current) playerDivRef.current.innerHTML = '';
+        destroyYouTubePlayer('switching to local/Cloudflare video');
       }
 
       return;
@@ -1921,15 +1968,7 @@ function App() {
         new_media_id: currentMedia.id,
         new_youtube_id: youtubeId,
       });
-      try {
-        playerRef.current.stopVideo?.();
-        playerRef.current.clearVideo?.();
-        playerRef.current.destroy?.();
-      } catch (error) {
-        console.warn('[Player] Failed to destroy old YouTube player cleanly:', error);
-      }
-      playerRef.current = null;
-      if (playerDivRef.current) playerDivRef.current.innerHTML = '';
+      destroyYouTubePlayer('loading new YouTube media');
     }
 
     if (isAfterSkip) {
@@ -1942,8 +1981,11 @@ function App() {
       setActivePlaybackVolume(getConfiguredVolume());
     }
 
+    const youtubeMount = createYouTubeMount();
+    if (!youtubeMount) return;
+
     console.log('[Player] Creating YouTube player for video:', youtubeId);
-    playerRef.current = new window.YT.Player(playerDivRef.current, {
+    playerRef.current = new window.YT.Player(youtubeMount, {
       host: YOUTUBE_EMBED_HOST,
       videoId: youtubeId,
       playerVars: {
@@ -1963,7 +2005,7 @@ function App() {
         onError: onPlayerError,
       },
     });
-  }, [currentMedia, localPlaybackUrl, ytApiReady, status?.source, status?.local_url, status?.current_media_id, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
+  }, [createYouTubeMount, currentMedia, destroyYouTubePlayer, localPlaybackUrl, ytApiReady, status?.source, status?.local_url, status?.current_media_id, isYouTubePlaybackUrl, onPlayerReady, onPlayerStateChange, onPlayerError, reportPlaybackFailure, reportEndedAndNext, markYouTubeLoadStart, getConfiguredVolume, setActivePlaybackVolume, setPlaybackOpacity]);
 
   // Auto-skip videos that stay in 'loading' status for 4+ seconds, or that enter
   // 'paused' before the video has ever actually played (unexpected pause = error).
@@ -2101,7 +2143,11 @@ function App() {
           localVideoRef.current.pause();
         }
       } else {
-        console.warn('[Player] Ignoring iframe command for local/Cloudflare status before <video> is mounted', {
+        if (statusPlaybackUrl && statusPlaybackUrl !== localPlaybackUrlRef.current) {
+          localPlaybackUrlRef.current = statusPlaybackUrl;
+          setLocalPlaybackUrl(statusPlaybackUrl);
+        }
+        console.debug('[Player] Waiting for local/Cloudflare <video> to mount before applying playback command', {
           state: status.state,
           media_id: status.current_media_id,
           source: status.source,

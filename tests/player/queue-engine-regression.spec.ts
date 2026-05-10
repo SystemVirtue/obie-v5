@@ -38,6 +38,8 @@ test.describe('queue engine regression guardrails', () => {
     expect(app).toContain('Resume ignored because iframe media does not match player_status');
     expect(app).toContain('Pause ignored because iframe media does not match player_status');
     expect(app).toContain('Ignoring BUFFERING after confirmed playback start');
+    expect(app).toContain('createYouTubeMount');
+    expect(app).toContain('new window.YT.Player(youtubeMount');
   });
 
   test('shared subscriptions recover after queue fetch errors', () => {
@@ -56,6 +58,7 @@ test.describe('queue engine regression guardrails', () => {
     expect(fn).toContain('stored_endpoint_id === endpoint_id');
     expect(fn).toContain('stored_player_id === player_id');
     expect(app).toContain("localStorage.getItem('obie_priority_endpoint_id')");
+    expect(app).toContain("result?.reason === 'stale_session'");
     expect(sql).toContain('endpoint_session_takeover');
     expect(sql).toContain("v_current_last_seen >= now() - interval '45 seconds'");
   });
