@@ -40,6 +40,11 @@ test.describe('queue engine regression guardrails', () => {
     expect(app).toContain('Ignoring BUFFERING after confirmed playback start');
     expect(app).toContain('createYouTubeMount');
     expect(app).toContain('new window.YT.Player(youtubeMount');
+    expect(app).toContain('currentMediaUrlIsYouTube');
+    expect(app).toContain('currentMediaHasDirectUrl');
+    expect(app).toContain('statusPlaybackIsLocal');
+    expect(app).toContain('setYouTubeIframePermissions');
+    expect(app).toContain('compute-pressure');
   });
 
   test('shared subscriptions recover after queue fetch errors', () => {
