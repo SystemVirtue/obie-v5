@@ -64,6 +64,7 @@ export interface MediaItem {
   thumbnail: string | null;
   fetched_at: string;
   metadata: Record<string, any>;
+  youtube_id?: string | null;
   youtube_playability_status?: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
   youtube_playability_reason?: string | null;
   youtube_playability_checked_at?: string | null;
@@ -71,6 +72,10 @@ export interface MediaItem {
   youtube_oembed_ok?: boolean | null;
   youtube_last_error_code?: string | null;
   youtube_last_error_at?: string | null;
+  excluded_from_playback?: boolean;
+  excluded_reason?: string | null;
+  excluded_at?: string | null;
+  replacement_media_item_id?: string | null;
 }
 
 export interface QueueItem {
@@ -185,6 +190,19 @@ export interface YouTubeAlternativeCandidate {
   created_at: string;
 }
 
+export interface MediaPlaybackOverride {
+  media_item_id: string;
+  override_type: 'cloudflare' | 'replacement' | 'excluded' | 'youtube';
+  playback_url: string | null;
+  r2_file_id: string | null;
+  replacement_media_item_id: string | null;
+  confidence: number;
+  reason: string | null;
+  details: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface SystemHealthCheck {
   name: string;
   status: 'ok' | 'warn' | 'error';
@@ -242,6 +260,7 @@ export interface Database {
       system_logs: { Row: SystemLog };
       youtube_playability_checks: { Row: YouTubePlayabilityCheck };
       youtube_alternative_candidates: { Row: YouTubeAlternativeCandidate };
+      media_playback_overrides: { Row: MediaPlaybackOverride };
       r2_files: { Row: R2File };
       admin_broadcasts: {
         Row: AdminBroadcast;
@@ -974,8 +993,9 @@ export async function callYouTubeRemediationWorker(params: {
     selected_count: number;
     summary: {
       processed: number;
-      candidates: number;
-      playable: number;
+      r2: number;
+      replacements: number;
+      excluded: number;
       errors: number;
     };
     results: Array<Record<string, any>>;

@@ -427,9 +427,9 @@ async function filterSearchResultsForEmbedding(videos: Video[]): Promise<Video[]
   if (videos.length === 0) return videos;
 
   const checked = await annotateVideosForEmbedding(videos);
-  const validated = checked.filter((video) => video.playabilityStatus !== 'embed_blocked' && video.playabilityStatus !== 'unavailable');
+  const validated = checked.filter((video) => video.playabilityStatus === 'playable');
 
-  console.log(`[youtube-scraper] Search embeddability filter kept ${validated.length}/${videos.length} results`);
+  console.log(`[youtube-scraper] Search embeddability filter kept ${validated.length}/${videos.length} playable results`);
   return validated;
 }
 

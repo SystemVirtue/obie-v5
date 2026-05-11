@@ -30,6 +30,29 @@ test.describe('queue engine regression guardrails', () => {
     expect(sql).toContain('youtube_playability_status');
   });
 
+  test('playability rollout resolves or excludes unplayable YouTube media before live playback', () => {
+    const sql = read('supabase/migrations/20260511120000_playability_resolution_rollout.sql');
+    const scraper = read('supabase/functions/youtube-scraper/index.ts');
+    const playlistManager = read('supabase/functions/playlist-manager/index.ts');
+    const kioskHandler = read('supabase/functions/kiosk-handler/index.ts');
+    const remediationWorker = read('supabase/functions/youtube-remediation-worker/index.ts');
+    const playerControl = read('supabase/functions/player-control/index.ts');
+
+    expect(sql).toContain('media_playback_overrides');
+    expect(sql).toContain('excluded_from_playback');
+    expect(sql).toContain('media_has_playable_route');
+    expect(sql).toContain("override_type = 'replacement'");
+    expect(sql).toContain("override_type = 'cloudflare'");
+    expect(sql).toContain('public.media_has_playable_route(pi.media_item_id)');
+    expect(sql).toContain("v_media.youtube_playability_status IN ('embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed')");
+    expect(scraper).toContain("video.playabilityStatus === 'playable'");
+    expect(playlistManager).toContain('resolveImportedYouTubeMedia');
+    expect(kioskHandler).toContain('resolveUnplayableYouTubeMedia');
+    expect(remediationWorker).toContain("action: 'replacement'");
+    expect(remediationWorker).toContain("action: 'excluded'");
+    expect(playerControl).toContain("override_type: 'excluded'");
+  });
+
   test('player commands use effective playback URL and avoid stale iframe commands', () => {
     const app = read('web/player/src/App.tsx');
 

@@ -2857,7 +2857,7 @@ function YouTubeHealthPanel() {
       });
       setAuditSummary(result.audit?.summary || null);
       setMessage({
-        text: `Processed ${result.summary.processed}; stored ${result.summary.candidates} candidates, ${result.summary.playable} playable`,
+        text: `Processed ${result.summary.processed}; R2 ${result.summary.r2}, replacements ${result.summary.replacements}, excluded ${result.summary.excluded}`,
         ok: result.summary.errors === 0,
       });
       await loadIssues();

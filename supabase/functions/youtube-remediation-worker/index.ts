@@ -2,6 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const DEFAULT_STATUSES = ['embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed'];
+const AUTO_REPLACEMENT_MIN_SCORE = 82;
 
 function extractYouTubeId(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -28,6 +29,173 @@ async function callFunction(name: string, body: Record<string, unknown>) {
     throw new Error(`${name} failed: ${response.status} ${payload.error || text}`);
   }
   return payload;
+}
+
+async function findCloudflareFallback(supabase: any, youtubeId: string | null): Promise<any | null> {
+  if (!youtubeId) return null;
+  const { data, error } = await supabase
+    .from('r2_files')
+    .select('id, public_url, object_key')
+    .eq('youtube_id', youtubeId)
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('[youtube-remediation-worker] R2 lookup failed:', error.message || error);
+    return null;
+  }
+  return data || null;
+}
+
+async function upsertPlaybackOverride(supabase: any, mediaItemId: string, values: Record<string, unknown>): Promise<void> {
+  const { error } = await supabase
+    .from('media_playback_overrides')
+    .upsert({
+      media_item_id: mediaItemId,
+      ...values,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'media_item_id' });
+  if (error) throw error;
+}
+
+async function markExcluded(supabase: any, media: any, reason: string, details: Record<string, unknown>): Promise<void> {
+  await supabase
+    .from('media_items')
+    .update({
+      excluded_from_playback: true,
+      excluded_reason: reason,
+      excluded_at: new Date().toISOString(),
+    })
+    .eq('id', media.id);
+
+  await upsertPlaybackOverride(supabase, media.id, {
+    override_type: 'excluded',
+    confidence: 100,
+    reason,
+    details,
+  });
+
+  await supabase
+    .from('queue')
+    .delete()
+    .eq('media_item_id', media.id)
+    .is('played_at', null);
+}
+
+async function createReplacementMedia(supabase: any, candidate: any): Promise<string | null> {
+  const { data: mediaId, error } = await supabase.rpc('create_or_get_media_item', {
+    p_source_id: `youtube:${candidate.id}`,
+    p_source_type: 'youtube',
+    p_title: candidate.title,
+    p_artist: candidate.artist || null,
+    p_url: candidate.url,
+    p_duration: candidate.duration || null,
+    p_thumbnail: candidate.thumbnail || null,
+    p_metadata: {
+      youtube_playability_status: candidate.playabilityStatus || 'playable',
+      youtube_playability_reason: candidate.playabilityReason || null,
+      youtube_embeddable: typeof candidate.embeddable === 'boolean' ? candidate.embeddable : null,
+      youtube_oembed_ok: typeof candidate.oembedOk === 'boolean' ? candidate.oembedOk : null,
+      replacement_candidate: true,
+    },
+  });
+  if (error) throw error;
+
+  await supabase.rpc('record_youtube_playability', {
+    p_media_item_id: mediaId,
+    p_youtube_id: candidate.id,
+    p_status: candidate.playabilityStatus || 'playable',
+    p_reason: candidate.playabilityReason || 'youtube_replacement_candidate',
+    p_checked_by: 'youtube_remediation_worker',
+    p_embeddable: typeof candidate.embeddable === 'boolean' ? candidate.embeddable : null,
+    p_oembed_ok: typeof candidate.oembedOk === 'boolean' ? candidate.oembedOk : null,
+    p_error_code: null,
+    p_details: candidate,
+  });
+
+  return mediaId || null;
+}
+
+async function resolveMedia(supabase: any, media: any, maxResults: number) {
+  const youtubeId = extractYouTubeId(media.source_id);
+  const r2 = await findCloudflareFallback(supabase, youtubeId);
+  if (r2?.public_url) {
+    await upsertPlaybackOverride(supabase, media.id, {
+      override_type: 'cloudflare',
+      playback_url: r2.public_url,
+      r2_file_id: r2.id,
+      confidence: 100,
+      reason: `youtube_${media.youtube_playability_status}_r2_fallback`,
+      details: { youtube_id: youtubeId, object_key: r2.object_key },
+    });
+    await supabase
+      .from('media_items')
+      .update({
+        excluded_from_playback: false,
+        excluded_reason: null,
+        excluded_at: null,
+      })
+      .eq('id', media.id);
+    return { action: 'r2_override', youtube_id: youtubeId, r2_file_id: r2.id };
+  }
+
+  const result = await callFunction('youtube-alternative-finder', {
+    media_item_id: media.id,
+    youtube_id: youtubeId,
+    title: media.title,
+    artist: media.artist,
+    duration: media.duration,
+    max_results: maxResults,
+  });
+
+  const candidates = Array.isArray(result.candidates) ? result.candidates : [];
+  const best = candidates.find((candidate: any) =>
+    candidate?.playabilityStatus === 'playable' &&
+    Number(candidate?.alternativeScore || 0) >= AUTO_REPLACEMENT_MIN_SCORE
+  );
+
+  if (best) {
+    const replacementMediaId = await createReplacementMedia(supabase, best);
+    if (replacementMediaId) {
+      await supabase
+        .from('media_items')
+        .update({
+          replacement_media_item_id: replacementMediaId,
+          excluded_from_playback: false,
+          excluded_reason: null,
+          excluded_at: null,
+        })
+        .eq('id', media.id);
+
+      await upsertPlaybackOverride(supabase, media.id, {
+        override_type: 'replacement',
+        replacement_media_item_id: replacementMediaId,
+        confidence: best.alternativeScore || 0,
+        reason: `youtube_${media.youtube_playability_status}_auto_replacement`,
+        details: {
+          youtube_id: youtubeId,
+          replacement_youtube_id: best.id,
+          title: best.title,
+        },
+      });
+
+      return {
+        action: 'replacement',
+        youtube_id: youtubeId,
+        replacement_media_item_id: replacementMediaId,
+        replacement_youtube_id: best.id,
+        score: best.alternativeScore || 0,
+      };
+    }
+  }
+
+  await markExcluded(supabase, media, `youtube_${media.youtube_playability_status}_no_route`, {
+    youtube_id: youtubeId,
+    playability_status: media.youtube_playability_status,
+    playability_reason: media.youtube_playability_reason,
+  });
+
+  return { action: 'excluded', youtube_id: youtubeId };
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -74,21 +242,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
     for (const media of mediaItems || []) {
       const youtubeId = extractYouTubeId(media.source_id);
       try {
-        const result = await callFunction('youtube-alternative-finder', {
-          media_item_id: media.id,
-          youtube_id: youtubeId,
-          title: media.title,
-          artist: media.artist,
-          duration: media.duration,
-          max_results: maxResults,
-        });
+        const resolution = await resolveMedia(supabase, media, maxResults);
         results.push({
+          ...resolution,
           media_item_id: media.id,
-          youtube_id: youtubeId,
+          youtube_id: resolution.youtube_id || youtubeId,
           title: media.title,
           status: media.youtube_playability_status,
-          candidate_count: result.count || 0,
-          playable_count: (result.candidates || []).filter((candidate: any) => candidate.playabilityStatus === 'playable').length,
         });
       } catch (candidateError) {
         results.push({
@@ -103,11 +263,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     const summary = results.reduce((acc, item: any) => {
       acc.processed += 1;
-      acc.candidates += Number(item.candidate_count || 0);
-      acc.playable += Number(item.playable_count || 0);
+      if (item.action === 'r2_override') acc.r2 += 1;
+      if (item.action === 'replacement') acc.replacements += 1;
+      if (item.action === 'excluded') acc.excluded += 1;
       if (item.error) acc.errors += 1;
       return acc;
-    }, { processed: 0, candidates: 0, playable: 0, errors: 0 });
+    }, { processed: 0, r2: 0, replacements: 0, excluded: 0, errors: 0 });
 
     return new Response(JSON.stringify({
       audit,

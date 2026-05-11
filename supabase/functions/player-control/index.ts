@@ -28,6 +28,35 @@ function isTransientDatabaseError(error: any) {
     || error?.code === '08006';
 }
 
+async function findCloudflareFallback(supabase: any, youtubeId?: string | null) {
+  if (!youtubeId) return null;
+  const { data, error } = await supabase
+    .from('r2_files')
+    .select('id, public_url, object_key')
+    .eq('youtube_id', youtubeId)
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('[player-control] R2 fallback lookup failed:', error.message || error);
+    return null;
+  }
+  return data || null;
+}
+
+async function upsertPlaybackOverride(supabase: any, mediaItemId: string, values: Record<string, unknown>) {
+  const { error } = await supabase
+    .from('media_playback_overrides')
+    .upsert({
+      media_item_id: mediaItemId,
+      ...values,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'media_item_id' });
+  if (error) {
+    console.warn('[player-control] Failed to upsert playback override:', error.message || error);
+  }
+}
+
 async function isMasterEndpoint(supabase: any, playerId: string, endpointId?: string | null, sessionId?: string | null) {
   const { data: player } = await supabase
     .from('players')
@@ -625,6 +654,43 @@ Deno.serve(async (req)=>{
             playability_status: playabilityStatus,
             error: playabilityError.message || playabilityError,
           });
+        }
+
+        if (mediaItemId && ['embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed'].includes(playabilityStatus)) {
+          const r2Fallback = await findCloudflareFallback(supabase, youtubeId);
+          if (r2Fallback?.public_url) {
+            await upsertPlaybackOverride(supabase, mediaItemId, {
+              override_type: 'cloudflare',
+              playback_url: r2Fallback.public_url,
+              r2_file_id: r2Fallback.id,
+              confidence: 100,
+              reason: `${playabilityStatus}_runtime_r2_fallback`,
+              details: {
+                youtube_id: youtubeId,
+                object_key: r2Fallback.object_key,
+                error_code: errorCode,
+              },
+            });
+          } else {
+            await supabase
+              .from('media_items')
+              .update({
+                excluded_from_playback: true,
+                excluded_reason: `${playabilityStatus}_runtime_failure`,
+                excluded_at: new Date().toISOString(),
+              })
+              .eq('id', mediaItemId);
+
+            await upsertPlaybackOverride(supabase, mediaItemId, {
+              override_type: 'excluded',
+              confidence: 100,
+              reason: `${playabilityStatus}_runtime_failure`,
+              details: {
+                youtube_id: youtubeId,
+                error_code: errorCode,
+              },
+            });
+          }
         }
       }
 
