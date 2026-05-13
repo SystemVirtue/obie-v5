@@ -2045,6 +2045,8 @@ function App() {
     console.log('[Player] Creating YouTube player for video:', youtubeId);
     playerRef.current = new window.YT.Player(youtubeMount, {
       host: YOUTUBE_EMBED_HOST,
+      width: '100%',
+      height: '100%',
       videoId: youtubeId,
       playerVars: {
         enablejsapi: 1,
@@ -2269,7 +2271,7 @@ function App() {
           src={localPlaybackUrl}
           autoPlay
           className="absolute inset-0 w-full h-full"
-          style={{ objectFit: 'contain', background: 'black' }}
+          style={{ objectFit: 'cover', objectPosition: 'center center', background: 'black' }}
           onPlay={async () => {
             const v = localVideoRef.current;
             console.log(`[Player][local-video] ▶ PLAY  src=${localPlaybackUrl}  duration=${v ? v.duration.toFixed(1) + 's' : '?'}`);

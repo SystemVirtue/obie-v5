@@ -87,6 +87,12 @@ export interface QueueItem {
   requested_by: string | null;
   requested_at: string;
   played_at: string | null;
+  reserved_at?: string | null;
+  started_at?: string | null;
+  failed_at?: string | null;
+  retry_count?: number;
+  last_error?: string | null;
+  last_error_at?: string | null;
   expires_at: string;
   media_item?: MediaItem; // Joined data
 }
@@ -479,7 +485,7 @@ export function subscribeToQueue(
     
     supabase
       .from('queue')
-      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
+      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, reserved_at, started_at, failed_at, retry_count, last_error, last_error_at, expires_at, media_item:media_items(*)')
       .eq('player_id', playerId)
       .is('played_at', null)
       .order('type', { ascending: false })

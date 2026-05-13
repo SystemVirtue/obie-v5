@@ -17,6 +17,38 @@ async function logSystemEvent(supabase: any, playerId: string, event: string, se
   }
 }
 
+async function confirmReservedQueueItem(supabase: any, playerId: string, mediaItemId?: string | null) {
+  if (!mediaItemId) return null;
+  const { data, error } = await supabase.rpc('confirm_queue_playback', {
+    p_player_id: playerId,
+    p_media_item_id: mediaItemId,
+  });
+  if (error) {
+    console.warn('[player-control] Failed to confirm queue playback:', error.message || error);
+    return null;
+  }
+  return Array.isArray(data) ? data[0] || null : data || null;
+}
+
+async function markReservedQueueItemFailed(
+  supabase: any,
+  playerId: string,
+  mediaItemId?: string | null,
+  reason = 'playback_failed',
+) {
+  if (!mediaItemId) return null;
+  const { data, error } = await supabase.rpc('mark_queue_playback_failed', {
+    p_player_id: playerId,
+    p_media_item_id: mediaItemId,
+    p_reason: reason,
+  });
+  if (error) {
+    console.warn('[player-control] Failed to mark queue playback failure:', error.message || error);
+    return null;
+  }
+  return Array.isArray(data) ? data[0] || null : data || null;
+}
+
 function isTransientDatabaseError(error: any) {
   const message = `${error?.message ?? ''} ${error?.code ?? ''}`.toLowerCase();
   return message.includes('timeout')
@@ -586,12 +618,30 @@ Deno.serve(async (req)=>{
         ? true
         : await isMasterEndpoint(supabase, player_id, endpoint_id, session_id);
 
+      const failurePayload = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+      let mediaItemId = typeof failurePayload.media_item_id === 'string' ? failurePayload.media_item_id : null;
+      if (!mediaItemId) {
+        const { data: currentFailureStatus } = await supabase
+          .from('player_status')
+          .select('current_media_id')
+          .eq('player_id', player_id)
+          .single();
+        mediaItemId = currentFailureStatus?.current_media_id || null;
+      }
+      const queueFailure = callerIsMaster
+        ? await markReservedQueueItemFailed(supabase, player_id, mediaItemId, reason || 'playback_failed')
+        : null;
+
       await logSystemEvent(supabase, player_id, typeof event_name === 'string' && event_name ? event_name : 'playback_failed', 'error', {
         source: initiator || 'player_client',
         reason: reason || 'playback_failed',
         endpoint_id: endpoint_id || null,
         session_id: session_id || null,
         ...(payload && typeof payload === 'object' ? payload : {}),
+        queue_id: queueFailure?.queue_id || null,
+        queue_type: queueFailure?.queue_type || null,
+        queue_action: queueFailure?.action || null,
+        queue_retry_count: queueFailure?.retry_count ?? null,
         ignored: !callerIsMaster,
       });
 
@@ -622,8 +672,6 @@ Deno.serve(async (req)=>{
         .eq('player_id', player_id);
       if (failureUpdateError) throw failureUpdateError;
 
-      const failurePayload = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
-      const mediaItemId = typeof failurePayload.media_item_id === 'string' ? failurePayload.media_item_id : null;
       const youtubeId = typeof failurePayload.youtube_id === 'string' ? failurePayload.youtube_id : null;
       const errorCode = 'error_code' in failurePayload ? String(failurePayload.error_code) : null;
       const playabilityStatus =
@@ -738,11 +786,15 @@ Deno.serve(async (req)=>{
               .eq('current_media_id', expected_media_id);
             if (confirmError) throw confirmError;
 
+            const queueConfirmation = await confirmReservedQueueItem(supabase, player_id, expected_media_id);
             await logSystemEvent(supabase, player_id, 'playback_started_confirmed_by_non_master', 'info', {
               source: initiator || 'player_client',
               endpoint_id: endpoint_id || null,
               session_id: session_id || null,
               media_item_id: expected_media_id,
+              queue_id: queueConfirmation?.queue_id || null,
+              queue_type: queueConfirmation?.queue_type || null,
+              requested_by: queueConfirmation?.requested_by || null,
             });
 
             return new Response(JSON.stringify({
@@ -829,12 +881,20 @@ Deno.serve(async (req)=>{
       const { error: updateError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
       if (updateError) throw updateError;
       if (state === 'playing' && !currentStatusForUpdate?.playback_started_at) {
+        const queueConfirmation = await confirmReservedQueueItem(
+          supabase,
+          player_id,
+          currentStatusForUpdate?.current_media_id || null,
+        );
         await logSystemEvent(supabase, player_id, 'playback_started_confirmed', 'info', {
           source: initiator || 'player_client',
           endpoint_id: endpoint_id || null,
           session_id: session_id || null,
           media_item_id: currentStatusForUpdate?.current_media_id || null,
           playback_source: currentStatusForUpdate?.source || null,
+          queue_id: queueConfirmation?.queue_id || null,
+          queue_type: queueConfirmation?.queue_type || null,
+          requested_by: queueConfirmation?.requested_by || null,
         });
       }
       if (initiator === 'admin_ui') {
@@ -876,6 +936,7 @@ Deno.serve(async (req)=>{
           .select('current_media_id')
           .eq('player_id', player_id)
           .single();
+        await confirmReservedQueueItem(supabase, player_id, skipStatus?.current_media_id || null);
         const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
           p_player_id: player_id,
           p_expected_media_id: typeof expected_media_id === 'string' ? expected_media_id : skipStatus?.current_media_id ?? null,
@@ -902,7 +963,7 @@ Deno.serve(async (req)=>{
       if (action === 'ended' || state === 'idle') {
         const { data: currentStatus } = await supabase
           .from('player_status')
-          .select('state, current_media_id')
+          .select('state, current_media_id, playback_started_at')
           .eq('player_id', player_id)
           .single();
 
@@ -928,9 +989,12 @@ Deno.serve(async (req)=>{
         console.log('[player-control] Song ended, calling queue_next for priority player:', player_id);
         const { data: endedStatus } = await supabase
           .from('player_status')
-          .select('current_media_id')
+          .select('current_media_id, playback_started_at')
           .eq('player_id', player_id)
           .single();
+        if (endedStatus?.playback_started_at) {
+          await confirmReservedQueueItem(supabase, player_id, endedStatus?.current_media_id || null);
+        }
         const { data: nextItem, error: nextError } = await supabase.rpc('queue_next', {
           p_player_id: player_id,
           p_expected_media_id: typeof expected_media_id === 'string' ? expected_media_id : endedStatus?.current_media_id ?? null,

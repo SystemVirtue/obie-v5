@@ -3,6 +3,7 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
+const DEFAULT_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 const BLOCKING_PLAYABILITY_STATUSES = new Set(['unknown', 'embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed']);
 const AUTO_REPLACEMENT_MIN_SCORE = 82;
 
@@ -71,6 +72,62 @@ async function markMediaExcluded(supabase: any, mediaItemId: string, reason: str
     confidence: 100,
     details,
   });
+}
+
+async function resolveKioskSessionPlayer(
+  supabase: any,
+  sessionId: string,
+  requestedPlayerId?: string | null,
+): Promise<{ player_id?: string; response?: Response }> {
+  const { data: session, error } = await supabase
+    .from('kiosk_sessions')
+    .select('session_id, player_id')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+
+  if (error || !session?.player_id) {
+    return {
+      response: new Response(JSON.stringify({ error: 'Session not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }),
+    };
+  }
+
+  if (requestedPlayerId && requestedPlayerId !== session.player_id) {
+    await supabase.from('system_logs').insert({
+      player_id: session.player_id,
+      event: 'kiosk_request_player_mismatch',
+      severity: 'warn',
+      payload: {
+        session_id: sessionId,
+        requested_player_id: requestedPlayerId,
+        session_player_id: session.player_id,
+      },
+    });
+
+    return {
+      response: new Response(JSON.stringify({
+        error: 'Kiosk session does not belong to requested player',
+        player_id: session.player_id,
+      }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }),
+    };
+  }
+
+  return { player_id: session.player_id };
+}
+
+async function getQueueRequestDetails(supabase: any, queueId: string): Promise<Record<string, unknown>> {
+  const { data } = await supabase
+    .from('queue')
+    .select('id, player_id, media_item_id, type, position, requested_by, reserved_at, started_at, failed_at, retry_count')
+    .eq('id', queueId)
+    .maybeSingle();
+
+  return data || {};
 }
 
 async function recordVideoPlayability(supabase: any, mediaItemId: string | null, video: any, checkedBy: string): Promise<void> {
@@ -278,8 +335,28 @@ Deno.serve(async (req)=>{
     // Handle session initialization
     if (action === 'init') {
       console.log('Creating new kiosk session');
-      // Get the default player (first player in the system)
-      const { data: player, error: playerError } = await supabase.from('players').select('id').limit(1).single();
+      const requestedPlayerId = typeof body.player_id === 'string' && body.player_id
+        ? body.player_id
+        : DEFAULT_PLAYER_ID;
+
+      let { data: player, error: playerError } = await supabase
+        .from('players')
+        .select('id')
+        .eq('id', requestedPlayerId)
+        .maybeSingle();
+
+      if (!player && requestedPlayerId === DEFAULT_PLAYER_ID) {
+        const fallback = await supabase
+          .from('players')
+          .select('id')
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        player = fallback.data;
+        playerError = fallback.error;
+      }
+
       if (playerError || !player) {
         console.error('No player found:', playerError);
         return new Response(JSON.stringify({
@@ -373,6 +450,14 @@ Deno.serve(async (req)=>{
         });
       }
 
+      const sessionResolution = await resolveKioskSessionPlayer(
+        supabase,
+        session_id,
+        typeof player_id === 'string' ? player_id : null,
+      );
+      if (sessionResolution.response) return sessionResolution.response;
+      const requestPlayerId = sessionResolution.player_id!;
+
       let mediaItemId = media_item_id;
 
       // If URL provided, scrape it first to get/create media item
@@ -425,7 +510,7 @@ Deno.serve(async (req)=>{
             console.error('Invalid video object from scraper:', video);
             // Log to system_logs for failed scrape/validation
             await supabase.from('system_logs').insert({
-              player_id,
+              player_id: requestPlayerId,
               event: 'kiosk_request_failed',
               severity: 'error',
               payload: {
@@ -467,7 +552,7 @@ Deno.serve(async (req)=>{
             console.error('Failed to create/get media item:', mediaError, video);
             // Log to system_logs for failed media item creation
             await supabase.from('system_logs').insert({
-              player_id,
+              player_id: requestPlayerId,
               event: 'media_item_create_failed',
               severity: 'error',
               payload: {
@@ -503,7 +588,7 @@ Deno.serve(async (req)=>{
 
             if (resolved.blocked) {
               await supabase.from('system_logs').insert({
-                player_id,
+                player_id: requestPlayerId,
                 event: 'kiosk_request_rejected_unplayable',
                 severity: 'warn',
                 payload: {
@@ -563,7 +648,7 @@ Deno.serve(async (req)=>{
       }
       if (blocker.blocked) {
         await supabase.from('system_logs').insert({
-          player_id,
+          player_id: requestPlayerId,
           event: 'kiosk_request_rejected_unplayable',
           severity: 'warn',
           payload: {
@@ -609,22 +694,32 @@ Deno.serve(async (req)=>{
           .select('title, artist')
           .eq('id', mediaItemId)
           .single();
+        const queueDetails = queueId
+          ? await getQueueRequestDetails(supabase, queueId)
+          : {};
 
         await supabase.from('system_logs').insert({
-          player_id,
+          player_id: requestPlayerId,
           event: 'kiosk_request',
           severity: 'info',
           payload: {
             session_id,
             media_item_id: mediaItemId,
             queue_id: queueId,
+            player_id: requestPlayerId,
+            position: queueDetails.position ?? null,
+            requested_by: queueDetails.requested_by ?? session_id,
             title: mediaItem?.title || 'Unknown',
             artist: mediaItem?.artist || 'Unknown'
           }
         });
 
         return new Response(JSON.stringify({
-          queue_id: queueId
+          queue_id: queueId,
+          player_id: requestPlayerId,
+          media_item_id: mediaItemId,
+          position: queueDetails.position ?? null,
+          requested_by: queueDetails.requested_by ?? session_id,
         }), {
           status: 200,
           headers: {
@@ -813,6 +908,14 @@ Deno.serve(async (req)=>{
         });
       }
 
+      const sessionResolution = await resolveKioskSessionPlayer(
+        supabase,
+        session_id,
+        typeof player_id === 'string' ? player_id : null,
+      );
+      if (sessionResolution.response) return sessionResolution.response;
+      const requestPlayerId = sessionResolution.player_id!;
+
       try {
         // Fetch the R2 file metadata
         const { data: r2File, error: r2Error } = await supabase
@@ -867,8 +970,12 @@ Deno.serve(async (req)=>{
         }
 
         // Log the request
+        const queueDetails = queueId
+          ? await getQueueRequestDetails(supabase, queueId)
+          : {};
+
         await supabase.from('system_logs').insert({
-          player_id,
+          player_id: requestPlayerId,
           event: 'kiosk_request_r2',
           severity: 'info',
           payload: {
@@ -876,12 +983,21 @@ Deno.serve(async (req)=>{
             r2_file_id,
             media_item_id: mediaItemId,
             queue_id: queueId,
+            player_id: requestPlayerId,
+            position: queueDetails.position ?? null,
+            requested_by: queueDetails.requested_by ?? session_id,
             title: r2File.title || r2File.file_name,
             artist: r2File.artist || null,
           },
         });
 
-        return new Response(JSON.stringify({ queue_id: queueId }), {
+        return new Response(JSON.stringify({
+          queue_id: queueId,
+          player_id: requestPlayerId,
+          media_item_id: mediaItemId,
+          position: queueDetails.position ?? null,
+          requested_by: queueDetails.requested_by ?? session_id,
+        }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
