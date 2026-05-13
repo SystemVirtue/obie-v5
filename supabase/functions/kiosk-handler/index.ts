@@ -123,7 +123,7 @@ async function resolveKioskSessionPlayer(
 async function getQueueRequestDetails(supabase: any, queueId: string): Promise<Record<string, unknown>> {
   const { data } = await supabase
     .from('queue')
-    .select('id, player_id, media_item_id, type, position, requested_by, reserved_at, started_at, failed_at, retry_count')
+    .select('id, player_id, media_item_id, type, position, requested_by')
     .eq('id', queueId)
     .maybeSingle();
 

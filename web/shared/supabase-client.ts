@@ -485,7 +485,7 @@ export function subscribeToQueue(
     
     supabase
       .from('queue')
-      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, reserved_at, started_at, failed_at, retry_count, last_error, last_error_at, expires_at, media_item:media_items(*)')
+      .select('id, player_id, type, media_item_id, position, requested_by, requested_at, played_at, expires_at, media_item:media_items(*)')
       .eq('player_id', playerId)
       .is('played_at', null)
       .order('type', { ascending: false })
