@@ -479,9 +479,6 @@ export function subscribeToQueue(
       return;
     }
     fetchInFlight = true;
-    console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
-    const fetchTime = new Date().toISOString();
-    console.log('[subscribeToQueue] ⏰ Fetch timestamp:', fetchTime);
     
     supabase
       .from('queue')
@@ -495,20 +492,6 @@ export function subscribeToQueue(
           console.error('[subscribeToQueue] ❌ Database error:', error);
           finishFetch();
           return;
-        }
-        
-        console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
-        if (data && data.length > 0) {
-          console.log('[subscribeToQueue] 📋 Queue data:', (data as any[]).map(item => ({
-            id: item.id?.slice(0, 8) || 'unknown',
-            type: item.type || 'unknown',
-            position: item.position || -1,
-            media_id: item.media_item_id?.slice(0, 8) || 'unknown',
-            title: item.media_item?.title?.slice(0, 30) || 'unknown',
-            played_at: item.played_at || null
-          })));
-        } else {
-          console.log('[subscribeToQueue] 📋 Queue is empty');
         }
         
         if (data) {

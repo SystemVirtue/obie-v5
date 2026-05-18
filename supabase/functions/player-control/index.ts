@@ -1009,27 +1009,6 @@ Deno.serve(async (req)=>{
             title: nextItem?.[0]?.title?.slice(0, 30) || 'none',
             url: nextItem?.[0]?.url?.slice(0, 50) || 'none'
           });
-          
-          // Also check what's in the queue now
-          const { data: currentQueue } = await supabase
-            .from('queue')
-            .select('id, media_item_id, type, position, played_at, media_items!inner(*)')
-            .eq('player_id', player_id)
-            .is('played_at', null)
-            .order('type', { ascending: false })
-            .order('position', { ascending: true });
-            
-          console.log('[player-control] 📋 Current queue after queue_next:', {
-            total_items: currentQueue?.length || 0,
-            items: currentQueue?.map(item => ({
-              id: item.id.slice(0, 8),
-              media_id: item.media_item_id?.slice(0, 8),
-              type: item.type,
-              position: item.position,
-              title: (Array.isArray(item.media_items) ? item.media_items[0] : item.media_items)?.title?.slice(0, 30) || 'none',
-              played_at: item.played_at
-            }))
-          });
         }
         return new Response(JSON.stringify({
           success: true,
