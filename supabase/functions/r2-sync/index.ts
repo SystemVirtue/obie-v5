@@ -368,12 +368,12 @@ Deno.serve(async (req) => {
       // Fetch all existing records for this bucket in one query
       const { data: existingFiles } = await supabase
         .from('r2_files')
-        .select('id, object_key, etag, thumbnail')
+        .select('id, object_key, etag, thumbnail, youtube_id')
         .eq('bucket_name', bucketName);
 
-      const existingMap = new Map<string, { id: string; etag: string; thumbnail: string | null }>();
+      const existingMap = new Map<string, { id: string; etag: string; thumbnail: string | null; youtube_id: string | null }>();
       for (const f of existingFiles ?? []) {
-        existingMap.set(f.object_key, { id: f.id, etag: f.etag, thumbnail: f.thumbnail });
+        existingMap.set(f.object_key, { id: f.id, etag: f.etag, thumbnail: f.thumbnail, youtube_id: f.youtube_id ?? null });
       }
 
       const toInsert: object[] = [];
@@ -385,16 +385,18 @@ Deno.serve(async (req) => {
         const { title, artist } = extractTitleFromFilename(fileName);
         const filePublicUrl = `${publicUrl}/${obj.key}`;
         const thumbnailUrl = thumbnailMap.get(obj.key) || null;
+        const youtubeId = extractYouTubeIdFromKey(obj.key);
         const existing = existingMap.get(obj.key);
 
         if (existing) {
-          if (existing.etag !== obj.etag || existing.thumbnail !== thumbnailUrl) {
+          if (existing.etag !== obj.etag || existing.thumbnail !== thumbnailUrl || existing.youtube_id !== youtubeId) {
             toUpdate.push({ id: existing.id, patch: {
               etag: obj.etag,
               size_bytes: obj.size,
               last_modified: obj.lastModified,
               public_url: filePublicUrl,
               thumbnail: thumbnailUrl,
+              youtube_id: youtubeId,
               synced_at: new Date().toISOString(),
             }});
           }
@@ -411,6 +413,7 @@ Deno.serve(async (req) => {
             title,
             artist,
             thumbnail: thumbnailUrl,
+            youtube_id: youtubeId,
           });
         }
       }

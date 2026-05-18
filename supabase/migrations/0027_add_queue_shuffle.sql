@@ -44,7 +44,6 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- Grant execute to authenticated and service role
 GRANT EXECUTE ON FUNCTION queue_shuffle(UUID, TEXT)
   TO authenticated, service_role;

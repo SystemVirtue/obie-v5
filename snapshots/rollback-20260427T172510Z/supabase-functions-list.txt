@@ -1,0 +1,17 @@
+
+  
+   ID                                   | NAME                              | SLUG                              | STATUS | VERSION | UPDATED_AT (UTC)    
+  --------------------------------------|-----------------------------------|-----------------------------------|--------|---------|---------------------
+   e6fa4b56-0243-44c5-88bb-15d457d2547c | queue-manager                     | queue-manager                     | ACTIVE | 22      | 2026-03-05 20:01:46 
+   8f052b95-3438-48b8-8949-ec7929433d43 | player-control                    | player-control                    | ACTIVE | 33      | 2026-04-27 01:41:01 
+   9714f06a-a89a-4b4f-a137-78009bac3ca8 | kiosk-handler                     | kiosk-handler                     | ACTIVE | 40      | 2026-04-27 00:21:20 
+   eb07b115-f47a-46ad-97d0-a48ab8648f51 | playlist-manager                  | playlist-manager                  | ACTIVE | 29      | 2026-04-27 00:21:20 
+   79497e7f-8ec7-49a9-8b00-06bc076d992a | youtube-scraper                   | youtube-scraper                   | ACTIVE | 51      | 2026-04-27 00:25:45 
+   4762e6b7-ed6f-4ee9-9d35-ded6553fd34a | queue-manager-update-admin-bypass | queue-manager-update-admin-bypass | ACTIVE | 14      | 2026-02-28 23:30:56 
+   aad7bed8-ce38-4245-8b8a-be900fffacb5 | download-video                    | download-video                    | ACTIVE | 4       | 2026-02-28 23:30:57 
+   d85d8731-456b-4b34-a312-5fd82d9f964b | r2-sync                           | r2-sync                           | ACTIVE | 6       | 2026-04-25 10:35:26 
+   b8de5e26-b501-401e-b87f-7d9bd16a019a | radio-generator                   | radio-generator                   | ACTIVE | 1       | 2026-04-25 17:17:57 
+   a48aa56e-051d-47aa-8682-f40ad348ce1e | youtube-key-audit                 | youtube-key-audit                 | ACTIVE | 1       | 2026-04-26 18:52:28 
+   2d2e792b-82d0-4541-8cd5-a9c90da3c0d3 | youtube-playability-audit         | youtube-playability-audit         | ACTIVE | 1       | 2026-04-27 00:21:20 
+   e5ddcae4-9da7-4c5a-8cd2-01e550a9cd40 | youtube-alternative-finder        | youtube-alternative-finder        | ACTIVE | 1       | 2026-04-27 00:21:20 
+

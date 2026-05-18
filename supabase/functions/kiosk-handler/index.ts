@@ -2,6 +2,322 @@
 // Handles kiosk operations: search, credits, song requests
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
+
+const DEFAULT_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
+const BLOCKING_PLAYABILITY_STATUSES = new Set(['unknown', 'embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed']);
+const AUTO_REPLACEMENT_MIN_SCORE = 82;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function extractYouTubeId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = String(value).match(/([A-Za-z0-9_-]{11})$/) || String(value).match(/[?&]v=([A-Za-z0-9_-]{11})/) || String(value).match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  return match?.[1] || null;
+}
+
+function videoPlayabilityStatus(video: any): string {
+  if (video?.playabilityStatus) return video.playabilityStatus;
+  if (video?.embeddable === false) return 'embed_blocked';
+  return 'unknown';
+}
+
+function videoPlayabilityReason(video: any): string | null {
+  if (video?.playabilityReason) return video.playabilityReason;
+  if (video?.embeddable === false) return 'youtube_status_not_embeddable';
+  return null;
+}
+
+async function findCloudflareFallback(supabase: any, youtubeId: string | null): Promise<any | null> {
+  if (!youtubeId) return null;
+  const { data, error } = await supabase
+    .from('r2_files')
+    .select('id, public_url, object_key')
+    .eq('youtube_id', youtubeId)
+    .order('synced_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.warn('[kiosk-handler] R2 fallback lookup failed:', error.message || error);
+    return null;
+  }
+  return data || null;
+}
+
+async function upsertPlaybackOverride(supabase: any, mediaItemId: string, values: Record<string, unknown>): Promise<void> {
+  const { error } = await supabase
+    .from('media_playback_overrides')
+    .upsert({
+      media_item_id: mediaItemId,
+      ...values,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'media_item_id' });
+  if (error) console.warn('[kiosk-handler] Failed to upsert playback override:', error.message || error);
+}
+
+async function markMediaExcluded(supabase: any, mediaItemId: string, reason: string, details: Record<string, unknown> = {}): Promise<void> {
+  await supabase
+    .from('media_items')
+    .update({
+      excluded_from_playback: true,
+      excluded_reason: reason,
+      excluded_at: new Date().toISOString(),
+    })
+    .eq('id', mediaItemId);
+
+  await upsertPlaybackOverride(supabase, mediaItemId, {
+    override_type: 'excluded',
+    reason,
+    confidence: 100,
+    details,
+  });
+}
+
+async function resolveKioskSessionPlayer(
+  supabase: any,
+  sessionId: string,
+  requestedPlayerId?: string | null,
+): Promise<{ player_id?: string; response?: Response }> {
+  const { data: session, error } = await supabase
+    .from('kiosk_sessions')
+    .select('session_id, player_id')
+    .eq('session_id', sessionId)
+    .maybeSingle();
+
+  if (error || !session?.player_id) {
+    return {
+      response: new Response(JSON.stringify({ error: 'Session not found' }), {
+        status: 404,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }),
+    };
+  }
+
+  if (requestedPlayerId && requestedPlayerId !== session.player_id) {
+    await supabase.from('system_logs').insert({
+      player_id: session.player_id,
+      event: 'kiosk_request_player_mismatch',
+      severity: 'warn',
+      payload: {
+        session_id: sessionId,
+        requested_player_id: requestedPlayerId,
+        session_player_id: session.player_id,
+      },
+    });
+
+    return {
+      response: new Response(JSON.stringify({
+        error: 'Kiosk session does not belong to requested player',
+        player_id: session.player_id,
+      }), {
+        status: 409,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      }),
+    };
+  }
+
+  return { player_id: session.player_id };
+}
+
+async function getQueueRequestDetails(supabase: any, queueId: string): Promise<Record<string, unknown>> {
+  const { data } = await supabase
+    .from('queue')
+    .select('id, player_id, media_item_id, type, position, requested_by')
+    .eq('id', queueId)
+    .maybeSingle();
+
+  return data || {};
+}
+
+async function recordVideoPlayability(supabase: any, mediaItemId: string | null, video: any, checkedBy: string): Promise<void> {
+  const youtubeId = video?.id || extractYouTubeId(video?.url);
+  if (!youtubeId && !mediaItemId) return;
+
+  const status = videoPlayabilityStatus(video);
+  await supabase.rpc('record_youtube_playability', {
+    p_media_item_id: mediaItemId,
+    p_youtube_id: youtubeId,
+    p_status: status,
+    p_reason: videoPlayabilityReason(video),
+    p_checked_by: checkedBy,
+    p_embeddable: typeof video?.embeddable === 'boolean' ? video.embeddable : null,
+    p_oembed_ok: typeof video?.oembedOk === 'boolean' ? video.oembedOk : null,
+    p_error_code: null,
+    p_details: {
+      title: video?.title || null,
+      artist: video?.artist || null,
+      url: video?.url || null,
+    },
+  });
+}
+
+async function findPlayableAlternativeForMedia(media: any, youtubeId: string | null): Promise<any | null> {
+  const scraperResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+    },
+    body: JSON.stringify({
+      type: 'alternatives',
+      title: media?.title,
+      artist: media?.artist || null,
+      duration: media?.duration || null,
+      youtube_id: youtubeId,
+      max_results: 8,
+    }),
+  });
+
+  if (!scraperResp.ok) {
+    console.warn('[kiosk-handler] Alternative lookup failed:', scraperResp.status, await scraperResp.text());
+    return null;
+  }
+
+  const payload = await scraperResp.json();
+  const candidates = Array.isArray(payload.videos) ? payload.videos : [];
+  return candidates.find((candidate: any) =>
+    candidate?.playabilityStatus === 'playable' &&
+    Number(candidate?.alternativeScore || 0) >= AUTO_REPLACEMENT_MIN_SCORE
+  ) || null;
+}
+
+async function createYouTubeMediaItem(supabase: any, video: any): Promise<string | null> {
+  const { data: mediaId, error } = await supabase.rpc('create_or_get_media_item', {
+    p_source_id:   `youtube:${video.id}`,
+    p_source_type: 'youtube',
+    p_title:       video.title,
+    p_artist:      video.artist || null,
+    p_url:         video.url,
+    p_duration:    video.duration || null,
+    p_thumbnail:   video.thumbnail || null,
+    p_metadata:    {
+      youtube_playability_status: videoPlayabilityStatus(video),
+      youtube_playability_reason: videoPlayabilityReason(video),
+      youtube_embeddable: typeof video.embeddable === 'boolean' ? video.embeddable : null,
+      youtube_oembed_ok: typeof video.oembedOk === 'boolean' ? video.oembedOk : null,
+      replacement_candidate: true,
+    },
+  });
+
+  if (error) {
+    console.warn('[kiosk-handler] Failed to create YouTube media item:', error.message || error);
+    return null;
+  }
+
+  await recordVideoPlayability(supabase, mediaId, video, 'request_auto_replacement');
+  return mediaId || null;
+}
+
+async function resolveUnplayableYouTubeMedia(
+  supabase: any,
+  mediaItemId: string,
+  media: any,
+  checkedVideo: any,
+): Promise<{ media_item_id?: string; blocked: boolean; reason?: string }> {
+  const youtubeId = checkedVideo?.id || extractYouTubeId(media?.source_id) || extractYouTubeId(media?.url);
+  const status = checkedVideo ? videoPlayabilityStatus(checkedVideo) : (media?.youtube_playability_status || 'unknown');
+
+  if (!BLOCKING_PLAYABILITY_STATUSES.has(status)) {
+    return { media_item_id: mediaItemId, blocked: false };
+  }
+
+  const r2Fallback = await findCloudflareFallback(supabase, youtubeId);
+  if (r2Fallback?.public_url) {
+    await upsertPlaybackOverride(supabase, mediaItemId, {
+      override_type: 'cloudflare',
+      playback_url: r2Fallback.public_url,
+      r2_file_id: r2Fallback.id,
+      confidence: 100,
+      reason: `youtube_${status}_r2_fallback`,
+      details: { youtube_id: youtubeId, object_key: r2Fallback.object_key },
+    });
+    return { media_item_id: mediaItemId, blocked: false };
+  }
+
+  const alternative = await findPlayableAlternativeForMedia({ ...media, ...checkedVideo }, youtubeId);
+  if (alternative) {
+    const replacementMediaId = await createYouTubeMediaItem(supabase, alternative);
+    if (replacementMediaId) {
+      if (youtubeId) {
+        await supabase
+          .from('youtube_alternative_candidates')
+          .upsert({
+            source_media_item_id: mediaItemId,
+            source_youtube_id: youtubeId,
+            candidate_youtube_id: alternative.id,
+            candidate_title: alternative.title || 'Unknown title',
+            candidate_artist: alternative.artist || null,
+            candidate_url: alternative.url,
+            candidate_duration: alternative.duration || null,
+            candidate_thumbnail: alternative.thumbnail || null,
+            score: alternative.alternativeScore || 0,
+            playability_status: alternative.playabilityStatus || 'playable',
+            playability_reason: alternative.playabilityReason || null,
+            details: alternative,
+          }, { onConflict: 'source_youtube_id,candidate_youtube_id' });
+      }
+
+      await supabase
+        .from('media_items')
+        .update({
+          replacement_media_item_id: replacementMediaId,
+          excluded_from_playback: false,
+          excluded_reason: null,
+          excluded_at: null,
+        })
+        .eq('id', mediaItemId);
+
+      await upsertPlaybackOverride(supabase, mediaItemId, {
+        override_type: 'replacement',
+        replacement_media_item_id: replacementMediaId,
+        confidence: alternative.alternativeScore || 0,
+        reason: `youtube_${status}_auto_replacement`,
+        details: { youtube_id: youtubeId, replacement_youtube_id: alternative.id },
+      });
+
+      return { media_item_id: replacementMediaId, blocked: false };
+    }
+  }
+
+  const reason = media?.youtube_playability_reason || videoPlayabilityReason(checkedVideo) || `youtube_${status}_no_route`;
+  await markMediaExcluded(supabase, mediaItemId, reason, {
+    youtube_id: youtubeId,
+    playability_status: status,
+  });
+
+  return { blocked: true, reason };
+}
+
+async function getMediaRequestBlocker(supabase: any, mediaItemId: string): Promise<{ blocked: boolean; reason?: string; media?: any; replacement_media_item_id?: string }> {
+  const { data: media } = await supabase
+    .from('media_items')
+    .select('id, source_id, source_type, title, artist, url, duration, youtube_playability_status, youtube_playability_reason')
+    .eq('id', mediaItemId)
+    .maybeSingle();
+
+  if (!media || media.source_type !== 'youtube') {
+    return { blocked: false, media };
+  }
+
+  const status = media.youtube_playability_status || 'unknown';
+  if (BLOCKING_PLAYABILITY_STATUSES.has(status)) {
+    const resolved = await resolveUnplayableYouTubeMedia(supabase, mediaItemId, media, null);
+    if (!resolved.blocked && resolved.media_item_id && resolved.media_item_id !== mediaItemId) {
+      return { blocked: false, media, replacement_media_item_id: resolved.media_item_id };
+    }
+    if (!resolved.blocked) return { blocked: false, media };
+
+    return {
+      blocked: true,
+      reason: resolved.reason || media.youtube_playability_reason || status,
+      media,
+    };
+  }
+
+  return { blocked: false, media };
+}
+
 Deno.serve(async (req)=>{
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -19,8 +335,28 @@ Deno.serve(async (req)=>{
     // Handle session initialization
     if (action === 'init') {
       console.log('Creating new kiosk session');
-      // Get the default player (first player in the system)
-      const { data: player, error: playerError } = await supabase.from('players').select('id').limit(1).single();
+      const requestedPlayerId = typeof body.player_id === 'string' && body.player_id
+        ? body.player_id
+        : DEFAULT_PLAYER_ID;
+
+      let { data: player, error: playerError } = await supabase
+        .from('players')
+        .select('id')
+        .eq('id', requestedPlayerId)
+        .maybeSingle();
+
+      if (!player && requestedPlayerId === DEFAULT_PLAYER_ID) {
+        const fallback = await supabase
+          .from('players')
+          .select('id')
+          .order('created_at', { ascending: true })
+          .order('id', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+        player = fallback.data;
+        playerError = fallback.error;
+      }
+
       if (playerError || !player) {
         console.error('No player found:', playerError);
         return new Response(JSON.stringify({
@@ -89,7 +425,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler search error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -113,6 +449,14 @@ Deno.serve(async (req)=>{
           }
         });
       }
+
+      const sessionResolution = await resolveKioskSessionPlayer(
+        supabase,
+        session_id,
+        typeof player_id === 'string' ? player_id : null,
+      );
+      if (sessionResolution.response) return sessionResolution.response;
+      const requestPlayerId = sessionResolution.player_id!;
 
       let mediaItemId = media_item_id;
 
@@ -166,7 +510,7 @@ Deno.serve(async (req)=>{
             console.error('Invalid video object from scraper:', video);
             // Log to system_logs for failed scrape/validation
             await supabase.from('system_logs').insert({
-              player_id,
+              player_id: requestPlayerId,
               event: 'kiosk_request_failed',
               severity: 'error',
               payload: {
@@ -185,6 +529,7 @@ Deno.serve(async (req)=>{
 
           // Use video.id directly for source_id
           const sourceId = `youtube:${video.id}`;
+          const playabilityStatus = videoPlayabilityStatus(video);
 
           // Create or update media item — canonical dedup via create_or_get_media_item RPC
           const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
@@ -195,14 +540,19 @@ Deno.serve(async (req)=>{
             p_url:         video.url,
             p_duration:    video.duration || null,
             p_thumbnail:   video.thumbnail || null,
-            p_metadata:    {},
+            p_metadata:    {
+              youtube_playability_status: playabilityStatus,
+              youtube_playability_reason: videoPlayabilityReason(video),
+              youtube_embeddable: typeof video.embeddable === 'boolean' ? video.embeddable : null,
+              youtube_oembed_ok: typeof video.oembedOk === 'boolean' ? video.oembedOk : null,
+            },
           });
 
           if (mediaError || !resolvedId) {
             console.error('Failed to create/get media item:', mediaError, video);
             // Log to system_logs for failed media item creation
             await supabase.from('system_logs').insert({
-              player_id,
+              player_id: requestPlayerId,
               event: 'media_item_create_failed',
               severity: 'error',
               payload: {
@@ -221,7 +571,51 @@ Deno.serve(async (req)=>{
             });
           }
 
-          mediaItemId = resolvedId;
+          await recordVideoPlayability(supabase, resolvedId, video, 'kiosk_request_url');
+
+          if (BLOCKING_PLAYABILITY_STATUSES.has(playabilityStatus)) {
+            const resolved = await resolveUnplayableYouTubeMedia(supabase, resolvedId, {
+              id: resolvedId,
+              source_id: sourceId,
+              source_type: 'youtube',
+              title: video.title,
+              artist: video.artist || null,
+              url: video.url,
+              duration: video.duration || null,
+              youtube_playability_status: playabilityStatus,
+              youtube_playability_reason: videoPlayabilityReason(video),
+            }, video);
+
+            if (resolved.blocked) {
+              await supabase.from('system_logs').insert({
+                player_id: requestPlayerId,
+                event: 'kiosk_request_rejected_unplayable',
+                severity: 'warn',
+                payload: {
+                  media_item_id: resolvedId,
+                  youtube_id: video.id,
+                  title: video.title,
+                  playability_status: playabilityStatus,
+                  playability_reason: resolved.reason || videoPlayabilityReason(video),
+                }
+              });
+              return new Response(JSON.stringify({
+                error: 'This YouTube video is not available for direct player playback.',
+                reason: resolved.reason || videoPlayabilityReason(video) || playabilityStatus,
+                playability_status: playabilityStatus,
+                media_item_id: resolvedId,
+              }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+              });
+            }
+
+            if (resolved.media_item_id) {
+              mediaItemId = resolved.media_item_id;
+            }
+          } else {
+            mediaItemId = resolvedId;
+          }
         } catch (scrapeError) {
           console.error('Scraping error:', scrapeError);
           return new Response(JSON.stringify({
@@ -245,6 +639,34 @@ Deno.serve(async (req)=>{
             ...corsHeaders,
             'Content-Type': 'application/json'
           }
+        });
+      }
+
+      const blocker = await getMediaRequestBlocker(supabase, mediaItemId);
+      if (!blocker.blocked && blocker.replacement_media_item_id) {
+        mediaItemId = blocker.replacement_media_item_id;
+      }
+      if (blocker.blocked) {
+        await supabase.from('system_logs').insert({
+          player_id: requestPlayerId,
+          event: 'kiosk_request_rejected_unplayable',
+          severity: 'warn',
+          payload: {
+            session_id,
+            media_item_id: mediaItemId,
+            title: blocker.media?.title || null,
+            playability_status: blocker.media?.youtube_playability_status || null,
+            playability_reason: blocker.reason || null,
+          }
+        });
+        return new Response(JSON.stringify({
+          error: 'This YouTube video is not available for direct player playback.',
+          reason: blocker.reason,
+          playability_status: blocker.media?.youtube_playability_status || null,
+          media_item_id: mediaItemId,
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
       }
 
@@ -272,22 +694,32 @@ Deno.serve(async (req)=>{
           .select('title, artist')
           .eq('id', mediaItemId)
           .single();
+        const queueDetails = queueId
+          ? await getQueueRequestDetails(supabase, queueId)
+          : {};
 
         await supabase.from('system_logs').insert({
-          player_id,
+          player_id: requestPlayerId,
           event: 'kiosk_request',
           severity: 'info',
           payload: {
             session_id,
             media_item_id: mediaItemId,
             queue_id: queueId,
+            player_id: requestPlayerId,
+            position: queueDetails.position ?? null,
+            requested_by: queueDetails.requested_by ?? session_id,
             title: mediaItem?.title || 'Unknown',
             artist: mediaItem?.artist || 'Unknown'
           }
         });
 
         return new Response(JSON.stringify({
-          queue_id: queueId
+          queue_id: queueId,
+          player_id: requestPlayerId,
+          media_item_id: mediaItemId,
+          position: queueDetails.position ?? null,
+          requested_by: queueDetails.requested_by ?? session_id,
         }), {
           status: 200,
           headers: {
@@ -298,7 +730,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Kiosk handler request error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+            error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -397,7 +829,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Check action error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -457,7 +889,7 @@ Deno.serve(async (req)=>{
         });
       } catch (err) {
         console.error('R2 search error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: errorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -475,6 +907,14 @@ Deno.serve(async (req)=>{
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+
+      const sessionResolution = await resolveKioskSessionPlayer(
+        supabase,
+        session_id,
+        typeof player_id === 'string' ? player_id : null,
+      );
+      if (sessionResolution.response) return sessionResolution.response;
+      const requestPlayerId = sessionResolution.player_id!;
 
       try {
         // Fetch the R2 file metadata
@@ -530,8 +970,12 @@ Deno.serve(async (req)=>{
         }
 
         // Log the request
+        const queueDetails = queueId
+          ? await getQueueRequestDetails(supabase, queueId)
+          : {};
+
         await supabase.from('system_logs').insert({
-          player_id,
+          player_id: requestPlayerId,
           event: 'kiosk_request_r2',
           severity: 'info',
           payload: {
@@ -539,18 +983,261 @@ Deno.serve(async (req)=>{
             r2_file_id,
             media_item_id: mediaItemId,
             queue_id: queueId,
+            player_id: requestPlayerId,
+            position: queueDetails.position ?? null,
+            requested_by: queueDetails.requested_by ?? session_id,
             title: r2File.title || r2File.file_name,
             artist: r2File.artist || null,
           },
         });
 
-        return new Response(JSON.stringify({ queue_id: queueId }), {
+        return new Response(JSON.stringify({
+          queue_id: queueId,
+          player_id: requestPlayerId,
+          media_item_id: mediaItemId,
+          position: queueDetails.position ?? null,
+          requested_by: queueDetails.requested_by ?? session_id,
+        }), {
           status: 200,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       } catch (err) {
         console.error('R2 request error:', err);
-        return new Response(JSON.stringify({ error: err.message }), {
+        return new Response(JSON.stringify({ error: errorMessage(err) }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
+    // Handle admin video requests without consuming kiosk credits
+    if (action === 'admin_request') {
+      const { player_id, url, r2_file_id, add_to_queue, title, artist, thumbnail, duration } = body;
+      if (!player_id || (!url && !r2_file_id)) {
+        return new Response(JSON.stringify({
+          error: 'player_id and either url or r2_file_id are required for admin_request action'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      let mediaItemId = null;
+
+      try {
+        if (r2_file_id) {
+          const { data: r2File, error: r2Error } = await supabase
+            .from('r2_files')
+            .select('*')
+            .eq('id', r2_file_id)
+            .single();
+
+          if (r2Error || !r2File) {
+            return new Response(JSON.stringify({ error: 'R2 file not found' }), {
+              status: 404,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          const sourceId = `cloudflare:${r2File.object_key}`;
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id: sourceId,
+            p_source_type: 'cloudflare',
+            p_title: r2File.title || r2File.file_name,
+            p_artist: r2File.artist || null,
+            p_url: r2File.public_url,
+            p_duration: r2File.duration || null,
+            p_thumbnail: r2File.thumbnail || null,
+            p_metadata: { bucket: r2File.bucket_name, object_key: r2File.object_key },
+          });
+
+          if (mediaError || !resolvedId) {
+            console.error('admin_request: failed to create media item from R2:', mediaError);
+            return new Response(JSON.stringify({ error: 'Failed to create media item from R2 file' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          mediaItemId = resolvedId;
+        } else {
+          let videoTitle = title;
+          let videoArtist = artist || null;
+          let videoThumbnail = thumbnail || null;
+          let videoDuration = duration || null;
+          let videoUrl = url;
+          const videoIdMatch = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/)([a-zA-Z0-9_-]{11})/);
+          let videoId = videoIdMatch?.[1] || null;
+          let checkedVideo: any = null;
+
+          if (!videoTitle || !videoId) {
+            const scraperResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+              },
+              body: JSON.stringify({ url, type: 'auto' })
+            });
+
+            if (!scraperResp.ok) {
+              return new Response(JSON.stringify({ error: 'Failed to scrape YouTube URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const { videos } = await scraperResp.json();
+            if (!videos || videos.length === 0) {
+              return new Response(JSON.stringify({ error: 'No videos found at the provided URL' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            const video = videos[0];
+            if (!video?.id?.trim() || !video?.url?.trim() || !video?.title?.trim()) {
+              return new Response(JSON.stringify({ error: 'Invalid video data from scraper' }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            checkedVideo = video;
+            videoId = video.id;
+            videoTitle = video.title;
+            videoArtist = video.artist || null;
+            videoThumbnail = video.thumbnail || null;
+            videoDuration = video.duration || null;
+            videoUrl = video.url;
+          }
+
+          if (videoId && !checkedVideo) {
+            const checkResp = await fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/youtube-scraper`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`
+              },
+              body: JSON.stringify({ video_id: videoId, type: 'check' })
+            });
+
+            if (checkResp.ok) {
+              const { videos } = await checkResp.json();
+              checkedVideo = videos?.[0] || null;
+            } else {
+              console.warn('admin_request: YouTube playability check failed open:', await checkResp.text());
+            }
+          }
+
+          const playabilityStatus = checkedVideo ? videoPlayabilityStatus(checkedVideo) : 'unknown';
+
+          const { data: resolvedId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
+            p_source_id: `youtube:${videoId}`,
+            p_source_type: 'youtube',
+            p_title: videoTitle,
+            p_artist: videoArtist,
+            p_url: videoUrl,
+            p_duration: videoDuration,
+            p_thumbnail: videoThumbnail,
+            p_metadata: {
+              youtube_playability_status: playabilityStatus,
+              youtube_playability_reason: checkedVideo ? videoPlayabilityReason(checkedVideo) : null,
+              youtube_embeddable: typeof checkedVideo?.embeddable === 'boolean' ? checkedVideo.embeddable : null,
+              youtube_oembed_ok: typeof checkedVideo?.oembedOk === 'boolean' ? checkedVideo.oembedOk : null,
+            },
+          });
+
+          if (mediaError || !resolvedId) {
+            console.error('admin_request: failed to create media item:', mediaError);
+            return new Response(JSON.stringify({ error: 'Failed to create media item' }), {
+              status: 500,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          if (checkedVideo) {
+            await recordVideoPlayability(supabase, resolvedId, checkedVideo, 'admin_request');
+          }
+
+          if (BLOCKING_PLAYABILITY_STATUSES.has(playabilityStatus)) {
+            const resolved = await resolveUnplayableYouTubeMedia(supabase, resolvedId, {
+              id: resolvedId,
+              source_id: `youtube:${videoId}`,
+              source_type: 'youtube',
+              title: videoTitle,
+              artist: videoArtist,
+              url: videoUrl,
+              duration: videoDuration,
+              youtube_playability_status: playabilityStatus,
+              youtube_playability_reason: checkedVideo ? videoPlayabilityReason(checkedVideo) : null,
+            }, checkedVideo);
+
+            if (resolved.blocked) {
+              await supabase.from('system_logs').insert({
+                player_id,
+                event: 'admin_request_rejected_unplayable',
+                severity: 'warn',
+                payload: {
+                  media_item_id: resolvedId,
+                  youtube_id: videoId,
+                  title: videoTitle,
+                  playability_status: playabilityStatus,
+                  playability_reason: resolved.reason || (checkedVideo ? videoPlayabilityReason(checkedVideo) : null),
+                },
+              });
+              return new Response(JSON.stringify({
+                error: 'This YouTube video is not available for direct player playback.',
+                reason: resolved.reason || (checkedVideo ? videoPlayabilityReason(checkedVideo) : playabilityStatus),
+                playability_status: playabilityStatus,
+                media_item_id: resolvedId,
+              }), {
+                status: 400,
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+              });
+            }
+
+            mediaItemId = resolved.media_item_id || resolvedId;
+          } else {
+            mediaItemId = resolvedId;
+          }
+        }
+
+        let queueId = null;
+
+        if (add_to_queue) {
+          const { data: qId, error: queueError } = await supabase.rpc('queue_add', {
+            p_player_id: player_id,
+            p_media_item_id: mediaItemId,
+            p_type: 'priority',
+            p_requested_by: 'admin',
+          });
+
+          if (queueError) {
+            console.error('admin_request: queue_add error:', queueError);
+            return new Response(JSON.stringify({ error: queueError.message || 'Failed to add to queue' }), {
+              status: 400,
+              headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+            });
+          }
+
+          queueId = qId;
+
+          await supabase.from('system_logs').insert({
+            player_id,
+            event: 'admin_request',
+            severity: 'info',
+            payload: { media_item_id: mediaItemId, queue_id: queueId, source: r2_file_id ? 'r2' : 'youtube' },
+          });
+        }
+
+        return new Response(JSON.stringify({ media_item_id: mediaItemId, queue_id: queueId }), {
+          status: 200,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      } catch (err) {
+        console.error('admin_request error:', err);
+        return new Response(JSON.stringify({ error: errorMessage(err) }), {
           status: 500,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
@@ -612,7 +1299,7 @@ Deno.serve(async (req)=>{
       } catch (err) {
         console.error('Credit action error:', err);
         return new Response(JSON.stringify({
-          error: err.message
+          error: errorMessage(err)
         }), {
           status: 500,
           headers: {
@@ -634,7 +1321,7 @@ Deno.serve(async (req)=>{
   } catch (error) {
     console.error('Kiosk handler error:', error);
     return new Response(JSON.stringify({
-      error: error.message
+      error: errorMessage(error)
     }), {
       status: 500,
       headers: {

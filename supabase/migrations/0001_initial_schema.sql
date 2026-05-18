@@ -3,7 +3,6 @@
 
 -- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
 -- =============================================================================
 -- TABLES
 -- =============================================================================
@@ -18,7 +17,6 @@ CREATE TABLE players (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-
 -- Playlist library
 CREATE TABLE playlists (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -29,7 +27,6 @@ CREATE TABLE playlists (
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
-
 -- Normalized playlist items (replaces JSONB[] approach)
 CREATE TABLE playlist_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -39,7 +36,6 @@ CREATE TABLE playlist_items (
   added_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE(playlist_id, position)
 );
-
 -- Deduplicated media metadata cache
 CREATE TABLE media_items (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -53,7 +49,6 @@ CREATE TABLE media_items (
   fetched_at TIMESTAMPTZ DEFAULT NOW(),
   metadata JSONB DEFAULT '{}'::jsonb
 );
-
 -- Unified queue (normal + priority)
 CREATE TABLE queue (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -67,7 +62,6 @@ CREATE TABLE queue (
   expires_at TIMESTAMPTZ DEFAULT NOW() + INTERVAL '30 minutes',
   UNIQUE(player_id, type, position)
 );
-
 -- Live player state
 CREATE TABLE player_status (
   player_id UUID PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
@@ -78,7 +72,6 @@ CREATE TABLE player_status (
   queue_head_position INT DEFAULT 0,
   last_updated TIMESTAMPTZ DEFAULT NOW()
 );
-
 -- Player settings
 CREATE TABLE player_settings (
   player_id UUID PRIMARY KEY REFERENCES players(id) ON DELETE CASCADE,
@@ -96,7 +89,6 @@ CREATE TABLE player_settings (
   max_queue_size INT DEFAULT 50,
   priority_queue_limit INT DEFAULT 10
 );
-
 -- Kiosk session + credits
 CREATE TABLE kiosk_sessions (
   session_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -107,7 +99,6 @@ CREATE TABLE kiosk_sessions (
   ip_address INET,
   user_agent TEXT
 );
-
 -- System logs with severity
 CREATE TABLE system_logs (
   id BIGSERIAL PRIMARY KEY,
@@ -117,7 +108,6 @@ CREATE TABLE system_logs (
   payload JSONB DEFAULT '{}'::jsonb,
   timestamp TIMESTAMPTZ DEFAULT NOW()
 );
-
 -- =============================================================================
 -- INDEXES
 -- =============================================================================
@@ -128,7 +118,6 @@ CREATE INDEX idx_playlist_items_playlist ON playlist_items(playlist_id, position
 CREATE INDEX idx_media_items_source ON media_items(source_id);
 CREATE INDEX idx_system_logs_player_severity ON system_logs(player_id, severity, timestamp DESC);
 CREATE INDEX idx_kiosk_sessions_player ON kiosk_sessions(player_id, last_active DESC);
-
 -- =============================================================================
 -- SQL RPC FUNCTIONS
 -- =============================================================================
@@ -146,7 +135,6 @@ BEGIN
   VALUES (p_player_id, p_event, p_severity, p_payload);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 1. Add item to queue
 CREATE OR REPLACE FUNCTION queue_add(
   p_player_id UUID,
@@ -197,7 +185,6 @@ BEGIN
   RETURN v_queue_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 2. Remove item from queue
 CREATE OR REPLACE FUNCTION queue_remove(
   p_queue_id UUID
@@ -235,7 +222,6 @@ BEGIN
   PERFORM log_event(v_player_id, 'queue_remove', 'info', jsonb_build_object('queue_id', p_queue_id));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 3. Reorder queue items
 CREATE OR REPLACE FUNCTION queue_reorder(
   p_player_id UUID,
@@ -260,7 +246,6 @@ BEGIN
   PERFORM log_event(p_player_id, 'queue_reorder', 'info', jsonb_build_object('count', array_length(p_queue_ids, 1)));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 4. Get next item to play (respects priority queue)
 CREATE OR REPLACE FUNCTION queue_next(
   p_player_id UUID
@@ -333,7 +318,6 @@ BEGIN
   WHERE m.id = v_next_queue_item.media_item_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 5. Skip current song
 CREATE OR REPLACE FUNCTION queue_skip(
   p_player_id UUID
@@ -351,7 +335,6 @@ BEGIN
   PERFORM log_event(p_player_id, 'queue_skip', 'info', '{}');
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- 6. Clear queue
 CREATE OR REPLACE FUNCTION queue_clear(
   p_player_id UUID,
@@ -376,7 +359,6 @@ BEGIN
   PERFORM log_event(p_player_id, 'queue_clear', 'info', jsonb_build_object('count', v_count, 'type', p_type));
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- Helper: Increment kiosk credits
 CREATE OR REPLACE FUNCTION kiosk_increment_credit(
   p_session_id UUID,
@@ -400,7 +382,6 @@ BEGIN
   RETURN v_new_credits;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- Helper: Decrement kiosk credits
 CREATE OR REPLACE FUNCTION kiosk_decrement_credit(
   p_session_id UUID,
@@ -432,7 +413,6 @@ BEGIN
   RETURN v_new_credits;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- Helper: Update player heartbeat
 CREATE OR REPLACE FUNCTION player_heartbeat(
   p_player_id UUID
@@ -454,7 +434,6 @@ BEGIN
     AND last_heartbeat < NOW() - INTERVAL '10 seconds';
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- =============================================================================
 -- ROW LEVEL SECURITY (RLS)
 -- =============================================================================
@@ -469,66 +448,51 @@ ALTER TABLE player_status ENABLE ROW LEVEL SECURITY;
 ALTER TABLE player_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE kiosk_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
-
 -- Admin has full access (authenticated users)
 CREATE POLICY "Admin full access to players"
   ON players FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to playlists"
   ON playlists FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to playlist_items"
   ON playlist_items FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to media_items"
   ON media_items FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to queue"
   ON queue FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to player_status"
   ON player_status FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to player_settings"
   ON player_settings FOR ALL
   USING (auth.role() = 'authenticated');
-
 CREATE POLICY "Admin full access to system_logs"
   ON system_logs FOR SELECT
   USING (auth.role() = 'authenticated');
-
 -- Kiosk can read limited data (anon access)
 CREATE POLICY "Kiosk can read own session"
   ON kiosk_sessions FOR SELECT
   USING (true);
-
 CREATE POLICY "Kiosk can update own session"
   ON kiosk_sessions FOR UPDATE
   USING (true);
-
 CREATE POLICY "Kiosk can read media items"
   ON media_items FOR SELECT
   USING (true);
-
 CREATE POLICY "Kiosk can read player settings"
   ON player_settings FOR SELECT
   USING (true);
-
 -- Player can read/update its own status
 CREATE POLICY "Player can read own status"
   ON player_status FOR SELECT
   USING (true);
-
 CREATE POLICY "Player can update own status"
   ON player_status FOR UPDATE
   USING (true);
-
 -- =============================================================================
 -- TRIGGERS
 -- =============================================================================
@@ -541,17 +505,14 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
-
 CREATE TRIGGER players_updated_at
   BEFORE UPDATE ON players
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
-
 CREATE TRIGGER playlists_updated_at
   BEFORE UPDATE ON playlists
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at();
-
 -- Cleanup expired queue items (run via pg_cron or manual)
 CREATE OR REPLACE FUNCTION cleanup_expired_queue()
 RETURNS void AS $$
@@ -562,7 +523,6 @@ BEGIN
     AND type = 'priority'; -- only expire priority requests
 END;
 $$ LANGUAGE plpgsql;
-
 -- =============================================================================
 -- REALTIME PUBLICATION
 -- =============================================================================
@@ -577,7 +537,6 @@ ALTER PUBLICATION supabase_realtime ADD TABLE player_status;
 ALTER PUBLICATION supabase_realtime ADD TABLE player_settings;
 ALTER PUBLICATION supabase_realtime ADD TABLE kiosk_sessions;
 ALTER PUBLICATION supabase_realtime ADD TABLE system_logs;
-
 -- =============================================================================
 -- SEED DATA
 -- =============================================================================
@@ -585,25 +544,20 @@ ALTER PUBLICATION supabase_realtime ADD TABLE system_logs;
 -- Create default player
 INSERT INTO players (id, name, status)
 VALUES ('00000000-0000-0000-0000-000000000001', 'Default Player', 'offline');
-
 -- Create default player status
 INSERT INTO player_status (player_id, state)
 VALUES ('00000000-0000-0000-0000-000000000001', 'idle');
-
 -- Create default player settings
 INSERT INTO player_settings (player_id)
 VALUES ('00000000-0000-0000-0000-000000000001');
-
 -- Create default playlist
 INSERT INTO playlists (id, player_id, name, is_active)
 VALUES ('00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001', 'Main Playlist', true);
-
 -- Sample media items
 INSERT INTO media_items (id, source_id, title, artist, url, duration, thumbnail)
 VALUES 
   ('10000000-0000-0000-0000-000000000001', 'youtube:dQw4w9WgXcQ', 'Never Gonna Give You Up', 'Rick Astley', 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', 213, 'https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg'),
   ('10000000-0000-0000-0000-000000000002', 'youtube:9bZkp7q19f0', 'Gangnam Style', 'PSY', 'https://www.youtube.com/watch?v=9bZkp7q19f0', 252, 'https://i.ytimg.com/vi/9bZkp7q19f0/default.jpg');
-
 -- Add to playlist
 INSERT INTO playlist_items (playlist_id, position, media_item_id)
 VALUES 

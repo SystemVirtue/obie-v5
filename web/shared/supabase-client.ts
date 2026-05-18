@@ -13,6 +13,24 @@ export interface Player {
   status: 'offline' | 'online' | 'error';
   last_heartbeat: string;
   active_playlist_id: string | null;
+  priority_player_id?: string | null;
+  priority_endpoint_id?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PlayerEndpoint {
+  endpoint_id: string;
+  player_id: string;
+  session_id: string;
+  role: 'master' | 'slave';
+  status: 'connected' | 'disconnected';
+  origin: string | null;
+  user_agent: string | null;
+  connected_at: string;
+  last_seen: string;
+  disconnected_at: string | null;
+  identify_until: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +64,18 @@ export interface MediaItem {
   thumbnail: string | null;
   fetched_at: string;
   metadata: Record<string, any>;
+  youtube_id?: string | null;
+  youtube_playability_status?: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
+  youtube_playability_reason?: string | null;
+  youtube_playability_checked_at?: string | null;
+  youtube_embeddable?: boolean | null;
+  youtube_oembed_ok?: boolean | null;
+  youtube_last_error_code?: string | null;
+  youtube_last_error_at?: string | null;
+  excluded_from_playback?: boolean;
+  excluded_reason?: string | null;
+  excluded_at?: string | null;
+  replacement_media_item_id?: string | null;
 }
 
 export interface QueueItem {
@@ -57,6 +87,12 @@ export interface QueueItem {
   requested_by: string | null;
   requested_at: string;
   played_at: string | null;
+  reserved_at?: string | null;
+  started_at?: string | null;
+  failed_at?: string | null;
+  retry_count?: number;
+  last_error?: string | null;
+  last_error_at?: string | null;
   expires_at: string;
   media_item?: MediaItem; // Joined data
 }
@@ -69,6 +105,11 @@ export interface PlayerStatus {
   now_playing_index: number;
   queue_head_position: number;
   last_updated: string;
+  playback_started_at?: string | null;
+  playback_error?: string | null;
+  playback_error_code?: string | null;
+  playback_error_at?: string | null;
+  last_recovery_reason?: string | null;
   current_media?: MediaItem; // Joined data
   /** 'youtube' = normal iframe mode (default); 'local' = yt-dlp download; 'cloudflare' = R2 bucket */
   source?: 'youtube' | 'local' | 'cloudflare';
@@ -99,6 +140,10 @@ export interface PlayerSettings {
   player_mode?: 'iframe' | 'ytm_desktop';
   cloudflare_enabled?: boolean;
   cloudflare_r2_public_url?: string | null;
+  silence_skip_enabled?: boolean;
+  silence_skip_tail_seconds?: number;
+  silence_skip_duration_ms?: number;
+  silence_skip_threshold?: number;
 }
 
 export interface KioskSession {
@@ -120,10 +165,69 @@ export interface SystemLog {
   timestamp: string;
 }
 
+export interface YouTubePlayabilityCheck {
+  id: string;
+  media_item_id: string | null;
+  youtube_id: string;
+  status: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
+  reason: string | null;
+  checked_by: string | null;
+  embeddable: boolean | null;
+  oembed_ok: boolean | null;
+  error_code: string | null;
+  details: Record<string, any>;
+  checked_at: string;
+}
+
+export interface YouTubeAlternativeCandidate {
+  id: string;
+  source_media_item_id: string | null;
+  source_youtube_id: string;
+  candidate_youtube_id: string;
+  candidate_title: string;
+  candidate_artist: string | null;
+  candidate_url: string | null;
+  candidate_duration: number | null;
+  candidate_thumbnail: string | null;
+  score: number;
+  playability_status: 'unknown' | 'playable' | 'embed_blocked' | 'restricted' | 'unavailable' | 'invalid' | 'check_failed';
+  playability_reason: string | null;
+  details: Record<string, any>;
+  created_at: string;
+}
+
+export interface MediaPlaybackOverride {
+  media_item_id: string;
+  override_type: 'cloudflare' | 'replacement' | 'excluded' | 'youtube';
+  playback_url: string | null;
+  r2_file_id: string | null;
+  replacement_media_item_id: string | null;
+  confidence: number;
+  reason: string | null;
+  details: Record<string, any>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemHealthCheck {
+  name: string;
+  status: 'ok' | 'warn' | 'error';
+  message: string;
+  details?: Record<string, any>;
+}
+
+export interface SystemHealthReport {
+  checked_at: string;
+  status: 'ok' | 'warn' | 'error';
+  duration_ms: number;
+  checks: SystemHealthCheck[];
+}
+
 export interface R2File {
   id: string;
   bucket_name: string;
   object_key: string;
+  youtube_id?: string | null;
   file_name: string;
   content_type: string | null;
   size_bytes: number | null;
@@ -139,10 +243,19 @@ export interface R2File {
   created_at: string;
 }
 
+export interface AdminBroadcast {
+  id: number;
+  event_type: 'refresh_prompt' | string;
+  payload: Record<string, any>;
+  created_at: string;
+  created_by: string | null;
+}
+
 export interface Database {
   public: {
     Tables: {
       players: { Row: Player };
+      player_endpoints: { Row: PlayerEndpoint };
       playlists: { Row: Playlist };
       playlist_items: { Row: PlaylistItem };
       media_items: { Row: MediaItem };
@@ -151,7 +264,18 @@ export interface Database {
       player_settings: { Row: PlayerSettings; Update: Partial<PlayerSettings> };
       kiosk_sessions: { Row: KioskSession };
       system_logs: { Row: SystemLog };
+      youtube_playability_checks: { Row: YouTubePlayabilityCheck };
+      youtube_alternative_candidates: { Row: YouTubeAlternativeCandidate };
+      media_playback_overrides: { Row: MediaPlaybackOverride };
       r2_files: { Row: R2File };
+      admin_broadcasts: {
+        Row: AdminBroadcast;
+        Insert: {
+          event_type: string;
+          payload?: Record<string, any>;
+          created_by?: string | null;
+        };
+      };
     };
   };
 }
@@ -216,6 +340,36 @@ export function subscribeToTable<T = any>(
   };
 }
 
+export function subscribeToAdminBroadcasts(
+  callback: (broadcast: AdminBroadcast) => void,
+  since?: string
+): RealtimeSubscription<AdminBroadcast> {
+  const channel = supabase.channel(`admin_broadcasts:${since ?? 'all'}`);
+
+  channel
+    .on(
+      'postgres_changes',
+      {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'admin_broadcasts',
+      },
+      (payload: any) => {
+        const next = payload.new as AdminBroadcast;
+        if (since && next.created_at <= since) return;
+        callback(next);
+      }
+    )
+    .subscribe();
+
+  return {
+    channel,
+    unsubscribe: () => {
+      supabase.removeChannel(channel);
+    }
+  };
+}
+
 /**
  * Subscribe to player status updates
  */
@@ -223,32 +377,49 @@ export function subscribeToPlayerStatus(
   playerId: string,
   callback: (status: PlayerStatus) => void
 ): RealtimeSubscription<PlayerStatus> {
+  let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
+  let latestStatusTimestamp = 0;
+
+  const fetchStatus = (label: 'Initial' | 'Updated') => {
+    supabase
+      .from('player_status')
+      .select('*, current_media:media_items(*)')
+      .eq('player_id', playerId)
+      .single()
+      .then(({ data, error }) => {
+        if (error) {
+          console.error(`[subscribeToPlayerStatus] ❌ ${label.toLowerCase()} status error:`, error);
+          return;
+        }
+
+        if (data) {
+          const nextTimestamp = Date.parse((data as any).last_updated ?? '') || 0;
+          if (nextTimestamp && nextTimestamp < latestStatusTimestamp) {
+            console.warn(`[subscribeToPlayerStatus] Ignoring stale ${label.toLowerCase()} status snapshot:`, {
+              state: (data as any).state,
+              current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
+              last_updated: (data as any).last_updated,
+            });
+            return;
+          }
+          latestStatusTimestamp = Math.max(latestStatusTimestamp, nextTimestamp);
+          console.log(`[subscribeToPlayerStatus] 📺 ${label} status:`, {
+            state: (data as any).state,
+            current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
+            title: (data as any).current_media?.title?.slice(0, 30) || 'none',
+            progress: (data as any).progress,
+            last_updated: (data as any).last_updated
+          });
+          callback(data as any);
+        }
+      });
+  };
+
   // Fetch initial status with media_item join
   console.log('[subscribeToPlayerStatus] 🎵 Fetching initial player status...');
-  supabase
-    .from('player_status')
-    .select('*, current_media:media_items(*)')
-    .eq('player_id', playerId)
-    .single()
-    .then(({ data, error }) => {
-      if (error) {
-        console.error('[subscribeToPlayerStatus] ❌ Initial status error:', error);
-        return;
-      }
-      
-      if (data) {
-        console.log('[subscribeToPlayerStatus] 📺 Initial status:', {
-          state: (data as any).state,
-          current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-          title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-          progress: (data as any).progress,
-          last_updated: (data as any).last_updated
-        });
-        callback(data as any);
-      }
-    });
+  fetchStatus('Initial');
 
-  return subscribeToTable<PlayerStatus>(
+  const sub = subscribeToTable<PlayerStatus>(
     'player_status',
     { column: 'player_id', value: playerId },
     (payload) => {
@@ -261,33 +432,23 @@ export function subscribeToPlayerStatus(
       });
       
       if (payload.eventType === 'UPDATE' || payload.eventType === 'INSERT') {
-        // Fetch with media_item join
         console.log('[subscribeToPlayerStatus] 🔄 Fetching updated status with media...');
-        supabase
-          .from('player_status')
-          .select('*, current_media:media_items(*)')
-          .eq('player_id', playerId)
-          .single()
-          .then(({ data, error }) => {
-            if (error) {
-              console.error('[subscribeToPlayerStatus] ❌ Update fetch error:', error);
-              return;
-            }
-            
-            if (data) {
-              console.log('[subscribeToPlayerStatus] 📺 Updated status:', {
-                state: (data as any).state,
-                current_media_id: (data as any).current_media_id?.slice(0, 8) || 'none',
-                title: (data as any).current_media?.title?.slice(0, 30) || 'none',
-                progress: (data as any).progress,
-                last_updated: (data as any).last_updated
-              });
-              callback(data as any);
-            }
-          });
+        if (refetchTimeout) clearTimeout(refetchTimeout);
+        refetchTimeout = setTimeout(() => {
+          refetchTimeout = null;
+          fetchStatus('Updated');
+        }, 120);
       }
     }
   );
+
+  return {
+    channel: sub.channel,
+    unsubscribe: () => {
+      if (refetchTimeout) clearTimeout(refetchTimeout);
+      sub.unsubscribe();
+    }
+  };
 }
 
 /**
@@ -298,11 +459,26 @@ export function subscribeToQueue(
   callback: (items: QueueItem[]) => void
 ): RealtimeSubscription<QueueItem> {
   let refetchTimeout: ReturnType<typeof setTimeout> | null = null;
-  
+  let fetchInFlight = false;
+  let refetchRequested = false;
+  const finishFetch = () => {
+    fetchInFlight = false;
+    if (refetchRequested) {
+      refetchRequested = false;
+      if (refetchTimeout) clearTimeout(refetchTimeout);
+      refetchTimeout = setTimeout(() => {
+        refetchTimeout = null;
+        fetchQueue();
+      }, 250);
+    }
+  };
+
   const fetchQueue = () => {
-    console.log('[subscribeToQueue] 🔄 Fetching queue from database...');
-    const fetchTime = new Date().toISOString();
-    console.log('[subscribeToQueue] ⏰ Fetch timestamp:', fetchTime);
+    if (fetchInFlight) {
+      refetchRequested = true;
+      return;
+    }
+    fetchInFlight = true;
     
     supabase
       .from('queue')
@@ -314,26 +490,17 @@ export function subscribeToQueue(
       .then(({ data, error }) => {
         if (error) {
           console.error('[subscribeToQueue] ❌ Database error:', error);
+          finishFetch();
           return;
-        }
-        
-        console.log('[subscribeToQueue] 📊 Fetched', data?.length || 0, 'items from database');
-        if (data && data.length > 0) {
-          console.log('[subscribeToQueue] 📋 Queue data:', (data as any[]).map(item => ({
-            id: item.id?.slice(0, 8) || 'unknown',
-            type: item.type || 'unknown',
-            position: item.position || -1,
-            media_id: item.media_item_id?.slice(0, 8) || 'unknown',
-            title: item.media_item?.title?.slice(0, 30) || 'unknown',
-            played_at: item.played_at || null
-          })));
-        } else {
-          console.log('[subscribeToQueue] 📋 Queue is empty');
         }
         
         if (data) {
           callback(data as QueueItem[]);
         }
+        finishFetch();
+      }, (error) => {
+        console.error('[subscribeToQueue] ❌ Unexpected fetch failure:', error);
+        finishFetch();
       });
   };
   
@@ -345,10 +512,13 @@ export function subscribeToQueue(
     'queue',
     { column: 'player_id', value: playerId },
     () => {
-      // Debounce refetch to allow database updates to complete
-      console.log('[subscribeToQueue] Change detected, scheduling refetch in 800ms...');
+      // Coalesce queue bursts into a single trailing fetch.
       if (refetchTimeout) clearTimeout(refetchTimeout);
+      if (fetchInFlight) {
+        refetchRequested = true;
+      }
       refetchTimeout = setTimeout(() => {
+        refetchTimeout = null;
         fetchQueue();
       }, 800); // Increased to 800ms to ensure all position updates complete
     }
@@ -429,6 +599,54 @@ export function subscribeToSystemLogs(
   );
 }
 
+export function subscribeToPlayerEndpoints(
+  playerId: string,
+  callback: (endpoints: PlayerEndpoint[]) => void
+): RealtimeSubscription<PlayerEndpoint> {
+  const load = () => {
+    supabase
+      .from('player_endpoints')
+      .select('*')
+      .eq('player_id', playerId)
+      .order('connected_at', { ascending: true })
+      .then(({ data }) => {
+        callback((data as PlayerEndpoint[]) || []);
+      });
+  };
+
+  load();
+
+  return subscribeToTable<PlayerEndpoint>(
+    'player_endpoints',
+    { column: 'player_id', value: playerId },
+    () => load()
+  );
+}
+
+export function subscribeToPlayerEndpoint(
+  endpointId: string,
+  callback: (endpoint: PlayerEndpoint | null) => void
+): RealtimeSubscription<PlayerEndpoint> {
+  const load = () => {
+    supabase
+      .from('player_endpoints')
+      .select('*')
+      .eq('endpoint_id', endpointId)
+      .maybeSingle()
+      .then(({ data }) => {
+        callback((data as PlayerEndpoint | null) ?? null);
+      });
+  };
+
+  load();
+
+  return subscribeToTable<PlayerEndpoint>(
+    'player_endpoints',
+    { column: 'endpoint_id', value: endpointId },
+    () => load()
+  );
+}
+
 // =============================================================================
 // API HELPERS
 // =============================================================================
@@ -484,20 +702,100 @@ export async function callQueueManager(params: {
 /**
  * Call player control edge function
  */
+async function getFunctionInvokeErrorMessage(error: any): Promise<string> {
+  const context = error?.context;
+  if (context && typeof context.clone === 'function') {
+    try {
+      const body = await context.clone().text();
+      if (body) return `${error?.message || 'Edge Function error'}: ${body.slice(0, 500)}`;
+    } catch {
+      // Fall through to the generic message below.
+    }
+  }
+
+  if (error?.message && error.message !== '[object Object]') return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export async function callPlayerControl(params: {
   player_id: string;
   state?: 'idle' | 'playing' | 'paused' | 'error' | 'loading';
   progress?: number;
-  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority';
+  action?: 'heartbeat' | 'update' | 'ended' | 'skip' | 'register_session' | 'reset_priority' | 'client_log' | 'disconnect' | 'identify_endpoint' | 'set_master_endpoint' | 'playback_failed';
+  expected_media_id?: string;
   session_id?: string;
+  endpoint_id?: string;
+  target_endpoint_id?: string;
   stored_player_id?: string;
+  stored_endpoint_id?: string;
+  initiator?: string;
+  reason?: string;
+  event_name?: string;
+  severity?: 'debug' | 'info' | 'warn' | 'error';
+  payload?: Record<string, any>;
+  origin?: string;
+  user_agent?: string;
 }) {
-  const { data, error } = await supabase.functions.invoke('player-control', {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const { data, error } = await supabase.functions.invoke('player-control', {
+      body: params
+    });
+
+    if (!error) return data;
+
+    lastError = error;
+    const status = (error as any)?.context?.status;
+    const message = await getFunctionInvokeErrorMessage(error);
+    const transient = status === 502 || status === 503 || status === 504 || /\b(502|503|504)\b|network|timeout/i.test(message);
+    if (!transient || attempt === 3) {
+      throw new Error(message);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, attempt * 350));
+  }
+
+  throw new Error(lastError instanceof Error ? lastError.message : JSON.stringify(lastError));
+}
+
+export async function createAdminBroadcast(params: {
+  event_type: string;
+  payload?: Record<string, any>;
+  created_by?: string;
+}) {
+  const insertPayload: Database['public']['Tables']['admin_broadcasts']['Insert'] = {
+    event_type: params.event_type,
+    payload: params.payload ?? {},
+    ...(params.created_by ? { created_by: params.created_by } : {}),
+  };
+
+  const { data, error } = await (supabase
+    .from('admin_broadcasts') as any)
+    .insert(insertPayload)
+    .select()
+    .single();
+
+  if (error) {
+    throw new Error(error.message || JSON.stringify(error));
+  }
+
+  return data as AdminBroadcast;
+}
+
+export async function callRadioGenerator(params: {
+  player_id: string;
+  action: 'generate';
+  source: 'now_playing' | 'history' | 'playlist';
+}) {
+  const { data, error } = await supabase.functions.invoke('radio-generator', {
     body: params
   });
 
   if (error) {
-    // Normalize error to a real Error so callers receive a message string
     throw new Error(error.message || JSON.stringify(error));
   }
 
@@ -539,20 +837,27 @@ export async function callDownloadVideo(params: {
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
-  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2';
+  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
   query?: string;
   media_item_id?: string;
   amount?: number;
   url?: string;
   r2_file_id?: string;
+  add_to_queue?: boolean;
+  title?: string;
+  artist?: string | null;
+  thumbnail?: string | null;
+  duration?: number | null;
 }) {
   try {
+    const apiKey = import.meta.env.VITE_KIOSK_API_KEY;
     // Call Edge Function directly to bypass authentication requirements for public kiosk
     const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${supabaseAnonKey}`,
+        ...(apiKey ? { apikey: apiKey } : {}),
       },
       body: JSON.stringify(params),
     });
@@ -596,6 +901,107 @@ export async function callPlaylistManager(params: {
 
   if (error) throw error;
   return data;
+}
+
+/**
+ * Run a YouTube iframe playability audit over stale, playlist, or explicit media items.
+ */
+export async function callYouTubePlayabilityAudit(params: {
+  limit?: number;
+  stale_hours?: number;
+  checked_by?: string;
+  playlist_id?: string;
+  media_item_ids?: string[];
+}) {
+  const { data, error } = await supabase.functions.invoke('youtube-playability-audit', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as {
+    checked_count: number;
+    candidate_count: number;
+    summary: Record<string, number>;
+    videos: Array<Record<string, any>>;
+  };
+}
+
+/**
+ * Find embeddable YouTube alternatives for a known-bad or suspicious media item.
+ */
+export async function callYouTubeAlternativeFinder(params: {
+  media_item_id?: string;
+  youtube_id?: string;
+  title?: string;
+  artist?: string | null;
+  duration?: number | null;
+  query?: string;
+  max_results?: number;
+}) {
+  const { data, error } = await supabase.functions.invoke('youtube-alternative-finder', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as {
+    source: {
+      media_item_id: string | null;
+      youtube_id: string | null;
+      title: string;
+      artist: string;
+      duration: number;
+    };
+    candidates: Array<Record<string, any>>;
+    count: number;
+  };
+}
+
+/**
+ * Batch audit and generate alternative candidates for known-bad YouTube items.
+ */
+export async function callYouTubeRemediationWorker(params: {
+  limit?: number;
+  audit_limit?: number;
+  stale_hours?: number;
+  checked_by?: string;
+  audit_first?: boolean;
+  max_results?: number;
+  statuses?: string[];
+}) {
+  const { data, error } = await supabase.functions.invoke('youtube-remediation-worker', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as {
+    audit: null | {
+      checked_count: number;
+      candidate_count: number;
+      summary: Record<string, number>;
+    };
+    selected_count: number;
+    summary: {
+      processed: number;
+      r2: number;
+      replacements: number;
+      excluded: number;
+      errors: number;
+    };
+    results: Array<Record<string, any>>;
+  };
+}
+
+/**
+ * Run a redacted production canary over environment, database, player endpoint,
+ * catalog, logs, and YouTube API key health.
+ */
+export async function callSystemHealth(params: Record<string, never> = {}): Promise<SystemHealthReport> {
+  const { data, error } = await supabase.functions.invoke('system-health', {
+    body: params
+  });
+
+  if (error) throw error;
+  return data as SystemHealthReport;
 }
 
 /**

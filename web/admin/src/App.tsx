@@ -9,21 +9,36 @@ import {
   subscribeToQueue,
   subscribeToPlayerStatus,
   subscribeToPlayerSettings,
+  subscribeToPlayerEndpoints,
+  subscribeToAdminBroadcasts,
   subscribeToTable,
   callQueueManager,
   callPlayerControl,
   callPlaylistManager,
+  callKioskHandler,
+  callYouTubeAlternativeFinder,
+  callYouTubePlayabilityAudit,
+  callYouTubeRemediationWorker,
+  createAdminBroadcast,
+  callRadioGenerator,
+  callSystemHealth,
   getPlaylists,
   getPlaylistItems,
   getTotalCredits,
   updateAllCredits,
   type QueueItem,
+  type Player,
   type PlayerStatus,
   type SystemLog,
   type Playlist,
   type PlaylistItem,
   type PlayerSettings,
+  type PlayerEndpoint,
   type MediaItem,
+  type AdminBroadcast,
+  type R2File,
+  type SystemHealthReport,
+  type YouTubeAlternativeCandidate,
   signIn,
   signOut,
   getCurrentUser,
@@ -60,20 +75,20 @@ const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 
 const FS_SCALES = [
   { zoom: 0.82, label: 'Smallest', pct: '82%' },
-  { zoom: 0.91, label: 'Smaller',  pct: '91%' },
-  { zoom: 1.00, label: 'Normal',   pct: '100%' },
-  { zoom: 1.10, label: 'Larger',   pct: '110%' },
-  { zoom: 1.22, label: 'Largest',  pct: '122%' },
+  { zoom: 0.91, label: 'Smaller', pct: '91%' },
+  { zoom: 1.00, label: 'Normal', pct: '100%' },
+  { zoom: 1.10, label: 'Larger', pct: '110%' },
+  { zoom: 1.22, label: 'Largest', pct: '122%' },
 ];
 
 const PRESET_COLOURS = [
-  { hex: '#f59e0b', name: 'Amber' },    { hex: '#ef4444', name: 'Red' },
-  { hex: '#f97316', name: 'Orange' },   { hex: '#eab308', name: 'Yellow' },
-  { hex: '#22c55e', name: 'Green' },    { hex: '#14b8a6', name: 'Teal' },
-  { hex: '#06b6d4', name: 'Cyan' },     { hex: '#3b82f6', name: 'Blue' },
-  { hex: '#6366f1', name: 'Indigo' },   { hex: '#8b5cf6', name: 'Violet' },
-  { hex: '#d946ef', name: 'Fuchsia' },  { hex: '#ec4899', name: 'Pink' },
-  { hex: '#a3e635', name: 'Lime' },     { hex: '#94a3b8', name: 'Slate' },
+  { hex: '#f59e0b', name: 'Amber' }, { hex: '#ef4444', name: 'Red' },
+  { hex: '#f97316', name: 'Orange' }, { hex: '#eab308', name: 'Yellow' },
+  { hex: '#22c55e', name: 'Green' }, { hex: '#14b8a6', name: 'Teal' },
+  { hex: '#06b6d4', name: 'Cyan' }, { hex: '#3b82f6', name: 'Blue' },
+  { hex: '#6366f1', name: 'Indigo' }, { hex: '#8b5cf6', name: 'Violet' },
+  { hex: '#d946ef', name: 'Fuchsia' }, { hex: '#ec4899', name: 'Pink' },
+  { hex: '#a3e635', name: 'Lime' }, { hex: '#94a3b8', name: 'Slate' },
   { hex: '#ffffff', name: 'White' },
 ];
 
@@ -106,16 +121,16 @@ function applyAccentCSS(hex: string) {
   if (!/^#[0-9a-fA-F]{6}$/.test(hex)) return;
   const [r, g, b] = hexToRgb(hex);
   const root = document.documentElement;
-  root.style.setProperty('--accent',        hex);
-  root.style.setProperty('--accent-dark',   darkenHex(hex, 0.12));
-  root.style.setProperty('--accent-dim',    `rgba(${r},${g},${b},0.15)`);
+  root.style.setProperty('--accent', hex);
+  root.style.setProperty('--accent-dark', darkenHex(hex, 0.12));
+  root.style.setProperty('--accent-dim', `rgba(${r},${g},${b},0.15)`);
   root.style.setProperty('--accent-border', `rgba(${r},${g},${b},0.30)`);
-  root.style.setProperty('--accent-glow',   `rgba(${r},${g},${b},0.38)`);
-  root.style.setProperty('--accent-rgb',    `${r},${g},${b}`);
+  root.style.setProperty('--accent-glow', `rgba(${r},${g},${b},0.38)`);
+  root.style.setProperty('--accent-rgb', `${r},${g},${b}`);
 }
 function applyZoom(zoom: number) {
   const el = document.getElementById('root');
-  if (el) (el.style as unknown as Record<string,string>).zoom = String(zoom);
+  if (el) (el.style as unknown as Record<string, string>).zoom = String(zoom);
 }
 
 // ─── Prefs hook ──────────────────────────────────────────────────────────────
@@ -164,20 +179,26 @@ function Spinner({ size = 20 }: { size?: number }) {
 function Toggle({ checked, onChange, disabled }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button role="switch" aria-checked={checked} disabled={disabled} onClick={() => onChange(!checked)}
-      style={{ width: 44, height: 24, borderRadius: 999, flexShrink: 0,
+      style={{
+        width: 44, height: 24, borderRadius: 999, flexShrink: 0,
         background: checked ? 'var(--accent)' : 'rgba(255,255,255,0.12)', transition: 'background 0.2s',
         position: 'relative', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
-        border: 'none', outline: 'none' }}>
-      <span style={{ position: 'absolute', top: 3, left: checked ? 23 : 3, width: 18, height: 18,
-        borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.5)' }} />
+        border: 'none', outline: 'none'
+      }}>
+      <span style={{
+        position: 'absolute', top: 3, left: checked ? 23 : 3, width: 18, height: 18,
+        borderRadius: '50%', background: '#fff', transition: 'left 0.2s', boxShadow: '0 1px 4px rgba(0,0,0,0.5)'
+      }} />
     </button>
   );
 }
 
 function PanelHeader({ title, subtitle, actions }: { title: string; subtitle?: string; actions?: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '16px 24px', flexShrink: 0, borderBottom: '1px solid var(--border)'
+    }}>
       <div>
         <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>{title}</h1>
         {subtitle && <p style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>{subtitle}</p>}
@@ -193,16 +214,18 @@ function Btn({ onClick, children, variant = 'ghost', disabled, style: xs }: {
 }) {
   const vmap: Record<string, React.CSSProperties> = {
     accent: { background: 'var(--accent-dim)', color: 'var(--accent)', border: '1px solid var(--accent-border)' },
-    solid:  { background: 'var(--accent)', color: '#000' },
-    ghost:  { background: 'rgba(255,255,255,0.05)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.1)' },
+    solid: { background: 'var(--accent)', color: '#000' },
+    ghost: { background: 'rgba(255,255,255,0.05)', color: 'var(--muted)', border: '1px solid rgba(255,255,255,0.1)' },
     danger: { background: 'rgba(239,68,68,0.12)', color: '#f87171', border: '1px solid rgba(239,68,68,0.25)' },
   };
   return (
     <button disabled={disabled} onClick={onClick}
-      style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, border: 'none',
+      style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 10, border: 'none',
         cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1,
         fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, whiteSpace: 'nowrap',
-        ...vmap[variant], ...xs }}>
+        ...vmap[variant], ...xs
+      }}>
       {children}
     </button>
   );
@@ -213,11 +236,13 @@ function SaveBtn({ onSave, loading }: { onSave: () => Promise<void>; loading?: b
   const handle = async () => { await onSave(); setSaved(true); setTimeout(() => setSaved(false), 2500); };
   return (
     <button onClick={handle} disabled={loading}
-      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 12,
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8, padding: '10px 24px', borderRadius: 12,
         cursor: loading ? 'default' : 'pointer', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600,
         background: saved ? 'rgba(34,197,94,0.18)' : 'var(--accent)',
         color: saved ? '#4ade80' : '#000',
-        border: saved ? '1px solid rgba(34,197,94,0.4)' : 'none', transition: 'all 0.2s' }}>
+        border: saved ? '1px solid rgba(34,197,94,0.4)' : 'none', transition: 'all 0.2s'
+      }}>
       {loading ? <Spinner size={14} /> : saved ? '✓ Saved' : 'Save Settings'}
     </button>
   );
@@ -238,8 +263,10 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
     try {
       const result = await signIn(email, password);
       if (result.user) {
-        onSignIn({ id: result.user.id, email: result.user.email || '',
-          role: result.user.user_metadata?.role || result.user.app_metadata?.role });
+        onSignIn({
+          id: result.user.id, email: result.user.email || '',
+          role: result.user.user_metadata?.role || result.user.app_metadata?.role
+        });
       }
     } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Failed to sign in'); }
     finally { setLoading(false); }
@@ -263,15 +290,19 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
               <input type={label === 'Password' ? 'password' : 'email'} required
                 value={label === 'Email' ? email : password}
                 onChange={e => label === 'Email' ? setEmail(e.target.value) : setPassword(e.target.value)}
-                style={{ width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0a0a0a',
-                  border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
+                style={{
+                  width: '100%', padding: '10px 14px', borderRadius: 10, background: '#0a0a0a',
+                  border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none'
+                }} />
             </div>
           ))}
           {error && <p style={{ color: '#f87171', fontSize: 12, marginBottom: 12, fontFamily: 'var(--font-mono)' }}>{error}</p>}
           <button type="submit" disabled={loading}
-            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: loading ? 'default' : 'pointer',
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: loading ? 'default' : 'pointer',
               background: 'var(--accent)', color: '#000', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700,
-              opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              opacity: loading ? 0.6 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+            }}>
             {loading ? <><Spinner size={16} /> Signing in…</> : 'Sign In'}
           </button>
         </form>
@@ -284,51 +315,37 @@ function LoginForm({ onSignIn }: { onSignIn: (user: AuthUser) => void }) {
 // NOW PLAYING STAGE
 // ─────────────────────────────────────────────────────────────────────────────
 
-function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove }: {
+function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipping, onRemove, masterOfflineWarning }: {
   status: PlayerStatus | null; queue: QueueItem[]; settings: PlayerSettings | null;
   onPlayPause: () => void; onSkip: () => void; isSkipping: boolean; onRemove: (id: string) => void;
+  masterOfflineWarning?: string | null;
 }) {
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const cm = (status as any)?.current_media as any;
-  const thumb  = cm?.thumbnail || '';
-  const title  = cleanDisplayText(cm?.title) || 'Nothing playing';
+  const thumb = cm?.thumbnail || '';
+  const title = cleanDisplayText(cm?.title) || 'Nothing playing';
   const artist = cleanDisplayText(cm?.artist) || '—';
   const isPlaying = status?.state === 'playing';
-  const isPaused  = status?.state === 'paused';
-  const progress  = Math.min(100, (status?.progress ?? 0) * 100);
+  const isPaused = status?.state === 'paused';
+  const progress = Math.min(100, (status?.progress ?? 0) * 100);
   const stateLabel = isSkipping ? 'SKIPPING' : isPlaying ? 'Now Playing' : isPaused ? 'Paused' : (status?.state || 'Idle');
+  const playbackSource = status?.source ?? 'youtube';
+  const sourceLabel =
+    playbackSource === 'cloudflare' ? 'Cached Cloudflare'
+      : playbackSource === 'local' ? 'Local fallback'
+        : 'YouTube iframe';
+  const playbackConfirmed = !!status?.playback_started_at;
+  const playbackError = status?.playback_error;
+  const youtubePlayabilityStatus = cm?.youtube_playability_status || cm?.metadata?.youtube_playability_status || 'unknown';
+  const youtubePlayabilityReason = cm?.youtube_playability_reason || cm?.metadata?.youtube_playability_reason || null;
+  const showYoutubePlayability = playbackSource === 'youtube' && youtubePlayabilityStatus !== 'unknown';
   const handlePlayPauseClick = () => {
     if (isSkipping) return;
     if (isPlaying) { setShowPauseConfirm(true); } else { onPlayPause(); }
   };
 
-  // 🐛 DEBUG: Track what's playing vs what's in queue
-  console.log('[NowPlayingStage] 🎵 Current playing status:', {
-    current_media_id: (status as any)?.current_media_id?.slice(0, 8) || 'none',
-    title: title,
-    state: status?.state,
-    queue_length: queue.length,
-    queue_items: queue.map(item => ({
-      id: item.id.slice(0, 8),
-      media_id: item.media_item_id?.slice(0, 8),
-      position: item.position,
-      type: item.type,
-      title: item.media_item?.title?.slice(0, 30)
-    }))
-  });
-
-  // Check if current media is actually in the queue
-  const currentQueueItem = queue.find((item) => item.media_item_id === (status as any)?.current_media_id);
-  console.log('[NowPlayingStage] 🎯 currentQueueItem match:', {
-    found: !!currentQueueItem,
-    media_id: currentQueueItem?.media_item_id?.slice(0, 8) || 'none',
-    position: currentQueueItem?.position,
-    type: currentQueueItem?.type,
-    title: currentQueueItem?.media_item?.title?.slice(0, 30) || 'none'
-  });
-
-  const upNext   = queue.filter(q => q.media_item_id !== (status as any)?.current_media_id).slice(0, 3);
+  const upNext = queue.filter(q => q.media_item_id !== (status as any)?.current_media_id).slice(0, 3);
   const priority = queue.filter(q => q.type === 'priority');
 
   return (
@@ -339,12 +356,30 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
         <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(135deg,rgba(5,5,5,0.85) 0%,rgba(5,5,5,0.2) 50%,rgba(5,5,5,0.92) 100%)' }} />
       </>}
       {/* Grain */}
-      <div style={{ position: 'absolute', inset: 0, opacity: 0.12, pointerEvents: 'none', backgroundSize: '128px',
-        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E")` }} />
+      <div style={{
+        position: 'absolute', inset: 0, opacity: 0.12, pointerEvents: 'none', backgroundSize: '128px',
+        backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.4'/%3E%3C/svg%3E")`
+      }} />
       {/* Bottom line */}
       <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 1, background: 'linear-gradient(90deg,transparent,var(--accent-border),transparent)' }} />
 
       <div style={{ position: 'relative', height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '16px 22px 0' }}>
+        {masterOfflineWarning && (
+          <div style={{
+            marginBottom: 10,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: 'rgba(239,68,68,0.14)',
+            border: '1px solid rgba(248,113,113,0.35)',
+            color: '#fca5a5',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11,
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase'
+          }}>
+            {masterOfflineWarning}
+          </div>
+        )}
         {/* Top */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
           {/* Thumb */}
@@ -361,21 +396,67 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
           {/* Info */}
           <div style={{ flex: 1, minWidth: 0, paddingTop: 2 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+              <div style={{
+                width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
                 background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24',
                 boxShadow: `0 0 8px ${isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24'}`,
-                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
+                animation: (isPlaying || isSkipping) ? 'pulse 1.6s ease-in-out infinite' : 'none'
+              }} />
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 10, letterSpacing: '0.14em',
                 color: isSkipping ? '#f59e0b' : isPlaying ? '#4ade80' : 'rgba(255,255,255,0.4)',
-                textTransform: 'uppercase', fontWeight: 600 }}>
+                textTransform: 'uppercase', fontWeight: 600
+              }}>
                 {stateLabel}
               </span>
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                background: playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.12)' : playbackSource === 'local' ? 'rgba(59,130,246,0.14)' : 'rgba(251,191,36,0.12)',
+                color: playbackSource === 'cloudflare' ? '#4ade80' : playbackSource === 'local' ? '#93c5fd' : '#fbbf24',
+                border: `1px solid ${playbackSource === 'cloudflare' ? 'rgba(34,197,94,0.25)' : playbackSource === 'local' ? 'rgba(59,130,246,0.3)' : 'rgba(251,191,36,0.25)'}`
+              }}>
+                {sourceLabel}
+              </span>
+              {status?.current_media_id && (
+                <span title={playbackConfirmed ? `Confirmed ${new Date(status.playback_started_at as string).toLocaleTimeString()}` : 'Waiting for first real playing event'}
+                  style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                    background: playbackConfirmed ? 'rgba(34,197,94,0.1)' : 'rgba(245,158,11,0.1)',
+                    color: playbackConfirmed ? '#86efac' : '#fbbf24',
+                    border: `1px solid ${playbackConfirmed ? 'rgba(34,197,94,0.22)' : 'rgba(245,158,11,0.25)'}`
+                  }}>
+                  {playbackConfirmed ? 'START CONFIRMED' : 'AWAITING START'}
+                </span>
+              )}
+              {showYoutubePlayability && (
+                <span title={youtubePlayabilityReason || 'YouTube playability precheck'}
+                  style={{
+                    fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 6px', borderRadius: 999,
+                    background: youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.12)',
+                    color: youtubePlayabilityStatus === 'playable' ? '#86efac' : '#fca5a5',
+                    border: `1px solid ${youtubePlayabilityStatus === 'playable' ? 'rgba(34,197,94,0.22)' : 'rgba(248,113,113,0.28)'}`
+                  }}>
+                  YT {String(youtubePlayabilityStatus).replace(/_/g, ' ').toUpperCase()}
+                </span>
+              )}
             </div>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
+            {playbackError && (
+              <div style={{
+                marginBottom: 6, fontFamily: 'var(--font-mono)', fontSize: 10, color: '#fca5a5',
+                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
+              }}>
+                Last failure: {playbackError}{status?.playback_error_code ? ` (${status.playback_error_code})` : ''}
+              </div>
+            )}
+            <h2 style={{
+              fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 800, color: '#fff',
               letterSpacing: '-0.03em', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none' }}>{title}</h2>
-            <p style={{ fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em' }}>{artist}</p>
+              textShadow: isPlaying ? '0 0 40px rgba(255,255,255,0.15)' : 'none'
+            }}>{title}</h2>
+            <p style={{
+              fontFamily: 'var(--font-display)', fontSize: 15, color: 'rgba(255,255,255,0.55)', marginTop: 4,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', letterSpacing: '-0.01em'
+            }}>{artist}</p>
           </div>
 
           {/* Up Next */}
@@ -384,18 +465,20 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             {upNext.length === 0
               ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.2)' }}>Queue empty</div>
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              : upNext.map((item, i) => { const m = (item as any).media_item as any; return (
-                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
-                  {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
+              : upNext.map((item, i) => {
+                const m = (item as any).media_item as any; return (
+                  <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 9, padding: '5px 9px', background: 'rgba(255,255,255,0.06)' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)', width: 12 }}>{i + 1}</span>
+                    {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 28, height: 28, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 11, fontWeight: 500, color: 'rgba(255,255,255,0.85)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(m?.title) || 'Unknown'}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{cleanDisplayText(m?.artist) || ''}</div>
+                    </div>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                    <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
                   </div>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
-                  <button onClick={() => onRemove(item.id)} style={{ width: 20, height: 20, borderRadius: 5, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 10, flexShrink: 0 }}>✕</button>
-                </div>
-              );})}
+                );
+              })}
           </div>
 
           {/* Priority requests */}
@@ -417,18 +500,22 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             {/* Play/Pause — RED+yellow when playing, GREEN+white when paused, grey when skipping */}
             <button onClick={handlePlayPauseClick} disabled={isSkipping}
               title={isSkipping ? 'Skipping…' : isPlaying ? 'Pause playback' : 'Resume playback'}
-              style={{ width: 44, height: 44, borderRadius: '50%', border: 'none',
+              style={{
+                width: 44, height: 44, borderRadius: '50%', border: 'none',
                 cursor: isSkipping ? 'default' : 'pointer', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
                 background: isSkipping ? 'rgba(255,255,255,0.08)' : isPlaying ? '#dc2626' : '#16a34a',
                 color: isSkipping ? 'rgba(255,255,255,0.25)' : isPlaying ? '#facc15' : '#fff',
                 boxShadow: isSkipping ? 'none' : isPlaying ? '0 4px 18px rgba(220,38,38,0.45)' : '0 4px 18px rgba(22,163,74,0.45)',
                 transition: 'background 0.2s, box-shadow 0.2s, color 0.2s',
-                opacity: isSkipping ? 0.45 : 1 }}>
+                opacity: isSkipping ? 0.45 : 1
+              }}>
               {isPlaying ? '⏸' : '▶'}
             </button>
-            <button onClick={onSkip} disabled={isSkipping} style={{ width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
-              background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, opacity: isSkipping ? 0.45 : 1 }}>
+            <button onClick={onSkip} disabled={isSkipping} style={{
+              width: 34, height: 34, borderRadius: 9, border: 'none', cursor: isSkipping ? 'default' : 'pointer',
+              background: 'rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, opacity: isSkipping ? 0.45 : 1
+            }}>
               {isSkipping ? <Spinner size={14} /> : '⏭'}
             </button>
             <div style={{ width: 1, height: 20, background: 'rgba(255,255,255,0.1)', margin: '0 4px' }} />
@@ -436,12 +523,16 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
             <div style={{ width: 72 }}><input type="range" min={0} max={100} value={settings?.volume ?? 75} readOnly /></div>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', width: 22 }}>{settings?.volume ?? 75}</span>
             <div style={{ flex: 1 }} />
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99,
               background: isSkipping ? 'rgba(245,158,11,0.12)' : isPlaying ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.07)',
-              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}` }}>
+              border: `1px solid ${isSkipping ? 'rgba(245,158,11,0.3)' : isPlaying ? 'rgba(34,197,94,0.25)' : 'rgba(255,255,255,0.1)'}`
+            }}>
               <div style={{ width: 5, height: 5, borderRadius: '50%', background: isSkipping ? '#f59e0b' : isPlaying ? '#22c55e' : '#fbbf24' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
-                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24' }}>{stateLabel}</span>
+              <span style={{
+                fontFamily: 'var(--font-mono)', fontSize: 9, letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: isSkipping ? '#fbbf24' : isPlaying ? '#4ade80' : '#fbbf24'
+              }}>{stateLabel}</span>
             </div>
             {priority.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 9px', borderRadius: 99, background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)' }}>
@@ -454,26 +545,34 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
 
       {/* Pause confirmation modal */}
       {showPauseConfirm && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)' }}
+        <div style={{
+          position: 'absolute', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)'
+        }}
           onClick={() => setShowPauseConfirm(false)}>
-          <div style={{ background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+          <div style={{
+            background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, minWidth: 280,
-            boxShadow: '0 24px 80px rgba(0,0,0,0.9)' }}
+            boxShadow: '0 24px 80px rgba(0,0,0,0.9)'
+          }}
             onClick={e => e.stopPropagation()}>
             <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>Pause Playback?</div>
             <div style={{ display: 'flex', gap: 12 }}>
               <button onClick={() => setShowPauseConfirm(false)}
-                style={{ padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
+                style={{
+                  padding: '9px 24px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)',
                   background: 'transparent', color: 'rgba(255,255,255,0.55)', cursor: 'pointer',
-                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500 }}>
+                  fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500
+                }}>
                 Cancel
               </button>
               <button onClick={() => { setShowPauseConfirm(false); onPlayPause(); }}
-                style={{ padding: '9px 24px', borderRadius: 10, border: 'none',
+                style={{
+                  padding: '9px 24px', borderRadius: 10, border: 'none',
                   background: '#dc2626', color: '#fff', cursor: 'pointer',
                   fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 700,
-                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)' }}>
+                  boxShadow: '0 4px 18px rgba(220,38,38,0.4)'
+                }}>
                 Confirm
               </button>
             </div>
@@ -489,25 +588,37 @@ function NowPlayingStage({ status, queue, settings, onPlayPause, onSkip, isSkipp
 // ─────────────────────────────────────────────────────────────────────────────
 
 type ViewId =
+  | 'search'
+  | 'library'
   | 'queue'
+  | 'system-health'
+  | 'youtube-health'
   | 'playlists-all' | 'playlists-import'
   | 'settings-playback' | 'settings-kiosk' | 'settings-branding' | 'settings-scripts' | 'settings-prefs'
   | 'logs';
 
 const NAV = [
-  { id: 'queue',     icon: '🎵', label: 'Queue',     children: [] as { id: ViewId; label: string }[] },
-  { id: 'playlists', icon: '📋', label: 'Playlists', children: [
-    { id: 'playlists-all'    as ViewId, label: 'All Playlists' },
-    { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
-  ]},
-  { id: 'settings',  icon: '⚙️', label: 'Settings',  children: [
-    { id: 'settings-playback' as ViewId, label: 'Playback' },
-    { id: 'settings-kiosk'    as ViewId, label: 'Kiosk' },
-    { id: 'settings-branding' as ViewId, label: 'Branding' },
-    { id: 'settings-scripts'  as ViewId, label: 'Functions & Scripts' },
-    { id: 'settings-prefs'    as ViewId, label: 'Console Preferences' },
-  ]},
-  { id: 'logs',      icon: '📄', label: 'Logs',      children: [] as { id: ViewId; label: string }[] },
+  { id: 'search', icon: '🔍', label: 'Search', children: [] as { id: ViewId; label: string }[] },
+  { id: 'library', icon: '💾', label: 'Browse Library', children: [] as { id: ViewId; label: string }[] },
+  { id: 'queue', icon: '🎵', label: 'Queue', children: [] as { id: ViewId; label: string }[] },
+  { id: 'system-health', icon: 'OK', label: 'System Health', children: [] as { id: ViewId; label: string }[] },
+  { id: 'youtube-health', icon: 'YT', label: 'YouTube Health', children: [] as { id: ViewId; label: string }[] },
+  {
+    id: 'playlists', icon: '📋', label: 'Playlists', children: [
+      { id: 'playlists-all' as ViewId, label: 'All Playlists' },
+      { id: 'playlists-import' as ViewId, label: 'Import Playlist' },
+    ]
+  },
+  {
+    id: 'settings', icon: '⚙️', label: 'Settings', children: [
+      { id: 'settings-playback' as ViewId, label: 'Playback' },
+      { id: 'settings-kiosk' as ViewId, label: 'Kiosk' },
+      { id: 'settings-branding' as ViewId, label: 'Branding' },
+      { id: 'settings-scripts' as ViewId, label: 'Functions & Scripts' },
+      { id: 'settings-prefs' as ViewId, label: 'Console Preferences' },
+    ]
+  },
+  { id: 'logs', icon: '📄', label: 'Logs', children: [] as { id: ViewId; label: string }[] },
 ];
 
 function Sidebar({ view, setView, queue, user, onSignOut }: {
@@ -529,9 +640,11 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
     group.children.some(c => c.id === view) || (group.children.length === 0 && view === group.id as ViewId);
 
   return (
-    <aside style={{ display: 'flex', flexDirection: 'column', flexShrink: 0,
+    <aside style={{
+      display: 'flex', flexDirection: 'column', flexShrink: 0,
       width: expanded ? 220 : 60, height: '100%', background: 'var(--surface)',
-      borderRight: '1px solid var(--border)', transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden' }}>
+      borderRight: '1px solid var(--border)', transition: 'width 0.25s cubic-bezier(0.4,0,0.2,1)', overflow: 'hidden'
+    }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '13px 13px', height: 54, flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
         <div style={{ width: 30, height: 30, borderRadius: 9, flexShrink: 0, background: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 14px var(--accent-glow)' }}>
@@ -550,13 +663,15 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto', overflowX: 'hidden' }}>
         {NAV.map(group => {
           const active = isGroupActive(group);
-          const open   = openGroup === group.id;
+          const open = openGroup === group.id;
           return (
             <div key={group.id}>
-              <button onClick={() => handleGroup(group)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 9,
+              <button onClick={() => handleGroup(group)} style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 9,
                 padding: expanded ? '9px 13px' : '9px 0', justifyContent: expanded ? 'flex-start' : 'center',
                 background: 'transparent', border: 'none', cursor: 'pointer', position: 'relative',
-                color: active ? 'var(--accent)' : 'rgba(255,255,255,0.4)' }}>
+                color: active ? 'var(--accent)' : 'rgba(255,255,255,0.4)'
+              }}>
                 {active && <div style={{ position: 'absolute', left: 0, top: '50%', transform: 'translateY(-50%)', width: 2, height: 18, borderRadius: '0 2px 2px 0', background: 'var(--accent)' }} />}
                 <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 15, background: active ? 'var(--accent-dim)' : 'transparent' }}>{group.icon}</div>
                 {expanded && <>
@@ -570,9 +685,11 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
               {expanded && open && group.children.length > 0 && (
                 <div style={{ background: 'rgba(255,255,255,0.015)', borderLeft: '1px solid rgba(255,255,255,0.06)', marginLeft: 21 }}>
                   {group.children.map(child => (
-                    <button key={child.id} onClick={() => setView(child.id)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 7,
+                    <button key={child.id} onClick={() => setView(child.id)} style={{
+                      width: '100%', display: 'flex', alignItems: 'center', gap: 7,
                       padding: '7px 13px', background: 'transparent', border: 'none', cursor: 'pointer',
-                      color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)' }}>
+                      color: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.38)'
+                    }}>
                       <div style={{ width: 5, height: 5, borderRadius: '50%', flexShrink: 0, background: view === child.id ? 'var(--accent)' : 'rgba(255,255,255,0.15)' }} />
                       <span style={{ fontFamily: 'var(--font-display)', fontSize: 12, flex: 1, textAlign: 'left', whiteSpace: 'nowrap' }}>{child.label}</span>
                     </button>
@@ -597,6 +714,543 @@ function Sidebar({ view, setView, queue, user, onSignOut }: {
   );
 }
 
+interface AdminSearchResult {
+  id: string;
+  title: string;
+  artist?: string | null;
+  thumbnail?: string;
+  thumbnailUrl?: string;
+  url: string;
+  source?: string;
+}
+
+interface LibraryBrowseItem extends R2File {
+  source?: 'cloudflare';
+}
+
+function SearchPanel() {
+  const [query, setQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<AdminSearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistPickerFor, setPlaylistPickerFor] = useState<AdminSearchResult | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
+  const [addingToQueue, setAddingToQueue] = useState<string | null>(null);
+  const [addingToPlaylist, setAddingToPlaylist] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    getPlaylists(PLAYER_ID)
+      .then((data) => {
+        setPlaylists(data);
+        const active = data.find((p) => p.is_active);
+        setSelectedPlaylistId(active?.id ?? data[0]?.id ?? '');
+      })
+      .catch(console.error);
+  }, []);
+
+  const showStatus = (text: string, ok: boolean) => {
+    setStatusMsg({ text, ok });
+    window.setTimeout(() => setStatusMsg(null), 3500);
+  };
+
+  const performSearch = async () => {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    setIsSearching(true);
+    setSearchResults([]);
+    setPlaylistPickerFor(null);
+    try {
+      const [ytSettled, r2Settled] = await Promise.allSettled([
+        callKioskHandler({ action: 'search', query: trimmed }) as Promise<{ videos?: AdminSearchResult[] }>,
+        callKioskHandler({ action: 'search_r2', query: trimmed }) as Promise<{ videos?: AdminSearchResult[] }>,
+      ]);
+      const ytVideos = ytSettled.status === 'fulfilled' ? (ytSettled.value?.videos ?? []) : [];
+      const r2Videos = r2Settled.status === 'fulfilled' ? (r2Settled.value?.videos ?? []) : [];
+      setSearchResults([...r2Videos, ...ytVideos]);
+    } catch (err) {
+      console.error('Search failed:', err);
+      showStatus('Search failed. Check console for details.', false);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleClear = () => {
+    setQuery('');
+    setSearchResults([]);
+    setPlaylistPickerFor(null);
+    inputRef.current?.focus();
+  };
+
+  const handleAddToQueue = async (result: AdminSearchResult) => {
+    setAddingToQueue(result.id);
+    try {
+      const params: Parameters<typeof callKioskHandler>[0] = {
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        add_to_queue: true,
+      };
+      if (result.source === 'cloudflare') {
+        params.r2_file_id = result.id;
+      } else {
+        params.url = result.url;
+        params.title = result.title;
+        params.artist = result.artist ?? null;
+        params.thumbnail = result.thumbnailUrl || result.thumbnail || null;
+      }
+      const res = await callKioskHandler(params) as { queue_id?: string; error?: string };
+      if (res?.error) throw new Error(res.error);
+      showStatus(`Added "${cleanDisplayText(result.title)}" to Priority Queue`, true);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to add to queue', false);
+    } finally {
+      setAddingToQueue(null);
+    }
+  };
+
+  const handleAddToPlaylist = async () => {
+    if (!playlistPickerFor || !selectedPlaylistId) return;
+    const result = playlistPickerFor;
+    setAddingToPlaylist(result.id);
+    try {
+      const reqParams: Parameters<typeof callKioskHandler>[0] = {
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        add_to_queue: false,
+      };
+      if (result.source === 'cloudflare') {
+        reqParams.r2_file_id = result.id;
+      } else {
+        reqParams.url = result.url;
+        reqParams.title = result.title;
+        reqParams.artist = result.artist ?? null;
+        reqParams.thumbnail = result.thumbnailUrl || result.thumbnail || null;
+      }
+      const res = await callKioskHandler(reqParams) as { media_item_id?: string; error?: string };
+      if (res?.error) throw new Error(res.error);
+      if (!res.media_item_id) throw new Error('No media item returned');
+
+      await callPlaylistManager({
+        action: 'add_item',
+        playlist_id: selectedPlaylistId,
+        media_item_id: res.media_item_id,
+      });
+
+      const playlist = playlists.find((p) => p.id === selectedPlaylistId);
+      showStatus(`Added to "${playlist?.name ?? 'playlist'}"`, true);
+      setPlaylistPickerFor(null);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to add to playlist', false);
+    } finally {
+      setAddingToPlaylist(null);
+    }
+  };
+
+  const activePlaylist = playlists.find((p) => p.is_active);
+  const sortedPlaylists = [
+    ...(activePlaylist ? [activePlaylist] : []),
+    ...playlists.filter((p) => !p.is_active).sort((a, b) => a.name.localeCompare(b.name)),
+  ];
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="Search" subtitle="Search library and YouTube — actions bypass the credit system" />
+
+      <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, flexShrink: 0 }}>
+        <input
+          ref={inputRef}
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && performSearch()}
+          placeholder="Artist, song title..."
+          autoFocus
+          style={{
+            flex: 1,
+            padding: '9px 14px',
+            borderRadius: 10,
+            background: '#0d0d0d',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: '#fff',
+            fontFamily: 'var(--font-display)',
+            fontSize: 14,
+            outline: 'none',
+          }}
+        />
+        <Btn variant="accent" onClick={performSearch} disabled={isSearching || !query.trim()}>
+          {isSearching ? <><Spinner size={13} /> Searching...</> : 'Search'}
+        </Btn>
+        <Btn variant="ghost" onClick={handleClear} disabled={isSearching}>Clear</Btn>
+      </div>
+
+      {statusMsg && (
+        <div style={{
+          margin: '8px 24px 0',
+          padding: '8px 12px',
+          borderRadius: 8,
+          background: statusMsg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          color: statusMsg.ok ? '#4ade80' : '#f87171',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+        }}>
+          {statusMsg.text}
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 24px' }}>
+        {isSearching && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            <Spinner size={16} /> Searching...
+          </div>
+        )}
+
+        {!isSearching && searchResults.length === 0 && query.trim() && (
+          <div style={{ padding: '24px 0', color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            No results found.
+          </div>
+        )}
+
+        {searchResults.map((result) => {
+          const thumb = result.thumbnailUrl || result.thumbnail || '';
+          const title = cleanDisplayText(result.title) || 'Unknown Title';
+          const artist = result.artist ? cleanDisplayText(result.artist) : null;
+          const isHovered = hoveredId === result.id;
+          const isR2 = result.source === 'cloudflare';
+
+          return (
+            <div
+              key={`${result.source ?? 'yt'}-${result.id}`}
+              onMouseEnter={() => setHoveredId(result.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '7px 10px',
+                borderRadius: 10,
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                background: isHovered ? 'rgba(255,255,255,0.04)' : 'transparent',
+                transition: 'background 0.12s',
+              }}
+            >
+              <div style={{ width: 48, height: 36, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>
+                {thumb ? (
+                  <img src={thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>
+                    {isR2 ? '💾' : '▶'}
+                  </div>
+                )}
+              </div>
+
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {artist ? `${artist} - ${title}` : title}
+                </div>
+                {isR2 && (
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--accent)', marginTop: 1 }}>LIBRARY</div>
+                )}
+              </div>
+
+              {isHovered && (
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <Btn variant="accent" disabled={addingToQueue === result.id} onClick={() => handleAddToQueue(result)}>
+                    {addingToQueue === result.id ? <><Spinner size={12} /> Adding...</> : '+ Priority Queue'}
+                  </Btn>
+                  <Btn variant="ghost" disabled={addingToPlaylist === result.id} onClick={() => setPlaylistPickerFor(result)}>
+                    + Playlist
+                  </Btn>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {playlistPickerFor && (
+        <div style={{ padding: '16px 24px 20px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', minWidth: 72 }}>Playlist</div>
+          <select
+            value={selectedPlaylistId}
+            onChange={(e) => setSelectedPlaylistId(e.target.value)}
+            style={{ minWidth: 240, padding: '9px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none' }}
+          >
+            {sortedPlaylists.map((playlist) => (
+              <option key={playlist.id} value={playlist.id}>
+                {playlist.is_active ? 'Active: ' : ''}{playlist.name}
+              </option>
+            ))}
+          </select>
+          <Btn variant="accent" disabled={!selectedPlaylistId || addingToPlaylist === playlistPickerFor.id} onClick={handleAddToPlaylist}>
+            {addingToPlaylist === playlistPickerFor.id ? <><Spinner size={12} /> Adding...</> : 'Add to Playlist'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => setPlaylistPickerFor(null)}>Cancel</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BrowseLibraryPanel() {
+  const [query, setQuery] = useState('');
+  const [karaokeMode, setKaraokeMode] = useState<'all' | 'include' | 'exclude'>('exclude');
+  const [items, setItems] = useState<LibraryBrowseItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [playlistPickerFor, setPlaylistPickerFor] = useState<LibraryBrowseItem | null>(null);
+  const [selectedPlaylistId, setSelectedPlaylistId] = useState('');
+  const [addingToQueue, setAddingToQueue] = useState<string | null>(null);
+  const [addingToPlaylist, setAddingToPlaylist] = useState<string | null>(null);
+  const [statusMsg, setStatusMsg] = useState<{ text: string; ok: boolean } | null>(null);
+
+  useEffect(() => {
+    getPlaylists(PLAYER_ID)
+      .then((data) => {
+        setPlaylists(data);
+        const active = data.find((p) => p.is_active);
+        setSelectedPlaylistId(active?.id ?? data[0]?.id ?? '');
+      })
+      .catch(console.error);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      setIsLoading(true);
+      try {
+        let req = supabase
+          .from('r2_files')
+          .select('*')
+          .order('title', { ascending: true })
+          .limit(500);
+
+        const trimmed = query.trim().replace(/[%(),]/g, ' ');
+        if (trimmed) {
+          req = req.or(`title.ilike.%${trimmed}%,file_name.ilike.%${trimmed}%,artist.ilike.%${trimmed}%,object_key.ilike.%${trimmed}%`);
+        }
+        if (karaokeMode === 'include') {
+          req = req.ilike('object_key', '%karaoke%');
+        } else if (karaokeMode === 'exclude') {
+          req = req.not('object_key', 'ilike', '%karaoke%');
+        }
+
+        const { data, error } = await req;
+        if (error) throw error;
+        if (!cancelled) {
+          setItems(((data ?? []) as LibraryBrowseItem[]).map((item) => ({ ...item, source: 'cloudflare' as const })));
+        }
+      } catch (error) {
+        console.error('[BrowseLibrary] Failed to load R2 files:', error);
+        if (!cancelled) setItems([]);
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    load();
+    const sub = subscribeToTable<R2File>('r2_files', null, () => { load().catch(() => { }); });
+    return () => { cancelled = true; sub.unsubscribe(); };
+  }, [query, karaokeMode]);
+
+  const showStatus = (text: string, ok: boolean) => {
+    setStatusMsg({ text, ok });
+    window.setTimeout(() => setStatusMsg(null), 3500);
+  };
+
+  const handleAddToQueue = async (item: LibraryBrowseItem) => {
+    setAddingToQueue(item.id);
+    try {
+      const res = await callKioskHandler({
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        add_to_queue: true,
+        r2_file_id: item.id,
+      }) as { queue_id?: string; error?: string };
+      if (res?.error) throw new Error(res.error);
+      showStatus(`Added "${cleanDisplayText(item.title || item.file_name)}" to Priority Queue`, true);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to add to queue', false);
+    } finally {
+      setAddingToQueue(null);
+    }
+  };
+
+  const handleAddToPlaylist = async () => {
+    if (!playlistPickerFor || !selectedPlaylistId) return;
+    setAddingToPlaylist(playlistPickerFor.id);
+    try {
+      const res = await callKioskHandler({
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        add_to_queue: false,
+        r2_file_id: playlistPickerFor.id,
+      }) as { media_item_id?: string; error?: string };
+      if (res?.error) throw new Error(res.error);
+      if (!res.media_item_id) throw new Error('No media item returned');
+      await callPlaylistManager({
+        action: 'add_item',
+        playlist_id: selectedPlaylistId,
+        media_item_id: res.media_item_id,
+      });
+      const playlist = playlists.find((p) => p.id === selectedPlaylistId);
+      showStatus(`Added to "${playlist?.name ?? 'playlist'}"`, true);
+      setPlaylistPickerFor(null);
+    } catch (err) {
+      showStatus(err instanceof Error ? err.message : 'Failed to add to playlist', false);
+    } finally {
+      setAddingToPlaylist(null);
+    }
+  };
+
+  const sortedPlaylists = [
+    ...playlists.filter((p) => p.is_active),
+    ...playlists.filter((p) => !p.is_active).sort((a, b) => a.name.localeCompare(b.name)),
+  ];
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="Browse Library" subtitle="Explore Cloudflare R2 media and add items directly to queue or playlists" />
+
+      <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search title, artist, folder..."
+          style={{
+            flex: 1,
+            minWidth: 240,
+            padding: '9px 14px',
+            borderRadius: 10,
+            background: '#0d0d0d',
+            border: '1px solid rgba(255,255,255,0.12)',
+            color: '#fff',
+            fontFamily: 'var(--font-display)',
+            fontSize: 14,
+            outline: 'none',
+          }}
+        />
+        {([
+          ['exclude', 'Exclude Karaoke'],
+          ['include', 'Karaoke Only'],
+          ['all', 'All Files'],
+        ] as const).map(([mode, label]) => (
+          <Btn
+            key={mode}
+            variant={karaokeMode === mode ? 'accent' : 'ghost'}
+            onClick={() => setKaraokeMode(mode)}
+          >
+            {label}
+          </Btn>
+        ))}
+      </div>
+
+      {statusMsg && (
+        <div style={{
+          margin: '8px 24px 0',
+          padding: '8px 12px',
+          borderRadius: 8,
+          background: statusMsg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
+          color: statusMsg.ok ? '#4ade80' : '#f87171',
+          fontFamily: 'var(--font-mono)',
+          fontSize: 11,
+        }}>
+          {statusMsg.text}
+        </div>
+      )}
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '8px 24px 24px' }}>
+        {isLoading && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '24px 0', color: 'var(--muted)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            <Spinner size={16} /> Loading library...
+          </div>
+        )}
+
+        {!isLoading && items.length === 0 && (
+          <div style={{ padding: '24px 0', color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
+            No library items matched the current filters.
+          </div>
+        )}
+
+        {items.map((item) => {
+          const title = cleanDisplayText(item.title || item.file_name) || 'Unknown Title';
+          const artist = item.artist ? cleanDisplayText(item.artist) : null;
+          const isHovered = hoveredId === item.id;
+          const folderHint = item.object_key.split('/').slice(0, -1).join(' / ') || 'Library';
+
+          return (
+            <div
+              key={item.id}
+              onMouseEnter={() => setHoveredId(item.id)}
+              onMouseLeave={() => setHoveredId(null)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 12,
+                padding: '7px 10px',
+                borderRadius: 10,
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                background: isHovered ? 'rgba(255,255,255,0.04)' : 'transparent',
+                transition: 'background 0.12s',
+              }}
+            >
+              <div style={{ width: 48, height: 36, flexShrink: 0, borderRadius: 6, overflow: 'hidden', background: 'rgba(255,255,255,0.06)' }}>
+                {item.thumbnail ? (
+                  <img src={item.thumbnail} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>💾</div>
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {artist ? `${artist} - ${title}` : title}
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.35)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {folderHint}
+                </div>
+              </div>
+
+              {isHovered && (
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <Btn variant="accent" disabled={addingToQueue === item.id} onClick={() => handleAddToQueue(item)}>
+                    {addingToQueue === item.id ? <><Spinner size={12} /> Adding...</> : '+ Priority Queue'}
+                  </Btn>
+                  <Btn variant="ghost" disabled={addingToPlaylist === item.id} onClick={() => setPlaylistPickerFor(item)}>
+                    + Playlist
+                  </Btn>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {playlistPickerFor && (
+        <div style={{ padding: '16px 24px 20px', borderTop: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)', minWidth: 72 }}>Playlist</div>
+          <select
+            value={selectedPlaylistId}
+            onChange={(e) => setSelectedPlaylistId(e.target.value)}
+            style={{ minWidth: 240, padding: '9px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-display)', fontSize: 13, outline: 'none' }}
+          >
+            {sortedPlaylists.map((playlist) => (
+              <option key={playlist.id} value={playlist.id}>
+                {playlist.is_active ? 'Active: ' : ''}{playlist.name}
+              </option>
+            ))}
+          </select>
+          <Btn variant="accent" disabled={!selectedPlaylistId || addingToPlaylist === playlistPickerFor.id} onClick={handleAddToPlaylist}>
+            {addingToPlaylist === playlistPickerFor.id ? <><Spinner size={12} /> Adding...</> : 'Confirm'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => setPlaylistPickerFor(null)} disabled={addingToPlaylist === playlistPickerFor.id}>Cancel</Btn>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // QUEUE PANEL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -605,15 +1259,39 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const m = (item as any).media_item as any;
+  const sourceType = m?.source_type === 'cloudflare' ? 'cloudflare' : 'youtube';
+  const ytPlayability = m?.youtube_playability_status || m?.metadata?.youtube_playability_status || 'unknown';
+  const ytPlayabilityReason = m?.youtube_playability_reason || m?.metadata?.youtube_playability_reason || '';
+  const showYtWarning = sourceType === 'youtube' && ['embed_blocked', 'restricted', 'unavailable', 'invalid'].includes(ytPlayability);
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
-        background: 'rgba(255,255,255,0.025)', marginBottom: 4, border: '1px solid rgba(255,255,255,0.04)' }}>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, borderRadius: 11, padding: '9px 11px',
+        background: 'rgba(255,255,255,0.025)', marginBottom: 4, border: '1px solid rgba(255,255,255,0.04)'
+      }}>
         <button {...attributes} {...listeners} style={{ cursor: 'grab', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.2)', padding: 2, flexShrink: 0, fontSize: 14 }}>⋮⋮</button>
         {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 34, height: 34, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)' }}>{m?.artist || ''}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+            <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.artist || ''}</span>
+            <span style={{
+              fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
+              background: sourceType === 'cloudflare' ? 'rgba(34,197,94,0.1)' : 'rgba(251,191,36,0.1)',
+              color: sourceType === 'cloudflare' ? '#86efac' : '#fbbf24',
+              border: `1px solid ${sourceType === 'cloudflare' ? 'rgba(34,197,94,0.22)' : 'rgba(251,191,36,0.22)'}`
+            }}>
+              {sourceType === 'cloudflare' ? 'CACHED' : 'YOUTUBE'}
+            </span>
+            {showYtWarning && (
+              <span title={ytPlayabilityReason || 'Known YouTube iframe playback failure'} style={{
+                fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 999,
+                background: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: '1px solid rgba(248,113,113,0.28)'
+              }}>
+                {String(ytPlayability).replace(/_/g, ' ').toUpperCase()}
+              </span>
+            )}
+          </div>
         </div>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
         <button onClick={() => onRemove(item.id)} style={{ width: 26, height: 26, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12 }}>✕</button>
@@ -622,20 +1300,33 @@ function SortableQueueItem({ item, onRemove }: { item: QueueItem; onRemove: (id:
   );
 }
 
-function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling }: {
+function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling, onStartRadio, isGeneratingRadio }: {
   queue: QueueItem[]; status: PlayerStatus | null;
   onRemove: (id: string) => void; onReorder: (e: DragEndEvent) => void;
   onShuffle: () => void; isShuffling: boolean;
+  onStartRadio: (source: 'now_playing' | 'history' | 'playlist') => void;
+  isGeneratingRadio: boolean;
 }) {
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
-  const normalQ   = queue.filter(q => q.type === 'normal'   && q.media_item_id !== status?.current_media_id);
+  const normalQ = queue.filter(q => q.type === 'normal' && q.media_item_id !== status?.current_media_id);
   const priorityQ = queue.filter(q => q.type === 'priority' && q.media_item_id !== status?.current_media_id);
   const totalCount = normalQ.length + priorityQ.length;
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Queue" subtitle={`${totalCount} song${totalCount !== 1 ? 's' : ''}`}
-        actions={<Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>{isShuffling ? <><Spinner size={12} /> Shuffling…</> : '🔀 Shuffle'}</Btn>}
+        actions={<>
+          <Btn variant="ghost" onClick={() => onStartRadio('now_playing')} disabled={isGeneratingRadio || !status?.current_media_id}>
+            {isGeneratingRadio ? <><Spinner size={12} /> Building…</> : 'Radio: Now Playing'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => onStartRadio('history')} disabled={isGeneratingRadio}>
+            {isGeneratingRadio ? <><Spinner size={12} /> Building…</> : 'Radio: History'}
+          </Btn>
+          <Btn variant="ghost" onClick={() => onStartRadio('playlist')} disabled={isGeneratingRadio}>
+            {isGeneratingRadio ? <><Spinner size={12} /> Building…</> : 'Radio: Playlist'}
+          </Btn>
+          <Btn variant="accent" onClick={onShuffle} disabled={isShuffling}>{isShuffling ? <><Spinner size={12} /> Shuffling…</> : '🔀 Shuffle'}</Btn>
+        </>}
       />
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px' }}>
@@ -655,17 +1346,19 @@ function QueuePanel({ queue, status, onRemove, onReorder, onShuffle, isShuffling
             </div>
           ) : (
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            priorityQ.map(item => { const m = (item as any).media_item as any; return (
-              <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
-                {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
-                  <div style={{ fontSize: 11, color: '#60a5fa', marginTop: 2 }}>{item.requested_by || 'Kiosk'}</div>
+            priorityQ.map(item => {
+              const m = (item as any).media_item as any; return (
+                <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 10, borderRadius: 12, padding: '10px 12px', marginBottom: 6, background: 'rgba(59,130,246,0.07)', border: '1px solid rgba(59,130,246,0.15)' }}>
+                  {m?.thumbnail && <img src={m.thumbnail} alt="" style={{ width: 36, height: 36, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m?.title || 'Unknown'}</div>
+                    <div style={{ fontSize: 11, color: '#60a5fa', marginTop: 2 }}>{item.requested_by || 'Kiosk'}</div>
+                  </div>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
+                  <button onClick={() => onRemove(item.id)} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12, flexShrink: 0 }}>✕</button>
                 </div>
-                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(m?.duration)}</span>
-                <button onClick={() => onRemove(item.id)} style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(239,68,68,0.12)', border: 'none', cursor: 'pointer', color: '#f87171', fontSize: 12, flexShrink: 0 }}>✕</button>
-              </div>
-            );})
+              );
+            })
           )}
         </div>
 
@@ -705,12 +1398,12 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
   const [playlists, setPlaylists] = useState<(Playlist & { item_count?: number })[]>([]);
   const [playlistItems, setPlaylistItems] = useState<(PlaylistItem & { media_item?: MediaItem })[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [loadingId, setLoadingId]   = useState<string | null>(null);
-  const isLoadingPlaylistRef        = useRef(false); // prevents concurrent load_playlist calls
-  const [msg, setMsg]               = useState<{ text: string; ok: boolean } | null>(null);
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const isLoadingPlaylistRef = useRef(false); // prevents concurrent load_playlist calls
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [importYtId, setImportYtId] = useState('');
   const [importName, setImportName] = useState('');
-  const [importing, setImporting]   = useState(false);
+  const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ text: string; ok: boolean } | null>(null);
 
   const loadPlaylists = useCallback(async () => {
@@ -778,7 +1471,7 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
         <div style={{ maxWidth: 480, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)', borderRadius: 16, padding: 24 }}>
           {[{ label: 'YouTube Playlist ID *', value: importYtId, set: setImportYtId, ph: 'PLN9QqCogPsXJCgeL_iEgYnW6Rl_8nIUUH', mono: true },
-            { label: 'Playlist Name (optional)', value: importName, set: setImportName, ph: 'My Custom Playlist', mono: false }].map(f => (
+          { label: 'Playlist Name (optional)', value: importName, set: setImportName, ph: 'My Custom Playlist', mono: false }].map(f => (
             <div key={f.label} style={{ marginBottom: 16 }}>
               <label style={{ display: 'block', fontFamily: 'var(--font-display)', fontSize: 13, color: 'var(--muted)', marginBottom: 6 }}>{f.label}</label>
               <input value={f.value} onChange={e => f.set(e.target.value)} placeholder={f.ph}
@@ -786,15 +1479,19 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
             </div>
           ))}
           <button onClick={handleImport} disabled={importing || !importYtId.trim()}
-            style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: importing || !importYtId.trim() ? 'default' : 'pointer',
+            style={{
+              width: '100%', padding: '12px', borderRadius: 12, border: 'none', cursor: importing || !importYtId.trim() ? 'default' : 'pointer',
               background: 'var(--accent)', color: '#000', fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 700,
-              opacity: importing || !importYtId.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              opacity: importing || !importYtId.trim() ? 0.5 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+            }}>
             {importing ? <><Spinner size={16} /> Importing…</> : '📥 Import Playlist'}
           </button>
-          {importResult && <div style={{ marginTop: 14, padding: '10px 14px', borderRadius: 9,
+          {importResult && <div style={{
+            marginTop: 14, padding: '10px 14px', borderRadius: 9,
             background: importResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
             border: `1px solid ${importResult.ok ? 'rgba(34,197,94,0.25)' : 'rgba(239,68,68,0.25)'}`,
-            color: importResult.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 12 }}>{importResult.text}</div>}
+            color: importResult.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 12
+          }}>{importResult.text}</div>}
         </div>
       </div>
     </div>
@@ -812,9 +1509,11 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       <PanelHeader title="Playlists" subtitle={`${playlists.length} playlists · ${totalSongs.toLocaleString()} total songs`}
         actions={<Btn variant="accent" onClick={handleCreate}>＋ New Playlist</Btn>}
       />
-      {msg && <div style={{ margin: '8px 24px 0', padding: '8px 12px', borderRadius: 8,
+      {msg && <div style={{
+        margin: '8px 24px 0', padding: '8px 12px', borderRadius: 8,
         background: msg.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-        color: msg.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 11 }}>{msg.text}</div>}
+        color: msg.ok ? '#4ade80' : '#f87171', fontFamily: 'var(--font-mono)', fontSize: 11
+      }}>{msg.text}</div>}
       {active && (
         <div style={{ margin: '8px 24px 0', padding: '8px 14px', borderRadius: 8, background: 'var(--accent-dim)', border: '1px solid var(--accent-border)', fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)' }}>
           ▶ Currently Active: {active.name}
@@ -823,12 +1522,14 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
         {sorted.map(playlist => {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const isActive   = (playlist as any).is_active;
+          const isActive = (playlist as any).is_active;
           const isExpanded = expandedId === playlist.id;
           return (
-            <div key={playlist.id} style={{ marginBottom: 6, borderRadius: 13,
+            <div key={playlist.id} style={{
+              marginBottom: 6, borderRadius: 13,
               background: isActive ? 'var(--accent-dim)' : 'rgba(255,255,255,0.025)',
-              border: `1px solid ${isActive ? 'var(--accent-border)' : 'rgba(255,255,255,0.06)'}` }}>
+              border: `1px solid ${isActive ? 'var(--accent-border)' : 'rgba(255,255,255,0.06)'}`
+            }}>
               <div onClick={() => setExpandedId(isExpanded ? null : playlist.id)}
                 style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 14px', cursor: 'pointer' }}>
                 <div style={{ width: 40, height: 40, borderRadius: 10, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, background: isActive ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.06)' }}>🎵</div>
@@ -851,16 +1552,16 @@ function PlaylistsPanel({ view }: { view: ViewId }) {
                   {playlistItems.length === 0
                     ? <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '8px 0' }}>No items loaded yet</div>
                     : playlistItems.slice(0, 50).map((item, i) => (
-                        <div key={item.id} style={{ display: 'flex', gap: 9, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' }}>
-                          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.2)', width: 28 }}>{i + 1}</span>
-                          <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {cleanDisplayText((item.media_item as any)?.title) || 'Unknown'}
-                            {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
-                            {(item.media_item as any)?.artist ? ` · ${cleanDisplayText((item.media_item as any).artist)}` : ''}
-                          </div>
+                      <div key={item.id} style={{ display: 'flex', gap: 9, padding: '5px 0', borderBottom: '1px solid rgba(255,255,255,0.04)', alignItems: 'center' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.2)', width: 28 }}>{i + 1}</span>
+                        <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                          {cleanDisplayText((item.media_item as any)?.title) || 'Unknown'}
+                          {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
+                          {(item.media_item as any)?.artist ? ` · ${cleanDisplayText((item.media_item as any).artist)}` : ''}
                         </div>
-                      ))
+                      </div>
+                    ))
                   }
                 </div>
               )}
@@ -893,12 +1594,18 @@ function SettingsRow({ label, desc, children }: { label: string; desc?: string; 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: PlayerSettings | null; prefs: Prefs }) {
-  const [local, setLocal]     = useState<PlayerSettings | null>(null);
+  const [local, setLocal] = useState<PlayerSettings | null>(null);
   const [credits, setCredits] = useState<number | null>(null);
+  const [connectedEndpoints, setConnectedEndpoints] = useState<PlayerEndpoint[]>([]);
   const [creditsLoading, setCreditsLoading] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
-  const [saving, setSaving]   = useState(false);
-  const [localMediaScanning, setLocalMediaScanning]     = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [resettingPriority, setResettingPriority] = useState(false);
+  const [priorityResetDone, setPriorityResetDone] = useState(false);
+  const [hoveredEndpointId, setHoveredEndpointId] = useState<string | null>(null);
+  const [identifyingEndpointId, setIdentifyingEndpointId] = useState<string | null>(null);
+  const [promotingEndpointId, setPromotingEndpointId] = useState<string | null>(null);
+  const [localMediaScanning, setLocalMediaScanning] = useState(false);
   const [localMediaScanResult, setLocalMediaScanResult] = useState<{ count: number; path: string } | null>(null);
 
   useEffect(() => { setLocal(settings ? { ...settings } : null); }, [settings]);
@@ -910,6 +1617,10 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       const total = await getTotalCredits(PLAYER_ID).catch(() => null);
       if (total !== null) setCredits(total);
     });
+    return () => sub.unsubscribe();
+  }, []);
+  useEffect(() => {
+    const sub = subscribeToPlayerEndpoints(PLAYER_ID, setConnectedEndpoints);
     return () => sub.unsubscribe();
   }, []);
 
@@ -926,8 +1637,27 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     finally { setSaving(false); }
   };
 
-  const handleSavePlayback = () => local ? saveFields({ shuffle: local.shuffle, loop: local.loop, volume: local.volume, karaoke_mode: local.karaoke_mode, player_mode: local.player_mode }) : Promise.resolve();
-  const handleSaveKiosk    = () => local ? saveFields({ freeplay: local.freeplay, coin_per_song: local.coin_per_song, search_enabled: local.search_enabled, max_queue_size: local.max_queue_size, priority_queue_limit: local.priority_queue_limit, local_media_path: (local as any).local_media_path ?? null } as Partial<PlayerSettings>) : Promise.resolve();
+  const handleSavePlayback = () => local ? saveFields({
+    shuffle: local.shuffle,
+    loop: local.loop,
+    volume: local.volume,
+    karaoke_mode: local.karaoke_mode,
+    player_mode: local.player_mode,
+    silence_skip_enabled: local.silence_skip_enabled ?? false,
+    silence_skip_tail_seconds: local.silence_skip_tail_seconds ?? 20,
+    silence_skip_duration_ms: local.silence_skip_duration_ms ?? 3000,
+    silence_skip_threshold: local.silence_skip_threshold ?? 0.01,
+  }) : Promise.resolve();
+  const handleSaveKiosk = () => local ? saveFields({
+    freeplay: local.freeplay,
+    coin_per_song: local.coin_per_song,
+    search_enabled: local.search_enabled,
+    max_queue_size: local.max_queue_size,
+    priority_queue_limit: local.priority_queue_limit,
+    local_media_path: (local as any).local_media_path ?? null,
+    cloudflare_enabled: local.cloudflare_enabled ?? false,
+    cloudflare_r2_public_url: local.cloudflare_r2_public_url ?? null,
+  } as Partial<PlayerSettings>) : Promise.resolve();
   const handleSaveBranding = () => local ? saveFields({ branding: local.branding }) : Promise.resolve();
 
   const handleToggle = async (field: keyof PlayerSettings) => {
@@ -951,8 +1681,16 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     catch (e) { console.error(e); } finally { setCreditsLoading(false); }
   };
   const handleResetPriorityPlayer = async () => {
-    try { await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority' }); }
+    if (resettingPriority) return;
+    setResettingPriority(true);
+    setPriorityResetDone(false);
+    try {
+      await callPlayerControl({ player_id: PLAYER_ID, action: 'reset_priority', initiator: 'admin_ui' });
+      setPriorityResetDone(true);
+      setTimeout(() => setPriorityResetDone(false), 2500);
+    }
     catch (e) { console.error(e); }
+    finally { setResettingPriority(false); }
   };
 
   const handleScanLocalMedia = async () => {
@@ -982,6 +1720,68 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     }
   };
 
+  const endpointIsActive = useCallback((endpoint: PlayerEndpoint) => {
+    if (endpoint.status !== 'connected') return false;
+    const lastSeen = endpoint.last_seen ? new Date(endpoint.last_seen).getTime() : 0;
+    return lastSeen > Date.now() - 45000;
+  }, []);
+
+  const formatEndpointLabel = useCallback((endpoint: PlayerEndpoint) => {
+    const source = endpoint.origin || 'Unknown origin';
+    try {
+      const parsed = new URL(source);
+      return parsed.host || parsed.origin;
+    } catch {
+      return source.replace(/^https?:\/\//, '');
+    }
+  }, []);
+
+  const formatLastSeen = useCallback((value: string | null) => {
+    if (!value) return 'No heartbeat';
+    const deltaSeconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+    if (deltaSeconds < 2) return 'just now';
+    if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
+    const deltaMinutes = Math.round(deltaSeconds / 60);
+    return `${deltaMinutes}m ago`;
+  }, []);
+
+  const handleIdentifyEndpoint = async (endpointId: string) => {
+    if (identifyingEndpointId || promotingEndpointId) return;
+    setIdentifyingEndpointId(endpointId);
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'identify_endpoint',
+        target_endpoint_id: endpointId,
+        initiator: 'admin_ui',
+        reason: 'identify_player_button',
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIdentifyingEndpointId(null);
+    }
+  };
+
+  const handleSetMasterEndpoint = async (endpoint: PlayerEndpoint) => {
+    if (promotingEndpointId || identifyingEndpointId) return;
+    if (endpoint.role !== 'slave' || !endpointIsActive(endpoint)) return;
+    setPromotingEndpointId(endpoint.endpoint_id);
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        action: 'set_master_endpoint',
+        target_endpoint_id: endpoint.endpoint_id,
+        initiator: 'admin_ui',
+        reason: 'set_master_button',
+      });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setPromotingEndpointId(null);
+    }
+  };
+
   if (!local) return <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner /></div>;
 
   const errBlock = error && (
@@ -997,43 +1797,246 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     </div>
   );
 
-  if (view === 'settings-playback') return wrap('Playback Settings', 'Queue and player behaviour', <>
-    <SettingsRow label="Shuffle Playlist when loaded"  desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle}      onChange={() => handleToggle('shuffle')} /></SettingsRow>
-    <SettingsRow label="Loop Playlist"    desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop}         onChange={() => handleToggle('loop')} /></SettingsRow>
-    {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
-    <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
-      <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
-    </SettingsRow>
-    {'player_mode' in local && (
-      <SettingsRow label="Player Mode" desc="iFrame embeds YouTube directly; ytm_desktop routes playback through YTM Desktop Companion (localhost:9863)">
-        <select
-          value={local.player_mode ?? 'iframe'}
-          onChange={e => set('player_mode', e.target.value as 'iframe' | 'ytm_desktop')}
-          style={{ padding: '7px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', cursor: 'pointer' }}
-        >
-          <option value="iframe">iFrame Player</option>
-          <option value="ytm_desktop">ytm_desktop API</option>
-        </select>
+  if (view === 'settings-playback') {
+    const activeEndpoints = [...connectedEndpoints]
+      .filter(endpointIsActive)
+      .sort((a, b) => {
+        if (a.role !== b.role) return a.role === 'master' ? -1 : 1;
+        return new Date(b.last_seen || b.connected_at).getTime() - new Date(a.last_seen || a.connected_at).getTime();
+      });
+
+    const leftContent = <>
+      <SettingsRow label="Shuffle Playlist when loaded" desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle} onChange={() => handleToggle('shuffle')} /></SettingsRow>
+      <SettingsRow label="Loop Playlist" desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop} onChange={() => handleToggle('loop')} /></SettingsRow>
+      {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
+      <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
+        <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
       </SettingsRow>
-    )}
-  </>, handleSavePlayback);
+      {'player_mode' in local && (
+        <SettingsRow label="Player Mode" desc="iFrame embeds YouTube directly; ytm_desktop routes playback through YTM Desktop Companion (localhost:9863)">
+          <select
+            value={local.player_mode ?? 'iframe'}
+            onChange={e => set('player_mode', e.target.value as 'iframe' | 'ytm_desktop')}
+            style={{ padding: '7px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none', cursor: 'pointer' }}
+          >
+            <option value="iframe">iFrame Player</option>
+            <option value="ytm_desktop">ytm_desktop API</option>
+          </select>
+        </SettingsRow>
+      )}
+      {'silence_skip_enabled' in local && (
+        <>
+          <SettingsRow label="Silence Detection" desc="For Cloudflare/local media, skip long silent tails near the end of a track">
+            <Toggle checked={!!local.silence_skip_enabled} onChange={() => handleToggle('silence_skip_enabled' as keyof PlayerSettings)} />
+          </SettingsRow>
+          {local.silence_skip_enabled && (
+            <>
+              <SettingsRow label="Silence Tail Window" desc="Only monitor audio during the final N seconds">
+                <input
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={local.silence_skip_tail_seconds ?? 20}
+                  onChange={e => set('silence_skip_tail_seconds', Number(e.target.value))}
+                  style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                />
+              </SettingsRow>
+              <SettingsRow label="Silence Duration (ms)" desc="Continuous silence required before auto-skip">
+                <input
+                  type="number"
+                  min={500}
+                  max={10000}
+                  step={100}
+                  value={local.silence_skip_duration_ms ?? 3000}
+                  onChange={e => set('silence_skip_duration_ms', Number(e.target.value))}
+                  style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                />
+              </SettingsRow>
+              <SettingsRow label="Silence Threshold" desc="Lower values are stricter; 0.01 is a conservative starting point">
+                <input
+                  type="number"
+                  min={0.001}
+                  max={0.1}
+                  step={0.001}
+                  value={local.silence_skip_threshold ?? 0.01}
+                  onChange={e => set('silence_skip_threshold', Number(e.target.value))}
+                  style={{ width: 88, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }}
+                />
+              </SettingsRow>
+            </>
+          )}
+        </>
+      )}
+      <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
+          Clears priority designation. The next player to initialise will claim it.
+        </div>
+        <Btn
+          variant={priorityResetDone ? 'accent' : 'ghost'}
+          onClick={handleResetPriorityPlayer}
+          disabled={resettingPriority || !!promotingEndpointId}
+          style={priorityResetDone ? {
+            background: 'rgba(34,197,94,0.18)',
+            color: '#4ade80',
+            border: '1px solid rgba(34,197,94,0.38)',
+          } : undefined}
+        >
+          {resettingPriority ? <><Spinner size={12} /> Resetting…</> : priorityResetDone ? '✓ Priority Reset' : '🔄 Reset Priority Player'}
+        </Btn>
+      </div>
+      <div style={{ marginTop: 20 }}><SaveBtn onSave={handleSavePlayback} loading={saving} /></div>
+    </>;
+
+    return (
+      <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <PanelHeader title="Playback Settings" subtitle="Queue and player behaviour" />
+        <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(420px, 520px) minmax(380px, 1fr)', gap: 24, alignItems: 'start' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ maxWidth: 520 }}>{errBlock}{leftContent}</div>
+            </div>
+            <div style={{ minWidth: 0, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+                <div>
+                  <div style={{ fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 600, color: '#fff' }}>Connected Players</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
+                    Realtime endpoint roster. Hover a row to identify or promote a live player.
+                  </div>
+                </div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
+                  {activeEndpoints.length} connected
+                </div>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 1.1fr) 120px 120px minmax(190px, 1fr)', gap: 12, padding: '0 0 10px', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                {['Endpoint', 'Role', 'Status', 'Actions'].map(label => (
+                  <div key={label} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{label}</div>
+                ))}
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {activeEndpoints.length === 0 ? (
+                  <div style={{ padding: '18px 14px', borderRadius: 12, border: '1px dashed rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.45)', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+                    No connected player endpoints detected.
+                  </div>
+                ) : activeEndpoints.map(endpoint => {
+                  const isHovered = hoveredEndpointId === endpoint.endpoint_id;
+                  const isMaster = endpoint.role === 'master';
+                  const canPromote = endpoint.role === 'slave' && endpointIsActive(endpoint);
+                  const identifyBusy = identifyingEndpointId === endpoint.endpoint_id;
+                  const promoteBusy = promotingEndpointId === endpoint.endpoint_id;
+                  return (
+                    <div
+                      key={endpoint.endpoint_id}
+                      onMouseEnter={() => setHoveredEndpointId(endpoint.endpoint_id)}
+                      onMouseLeave={() => setHoveredEndpointId(current => current === endpoint.endpoint_id ? null : current)}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(180px, 1.1fr) 120px 120px minmax(190px, 1fr)',
+                        gap: 12,
+                        alignItems: 'center',
+                        padding: '12px 0',
+                        borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 500, color: '#fff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {formatEndpointLabel(endpoint)}
+                        </div>
+                        <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>
+                          {endpoint.endpoint_id.slice(0, 8)} · seen {formatLastSeen(endpoint.last_seen)}
+                        </div>
+                      </div>
+                      <div>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: 74,
+                          padding: '5px 10px',
+                          borderRadius: 999,
+                          fontFamily: 'var(--font-display)',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: isMaster ? '#fbbf24' : '#93c5fd',
+                          background: isMaster ? 'rgba(251,191,36,0.12)' : 'rgba(59,130,246,0.12)',
+                          border: `1px solid ${isMaster ? 'rgba(251,191,36,0.24)' : 'rgba(59,130,246,0.24)'}`,
+                        }}>
+                          {isMaster ? 'Master' : 'Slave'}
+                        </span>
+                      </div>
+                      <div>
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          minWidth: 90,
+                          padding: '5px 10px',
+                          borderRadius: 999,
+                          fontFamily: 'var(--font-display)',
+                          fontSize: 12,
+                          fontWeight: 600,
+                          color: '#4ade80',
+                          background: 'rgba(34,197,94,0.12)',
+                          border: '1px solid rgba(34,197,94,0.24)',
+                        }}>
+                          Connected
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-start', minHeight: 34 }}>
+                        {isHovered ? (
+                          <>
+                            <Btn
+                              variant="ghost"
+                              onClick={() => handleIdentifyEndpoint(endpoint.endpoint_id)}
+                              disabled={!!identifyingEndpointId || !!promotingEndpointId}
+                              style={{ padding: '6px 10px', fontSize: 12 }}
+                            >
+                              {identifyBusy ? <><Spinner size={11} /> Identifying…</> : 'IDENTIFY PLAYER'}
+                            </Btn>
+                            {canPromote && (
+                              <Btn
+                                variant="accent"
+                                onClick={() => handleSetMasterEndpoint(endpoint)}
+                                disabled={!!identifyingEndpointId || !!promotingEndpointId}
+                                style={{ padding: '6px 10px', fontSize: 12 }}
+                              >
+                                {promoteBusy ? <><Spinner size={11} /> Setting…</> : 'SET AS MASTER'}
+                              </Btn>
+                            )}
+                          </>
+                        ) : (
+                          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.22)' }}>
+                            {isMaster ? 'Current master endpoint' : 'Hover for actions'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (view === 'settings-kiosk') return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <PanelHeader title="Kiosk Settings" subtitle="Request, credits and coin acceptor configuration" />
       <div style={{ flex: 1, overflowY: 'scroll', padding: 24 }}>
         <div style={{ maxWidth: 480 }}>{errBlock}
-          <SettingsRow label="Free Play"              desc="Allow requests without credits"><Toggle checked={!!local.freeplay}        onChange={() => handleToggle('freeplay')} /></SettingsRow>
-          <SettingsRow label="Search Enabled"         desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled}  onChange={() => handleToggle('search_enabled')} /></SettingsRow>
+          <SettingsRow label="Free Play" desc="Allow requests without credits"><Toggle checked={!!local.freeplay} onChange={() => handleToggle('freeplay')} /></SettingsRow>
+          <SettingsRow label="Search Enabled" desc="Allow kiosk users to search songs"><Toggle checked={!!local.search_enabled} onChange={() => handleToggle('search_enabled')} /></SettingsRow>
           {'kiosk_show_virtual_coin_button' in local && (
             <SettingsRow label="Show Virtual Coin Button" desc="Display INSERT COIN button on kiosk">
               <Toggle checked={!!local.kiosk_show_virtual_coin_button} onChange={() => handleToggle('kiosk_show_virtual_coin_button' as keyof PlayerSettings)} />
             </SettingsRow>
           )}
           {[{ label: 'Credits per Song', key: 'coin_per_song', desc: 'credits required per request' },
-            { label: 'Max Queue Size',   key: 'max_queue_size', desc: 'max songs in normal queue' },
-            { label: 'Priority Queue Limit', key: 'priority_queue_limit', desc: 'max priority request slots' }
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { label: 'Max Queue Size', key: 'max_queue_size', desc: 'max songs in normal queue' },
+          { label: 'Priority Queue Limit', key: 'priority_queue_limit', desc: 'max priority request slots' }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
           ].map(({ label, key, desc }) => (<SettingsRow key={key} label={label} desc={desc}>
             <input type="number" min={1} value={(local as any)[key] ?? 1} onChange={e => set(key as keyof PlayerSettings, Number(e.target.value))}
               style={{ width: 72, textAlign: 'center', padding: '7px 10px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 13, outline: 'none' }} />
@@ -1041,6 +2044,11 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
           {(local as any).local_media_enabled !== undefined && (
             <SettingsRow label="Include Local Media from this device" desc="Play video files from a local folder alongside YouTube content">
               <Toggle checked={!!(local as any).local_media_enabled} onChange={() => handleToggle('local_media_enabled' as keyof PlayerSettings)} />
+            </SettingsRow>
+          )}
+          {'cloudflare_enabled' in local && (
+            <SettingsRow label="Cloudflare R2 Search" desc="Include Cloudflare library results in kiosk and admin search">
+              <Toggle checked={!!local.cloudflare_enabled} onChange={() => handleToggle('cloudflare_enabled' as keyof PlayerSettings)} />
             </SettingsRow>
           )}
           <div style={{ marginTop: 20 }}><SaveBtn onSave={handleSaveKiosk} loading={saving} /></div>
@@ -1065,9 +2073,11 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
                 </Btn>
               </div>
               {localMediaScanResult && (
-                <div style={{ marginTop: 10, padding: '10px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                <div style={{
+                  marginTop: 10, padding: '10px 14px', borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   background: localMediaScanResult.count > 0 ? 'rgba(34,197,94,0.1)' : 'rgba(251,191,36,0.1)',
-                  border: `1px solid ${localMediaScanResult.count > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'}` }}>
+                  border: `1px solid ${localMediaScanResult.count > 0 ? 'rgba(74,222,128,0.3)' : 'rgba(251,191,36,0.3)'}`
+                }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: localMediaScanResult.count > 0 ? '#4ade80' : '#fbbf24' }}>
                     {localMediaScanResult.count < 0
                       ? `⚠ ${localMediaScanResult.path}`
@@ -1081,6 +2091,22 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
                   </button>
                 </div>
               )}
+            </div>
+          )}
+
+          {local.cloudflare_enabled && (
+            <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 10 }}>Cloudflare R2</div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
+                Public base URL used for bucket playback and thumbnails.
+              </div>
+              <input
+                type="text"
+                placeholder="https://pub-...r2.dev"
+                value={local.cloudflare_r2_public_url ?? ''}
+                onChange={e => set('cloudflare_r2_public_url', e.target.value)}
+                style={{ width: '100%', padding: '9px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }}
+              />
             </div>
           )}
 
@@ -1099,21 +2125,16 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
           {'kiosk_coin_acceptor_enabled' in local && (
             <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
               <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 10 }}>Coin Acceptor Hardware</div>
-              <button onClick={() => handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings)} style={{ padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
+              <button onClick={() => handleToggle('kiosk_coin_acceptor_enabled' as keyof PlayerSettings)} style={{
+                padding: '9px 18px', borderRadius: 10, border: 'none', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600,
                 background: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? 'rgba(34,197,94,0.18)' : 'rgba(251,191,36,0.15)') : 'rgba(59,130,246,0.15)',
-                color:      local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80'              : '#fbbf24')                  : '#60a5fa' }}>
+                color: local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '#4ade80' : '#fbbf24') : '#60a5fa'
+              }}>
                 {local.kiosk_coin_acceptor_enabled ? (local.kiosk_coin_acceptor_connected ? '🟢 Connected' : '🟡 Connecting…') : '🔵 Enable Coin Acceptor'}
               </button>
               {local.kiosk_coin_acceptor_device_id && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 8 }}>Device: {local.kiosk_coin_acceptor_device_id}</div>}
             </div>
           )}
-
-          {/* Priority player reset */}
-          <div style={{ marginTop: 16, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
-            <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>Clears priority designation. The next player to initialise will claim it.</div>
-            <Btn variant="ghost" onClick={handleResetPriorityPlayer}>🔄 Reset Priority Player</Btn>
-          </div>
         </div>
       </div>
     </div>
@@ -1133,10 +2154,12 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       <div style={{ display: 'flex', gap: 8 }}>
         {['dark', 'light'].map(t => (
           <button key={t} onClick={() => set('branding', { ...local.branding, theme: t })}
-            style={{ flex: 1, padding: '9px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13,
+            style={{
+              flex: 1, padding: '9px', borderRadius: 10, cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 13,
               border: `1px solid ${local.branding?.theme === t ? 'var(--accent-border)' : 'rgba(255,255,255,0.08)'}`,
               background: local.branding?.theme === t ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)',
-              color: local.branding?.theme === t ? 'var(--accent)' : 'rgba(255,255,255,0.4)' }}>
+              color: local.branding?.theme === t ? 'var(--accent)' : 'rgba(255,255,255,0.4)'
+            }}>
             {t === 'dark' ? '🌙 Dark' : '☀️ Light'}
           </button>
         ))}
@@ -1160,9 +2183,9 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
   input?: { label: string; placeholder: string; required?: boolean };
 }) {
   const [inputVal, setInputVal] = useState('');
-  const [running, setRunning]   = useState(false);
-  const [logs, setLogs]         = useState<ScriptLog[]>([]);
-  const [done, setDone]         = useState(false);
+  const [running, setRunning] = useState(false);
+  const [logs, setLogs] = useState<ScriptLog[]>([]);
+  const [done, setDone] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((entry: ScriptLog) => {
@@ -1197,8 +2220,8 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
           {done
             ? <Btn variant="ghost" onClick={() => { setLogs([]); setDone(false); setInputVal(''); }}>Reset</Btn>
             : <Btn variant="solid" onClick={handleRun} disabled={running || (!!input?.required && !inputVal.trim())}>
-                {running ? <><Spinner size={12} /> Running…</> : '▶ Run'}
-              </Btn>
+              {running ? <><Spinner size={12} /> Running…</> : '▶ Run'}
+            </Btn>
           }
         </div>
       </div>
@@ -1221,7 +2244,7 @@ function ScriptCard({ icon, name, desc, category, onRun, input }: {
   );
 }
 
-function ScriptsPanel() {
+function ScriptsPanel({ user }: { user: AuthUser }) {
   const now = () => new Date().toLocaleTimeString();
   const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
 
@@ -1292,6 +2315,19 @@ function ScriptsPanel() {
     const { data, error } = await supabase.functions.invoke('youtube-scraper', { body: { url } });
     if (error) throw error;
     log({ ts: now(), text: `✓ Scraped ${(data as { count?: number })?.count ?? '?'} items.`, level: 'ok' });
+  };
+
+  const runRefreshAllConnections = async (_: string, log: (e: ScriptLog) => void) => {
+    log({ ts: now(), text: 'Broadcasting refresh prompt to connected admin consoles…', level: 'info' });
+    const broadcast = await createAdminBroadcast({
+      event_type: 'refresh_prompt',
+      payload: {
+        title: 'Update available',
+        message: 'A newer Obie build is available. Refresh this screen now. Connected admin consoles and player screens should all be refreshed.',
+      },
+      created_by: user.id,
+    });
+    log({ ts: now(), text: `✓ Refresh prompt sent (event #${broadcast.id}).`, level: 'ok' });
   };
 
   // deduplicate-all-playlists: remove items where the same media_item_id
@@ -1374,6 +2410,10 @@ function ScriptsPanel() {
           input={{ label: 'YouTube URL or Playlist ID', placeholder: 'https://www.youtube.com/playlist?list=PL…', required: true }}
           onRun={runScrapeYtScraper}
         />
+        <ScriptCard icon="🔄" name="refresh-all-connections" category="Admin"
+          desc="Prompt connected admin console and player instances to refresh and load the latest deployed build."
+          onRun={runRefreshAllConnections}
+        />
       </div>
     </div>
   );
@@ -1386,7 +2426,7 @@ function ScriptsPanel() {
 function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
   const { accent, setAccent, fsIdx, setFsIdx } = prefs;
   const [hexInput, setHexInput] = useState(accent.replace('#', ''));
-  const [fsSaved,  setFsSaved]  = useState(false);
+  const [fsSaved, setFsSaved] = useState(false);
   const [colSaved, setColSaved] = useState(false);
 
   useEffect(() => { setHexInput(accent.replace('#', '')); }, [accent]);
@@ -1394,7 +2434,7 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
   const applyHex = (hex: string) => { if (/^[0-9a-fA-F]{6}$/.test(hex)) setAccent('#' + hex); };
 
   const handleFontSize = (idx: number) => { setFsIdx(idx); setFsSaved(true); setTimeout(() => setFsSaved(false), 2000); };
-  const handleColour   = (hex: string) => { setAccent(hex); setHexInput(hex.replace('#', '')); setColSaved(true); setTimeout(() => setColSaved(false), 2000); };
+  const handleColour = (hex: string) => { setAccent(hex); setHexInput(hex.replace('#', '')); setColSaved(true); setTimeout(() => setColSaved(false), 2000); };
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -1412,9 +2452,11 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
               </div>
               <div style={{ display: 'flex', gap: 6 }}>
                 {FS_SCALES.map((s, i) => (
-                  <button key={i} onClick={() => handleFontSize(i)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '7px 9px', borderRadius: 10, cursor: 'pointer',
+                  <button key={i} onClick={() => handleFontSize(i)} style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '7px 9px', borderRadius: 10, cursor: 'pointer',
                     border: `1px solid ${fsIdx === i ? 'var(--accent-border)' : 'rgba(255,255,255,0.09)'}`,
-                    background: fsIdx === i ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)' }}>
+                    background: fsIdx === i ? 'var(--accent-dim)' : 'rgba(255,255,255,0.04)'
+                  }}>
                     <span style={{ fontFamily: 'var(--font-display)', fontSize: 10 + i * 2, lineHeight: 1, color: fsIdx === i ? 'var(--accent)' : 'rgba(255,255,255,0.5)' }}>Aa</span>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, color: 'rgba(255,255,255,0.3)' }}>{s.label}</span>
                   </button>
@@ -1431,7 +2473,7 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
               {/* Colour wheel */}
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'conic-gradient(hsl(0,100%,50%),hsl(60,100%,50%),hsl(120,100%,50%),hsl(180,100%,50%),hsl(240,100%,50%),hsl(300,100%,50%),hsl(360,100%,50%))', border: `3px solid ${accent}60`, cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
-                  <input type="color" value={accent} onChange={e => { setAccent(e.target.value); setHexInput(e.target.value.replace('#','')); }} onBlur={e => handleColour(e.target.value)}
+                  <input type="color" value={accent} onChange={e => { setAccent(e.target.value); setHexInput(e.target.value.replace('#', '')); }} onBlur={e => handleColour(e.target.value)}
                     style={{ opacity: 0, position: 'absolute', inset: 0, width: '100%', height: '100%', cursor: 'pointer' }} />
                 </div>
                 <div style={{ position: 'absolute', bottom: -2, right: -2, width: 16, height: 16, borderRadius: '50%', background: accent, border: '2px solid #111', boxShadow: `0 0 8px ${accent}60` }} />
@@ -1442,7 +2484,7 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>#</span>
                   <input value={hexInput}
-                    onChange={e => { const v = e.target.value.replace(/[^0-9a-fA-F]/g,'').slice(0,6); setHexInput(v); applyHex(v); }}
+                    onChange={e => { const v = e.target.value.replace(/[^0-9a-fA-F]/g, '').slice(0, 6); setHexInput(v); applyHex(v); }}
                     onBlur={() => { if (hexInput.length === 6) handleColour('#' + hexInput); }}
                     style={{ width: 90, padding: '5px 9px', borderRadius: 8, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.12)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }} />
                   <button onClick={() => handleColour('#f59e0b')} style={{ padding: '5px 10px', borderRadius: 8, background: 'rgba(255,255,255,0.07)', border: 'none', color: 'rgba(255,255,255,0.5)', cursor: 'pointer', fontFamily: 'var(--font-display)', fontSize: 11 }}>Reset</button>
@@ -1456,9 +2498,11 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
               {PRESET_COLOURS.map(p => (
                 <button key={p.hex} title={p.name} onClick={() => handleColour(p.hex)}
-                  style={{ width: 30, height: 30, borderRadius: 8, background: p.hex, cursor: 'pointer',
+                  style={{
+                    width: 30, height: 30, borderRadius: 8, background: p.hex, cursor: 'pointer',
                     border: `2px solid ${accent.toLowerCase() === p.hex.toLowerCase() ? '#fff' : 'transparent'}`,
-                    transform: accent.toLowerCase() === p.hex.toLowerCase() ? 'scale(1.15)' : 'scale(1)', transition: 'transform 0.12s' }} />
+                    transform: accent.toLowerCase() === p.hex.toLowerCase() ? 'scale(1.15)' : 'scale(1)', transition: 'transform 0.12s'
+                  }} />
               ))}
             </div>
 
@@ -1483,10 +2527,10 @@ function ConsolePrefsPanel({ prefs }: { prefs: Prefs }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LogsPanel() {
-  const [logs, setLogs]       = useState<SystemLog[]>([]);
+  const [logs, setLogs] = useState<SystemLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter]   = useState<'all' | 'info' | 'warn' | 'error'>('all');
-  const [search, setSearch]   = useState('');
+  const [filter, setFilter] = useState<'all' | 'info' | 'warn' | 'error'>('all');
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     const loadLogs = async () => {
@@ -1519,8 +2563,8 @@ function LogsPanel() {
 
   const lStyle = (s: string) => {
     if (s === 'error') return { bg: 'rgba(239,68,68,0.1)', color: '#f87171', border: 'rgba(239,68,68,0.2)' };
-    if (s === 'warn')  return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.2)' };
-    return                   { bg: 'rgba(59,130,246,0.1)',  color: '#60a5fa', border: 'rgba(59,130,246,0.2)' };
+    if (s === 'warn') return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.2)' };
+    return { bg: 'rgba(59,130,246,0.1)', color: '#60a5fa', border: 'rgba(59,130,246,0.2)' };
   };
 
   return (
@@ -1532,13 +2576,15 @@ function LogsPanel() {
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search…"
               style={{ background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 11, width: 130 }} />
           </div>
-          {(['all','info','warn','error'] as const).map(lv => {
+          {(['all', 'info', 'warn', 'error'] as const).map(lv => {
             const s = lStyle(lv); const active = filter === lv;
             return (
-              <button key={lv} onClick={() => setFilter(lv)} style={{ padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase',
+              <button key={lv} onClick={() => setFilter(lv)} style={{
+                padding: '5px 10px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10, textTransform: 'uppercase',
                 border: `1px solid ${active ? s.border : 'rgba(255,255,255,0.07)'}`,
                 background: active ? s.bg : 'rgba(255,255,255,0.04)',
-                color: active ? s.color : 'rgba(255,255,255,0.38)' }}>{lv}</button>
+                color: active ? s.color : 'rgba(255,255,255,0.38)'
+              }}>{lv}</button>
             );
           })}
         </>}
@@ -1546,7 +2592,7 @@ function LogsPanel() {
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 24px' }}>
         {loading ? <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
           : filtered.length === 0 ? <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 40 }}>No logs found</div>
-          : filtered.map(log => {
+            : filtered.map(log => {
               const s = lStyle(log.severity);
               return (
                 <div key={log.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '9px 12px', borderRadius: 10, marginBottom: 4, background: 'rgba(255,255,255,0.018)', border: '1px solid rgba(255,255,255,0.04)' }}>
@@ -1555,7 +2601,7 @@ function LogsPanel() {
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--accent)', flexShrink: 0, width: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{log.event}</span>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.55)', flex: 1, wordBreak: 'break-word' }}>
                     {log.payload?.action && <span>{log.payload.action}</span>}
-                    {log.payload?.title  && <span> · {log.payload.title}</span>}
+                    {log.payload?.title && <span> · {log.payload.title}</span>}
                     {log.payload?.details && <span> · {log.payload.details}</span>}
                     {!log.payload?.action && !log.payload?.title && log.payload && Object.keys(log.payload).length > 0 && (
                       <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 10 }}>{JSON.stringify(log.payload)}</span>
@@ -1571,20 +2617,396 @@ function LogsPanel() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SYSTEM HEALTH PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+function healthTone(status: 'ok' | 'warn' | 'error') {
+  if (status === 'ok') return { bg: 'rgba(34,197,94,0.1)', color: '#86efac', border: 'rgba(34,197,94,0.24)' };
+  if (status === 'warn') return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.22)' };
+  return { bg: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: 'rgba(248,113,113,0.28)' };
+}
+
+function SystemHealthPanel() {
+  const [report, setReport] = useState<SystemHealthReport | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const runHealthCheck = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await callSystemHealth();
+      setReport(result);
+    } catch (err) {
+      console.error('[System Health] Failed:', err);
+      setError(err instanceof Error ? err.message : 'System health check failed');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { runHealthCheck(); }, [runHealthCheck]);
+
+  const status = report?.status || (error ? 'error' : 'warn');
+  const tone = healthTone(status);
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="System Health" subtitle={report ? `Checked ${new Date(report.checked_at).toLocaleTimeString()} · ${report.duration_ms}ms` : 'Production canary checks'}
+        actions={<Btn variant="accent" onClick={runHealthCheck} disabled={loading}>{loading ? <><Spinner size={12} /> Checking...</> : 'Run Health Check'}</Btn>}
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', borderRadius: 12, marginBottom: 14, background: tone.bg, border: `1px solid ${tone.border}` }}>
+          <div style={{ width: 42, height: 42, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.2)', color: tone.color, fontFamily: 'var(--font-display)', fontWeight: 800 }}>
+            {status.toUpperCase()}
+          </div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontFamily: 'var(--font-display)', color: '#fff', fontSize: 16, fontWeight: 700 }}>Production Canary</div>
+            <div style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 2 }}>
+              Environment, Supabase database, player endpoint, catalog, log, and YouTube key checks.
+            </div>
+          </div>
+        </div>
+
+        {error && (
+          <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.18)', color: '#fca5a5', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+            {error}
+          </div>
+        )}
+
+        {loading && !report ? (
+          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
+        ) : (
+          <div style={{ display: 'grid', gap: 8 }}>
+            {(report?.checks || []).map((check) => {
+              const checkTone = healthTone(check.status);
+              return (
+                <div key={check.name} style={{ borderRadius: 12, padding: '12px 14px', background: 'rgba(255,255,255,0.022)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '2px 7px', borderRadius: 99, background: checkTone.bg, color: checkTone.color, border: `1px solid ${checkTone.border}`, textTransform: 'uppercase' }}>
+                      {check.status}
+                    </span>
+                    <div style={{ fontFamily: 'var(--font-display)', color: '#fff', fontSize: 13, fontWeight: 600 }}>{check.name.replace(/_/g, ' ')}</div>
+                    <div style={{ flex: 1 }} />
+                  </div>
+                  <div style={{ fontFamily: 'var(--font-mono)', color: 'rgba(255,255,255,0.55)', fontSize: 11, marginTop: 7 }}>{check.message}</div>
+                  {check.details && (
+                    <pre style={{ margin: '8px 0 0', padding: '8px 10px', borderRadius: 8, background: 'rgba(0,0,0,0.22)', color: 'rgba(255,255,255,0.42)', fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.45, whiteSpace: 'pre-wrap', overflowX: 'auto' }}>
+                      {JSON.stringify(check.details, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YOUTUBE HEALTH PANEL
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BLOCKING_YOUTUBE_STATUSES = ['embed_blocked', 'restricted', 'unavailable', 'invalid', 'check_failed'] as const;
+
+function extractYouTubeId(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const text = String(value);
+  const match = text.match(/([A-Za-z0-9_-]{11})$/) || text.match(/[?&]v=([A-Za-z0-9_-]{11})/) || text.match(/youtu\.be\/([A-Za-z0-9_-]{11})/);
+  return match?.[1] || null;
+}
+
+function playabilityTone(status: string) {
+  if (status === 'playable') return { bg: 'rgba(34,197,94,0.1)', color: '#86efac', border: 'rgba(34,197,94,0.24)' };
+  if (status === 'check_failed' || status === 'unknown') return { bg: 'rgba(251,191,36,0.1)', color: '#fbbf24', border: 'rgba(251,191,36,0.22)' };
+  return { bg: 'rgba(239,68,68,0.12)', color: '#fca5a5', border: 'rgba(248,113,113,0.28)' };
+}
+
+function YouTubeHealthPanel() {
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [alternatives, setAlternatives] = useState<Record<string, YouTubeAlternativeCandidate[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [auditing, setAuditing] = useState(false);
+  const [remediating, setRemediating] = useState(false);
+  const [findingFor, setFindingFor] = useState<string | null>(null);
+  const [addingCandidate, setAddingCandidate] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ text: string; ok: boolean } | null>(null);
+  const [auditSummary, setAuditSummary] = useState<Record<string, number> | null>(null);
+
+  const loadIssues = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('media_items')
+        .select('*')
+        .eq('source_type', 'youtube')
+        .in('youtube_playability_status', [...BLOCKING_YOUTUBE_STATUSES])
+        .order('youtube_playability_checked_at', { ascending: false, nullsFirst: false })
+        .limit(150);
+      if (error) throw error;
+
+      const media = (data as unknown as MediaItem[]) || [];
+      setItems(media);
+
+      const ids = media.map(item => item.id);
+      if (ids.length === 0) {
+        setAlternatives({});
+        return;
+      }
+
+      const { data: candidateRows, error: candidateError } = await supabase
+        .from('youtube_alternative_candidates')
+        .select('*')
+        .in('source_media_item_id', ids)
+        .order('score', { ascending: false })
+        .order('created_at', { ascending: false });
+      if (candidateError) throw candidateError;
+
+      const grouped: Record<string, YouTubeAlternativeCandidate[]> = {};
+      for (const candidate of ((candidateRows as unknown as YouTubeAlternativeCandidate[]) || [])) {
+        if (!candidate.source_media_item_id) continue;
+        grouped[candidate.source_media_item_id] = [...(grouped[candidate.source_media_item_id] || []), candidate];
+      }
+      setAlternatives(grouped);
+    } catch (error) {
+      console.error('[YouTube Health] Failed to load issues:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Failed to load YouTube health data', ok: false });
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadIssues(); }, [loadIssues]);
+
+  const runAudit = async (limit: number) => {
+    setAuditing(true);
+    setMessage(null);
+    try {
+      const result = await callYouTubePlayabilityAudit({
+        limit,
+        stale_hours: 24,
+        checked_by: 'admin_youtube_health_panel',
+      });
+      setAuditSummary(result.summary || {});
+      setMessage({ text: `Checked ${result.checked_count} YouTube item${result.checked_count === 1 ? '' : 's'}`, ok: true });
+      await loadIssues();
+    } catch (error) {
+      console.error('[YouTube Health] Audit failed:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Audit failed', ok: false });
+    } finally {
+      setAuditing(false);
+    }
+  };
+
+  const findAlternatives = async (media: MediaItem) => {
+    setFindingFor(media.id);
+    setMessage(null);
+    try {
+      const result = await callYouTubeAlternativeFinder({
+        media_item_id: media.id,
+        max_results: 6,
+      });
+      setMessage({ text: `Found ${result.count} candidate${result.count === 1 ? '' : 's'} for ${cleanDisplayText(media.title)}`, ok: true });
+      await loadIssues();
+    } catch (error) {
+      console.error('[YouTube Health] Alternative lookup failed:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Alternative lookup failed', ok: false });
+    } finally {
+      setFindingFor(null);
+    }
+  };
+
+  const runRemediation = async () => {
+    setRemediating(true);
+    setMessage(null);
+    try {
+      const result = await callYouTubeRemediationWorker({
+        limit: 25,
+        audit_limit: 100,
+        stale_hours: 24,
+        max_results: 6,
+        checked_by: 'admin_youtube_health_panel',
+      });
+      setAuditSummary(result.audit?.summary || null);
+      setMessage({
+        text: `Processed ${result.summary.processed}; R2 ${result.summary.r2}, replacements ${result.summary.replacements}, excluded ${result.summary.excluded}`,
+        ok: result.summary.errors === 0,
+      });
+      await loadIssues();
+    } catch (error) {
+      console.error('[YouTube Health] Remediation failed:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Remediation failed', ok: false });
+    } finally {
+      setRemediating(false);
+    }
+  };
+
+  const addCandidateToQueue = async (candidate: YouTubeAlternativeCandidate) => {
+    if (!candidate.candidate_url) return;
+    setAddingCandidate(candidate.id);
+    setMessage(null);
+    try {
+      await callKioskHandler({
+        action: 'admin_request',
+        player_id: PLAYER_ID,
+        url: candidate.candidate_url,
+        title: candidate.candidate_title,
+        artist: candidate.candidate_artist,
+        thumbnail: candidate.candidate_thumbnail,
+        duration: candidate.candidate_duration,
+        add_to_queue: true,
+      });
+      setMessage({ text: `Queued ${cleanDisplayText(candidate.candidate_title)}`, ok: true });
+    } catch (error) {
+      console.error('[YouTube Health] Failed to queue candidate:', error);
+      setMessage({ text: error instanceof Error ? error.message : 'Failed to queue candidate', ok: false });
+    } finally {
+      setAddingCandidate(null);
+    }
+  };
+
+  const counts = items.reduce((acc, item) => {
+    const status = item.youtube_playability_status || 'unknown';
+    acc[status] = (acc[status] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PanelHeader title="YouTube Health" subtitle={`${items.length} YouTube-only item${items.length === 1 ? '' : 's'} need attention`}
+        actions={<>
+          <Btn variant="ghost" onClick={loadIssues} disabled={loading}>{loading ? <><Spinner size={12} /> Refreshing...</> : 'Refresh'}</Btn>
+          <Btn variant="accent" onClick={() => runAudit(100)} disabled={auditing}>{auditing ? <><Spinner size={12} /> Auditing...</> : 'Audit Stale 100'}</Btn>
+          <Btn variant="accent" onClick={runRemediation} disabled={remediating}>{remediating ? <><Spinner size={12} /> Remediating...</> : 'Remediate 25'}</Btn>
+        </>}
+      />
+
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 24px' }}>
+        {message && (
+          <div style={{
+            marginBottom: 12, padding: '10px 12px', borderRadius: 10,
+            background: message.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+            border: `1px solid ${message.ok ? 'rgba(34,197,94,0.18)' : 'rgba(239,68,68,0.18)'}`,
+            color: message.ok ? '#86efac' : '#fca5a5', fontFamily: 'var(--font-mono)', fontSize: 11
+          }}>{message.text}</div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10, marginBottom: 14 }}>
+          {BLOCKING_YOUTUBE_STATUSES.map(status => {
+            const tone = playabilityTone(status);
+            return (
+              <div key={status} style={{ borderRadius: 10, padding: '12px 14px', background: tone.bg, border: `1px solid ${tone.border}` }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, textTransform: 'uppercase', color: tone.color }}>{status.replace(/_/g, ' ')}</div>
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: '#fff', marginTop: 4 }}>{counts[status] || 0}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {auditSummary && (
+          <div style={{ marginBottom: 14, borderRadius: 10, padding: '10px 12px', background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+            {Object.entries(auditSummary).map(([status, count]) => {
+              const tone = playabilityTone(status);
+              return <span key={status} style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: tone.color }}>{status.replace(/_/g, ' ')}: {count}</span>;
+            })}
+          </div>
+        )}
+
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner /></div>
+        ) : items.length === 0 ? (
+          <div style={{ color: 'rgba(255,255,255,0.25)', fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'center', paddingTop: 40 }}>
+            No known unplayable YouTube-only items.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {items.map(item => {
+              const tone = playabilityTone(item.youtube_playability_status || 'unknown');
+              const youtubeId = extractYouTubeId(item.source_id);
+              const candidates = alternatives[item.id] || [];
+              const playableCandidates = candidates.filter(candidate => candidate.playability_status === 'playable');
+
+              return (
+                <div key={item.id} style={{ borderRadius: 12, background: 'rgba(255,255,255,0.022)', border: '1px solid rgba(255,255,255,0.06)', overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px' }}>
+                    {item.thumbnail && <img src={item.thumbnail} alt="" style={{ width: 54, height: 40, borderRadius: 7, objectFit: 'cover', flexShrink: 0 }} />}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: 'var(--font-display)', fontSize: 14, fontWeight: 600, color: '#fff', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(item.title || 'Unknown')}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 3, flexWrap: 'wrap' }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{item.artist ? cleanDisplayText(item.artist) : 'Unknown artist'}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)' }}>{youtubeId || 'no youtube id'}</span>
+                        <span title={item.youtube_playability_reason || undefined} style={{ fontFamily: 'var(--font-mono)', fontSize: 9, padding: '1px 6px', borderRadius: 99, background: tone.bg, color: tone.color, border: `1px solid ${tone.border}` }}>
+                          {(item.youtube_playability_status || 'unknown').replace(/_/g, ' ').toUpperCase()}
+                        </span>
+                        {item.youtube_last_error_code && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: '#fca5a5' }}>YT {item.youtube_last_error_code}</span>}
+                      </div>
+                    </div>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.3)', flexShrink: 0 }}>{fmtDuration(item.duration)}</span>
+                    <Btn variant="ghost" disabled={findingFor === item.id} onClick={() => findAlternatives(item)}>
+                      {findingFor === item.id ? <><Spinner size={12} /> Finding...</> : 'Find Alternatives'}
+                    </Btn>
+                  </div>
+
+                  {candidates.length > 0 && (
+                    <div style={{ padding: '0 14px 12px 80px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: playableCandidates.length > 0 ? '#86efac' : '#fbbf24', textTransform: 'uppercase' }}>
+                        {playableCandidates.length > 0 ? `${playableCandidates.length} playable candidate${playableCandidates.length === 1 ? '' : 's'}` : 'No playable candidates stored yet'}
+                      </div>
+                      {candidates.slice(0, 3).map(candidate => {
+                        const candidateTone = playabilityTone(candidate.playability_status);
+                        return (
+                          <div key={candidate.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 9px', borderRadius: 9, background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            {candidate.candidate_thumbnail && <img src={candidate.candidate_thumbnail} alt="" style={{ width: 42, height: 30, borderRadius: 5, objectFit: 'cover', flexShrink: 0 }} />}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontFamily: 'var(--font-display)', fontSize: 12, color: '#e5e7eb', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{cleanDisplayText(candidate.candidate_title)}</div>
+                              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'rgba(255,255,255,0.32)', marginTop: 1 }}>{candidate.candidate_youtube_id} · score {Math.round(candidate.score)}</div>
+                            </div>
+                            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 8, padding: '1px 5px', borderRadius: 99, background: candidateTone.bg, color: candidateTone.color, border: `1px solid ${candidateTone.border}` }}>
+                              {candidate.playability_status.replace(/_/g, ' ').toUpperCase()}
+                            </span>
+                            <Btn variant="ghost" disabled={candidate.playability_status !== 'playable' || addingCandidate === candidate.id} onClick={() => addCandidateToQueue(candidate)}>
+                              {addingCandidate === candidate.id ? <><Spinner size={12} /> Queuing...</> : 'Queue'}
+                            </Btn>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ROOT APP
 // ─────────────────────────────────────────────────────────────────────────────
 
 function App() {
-  const [user, setUser]         = useState<AuthUser | null>(null);
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [view, setView]         = useState<ViewId>('queue');
-  const [queue, setQueue]       = useState<QueueItem[]>([]);
-  const [status, setStatus]     = useState<PlayerStatus | null>(null);
+  const [view, setView] = useState<ViewId>('queue');
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [status, setStatus] = useState<PlayerStatus | null>(null);
   const [settings, setSettings] = useState<PlayerSettings | null>(null);
   const [isShuffling, setIsShuffling] = useState(false);
-  const [isSkipping,  setIsSkipping]  = useState(false);
+  const [isSkipping, setIsSkipping] = useState(false);
+  const [isGeneratingRadio, setIsGeneratingRadio] = useState(false);
+  const [refreshPrompt, setRefreshPrompt] = useState<AdminBroadcast | null>(null);
+  const [masterOfflineWarning, setMasterOfflineWarning] = useState<string | null>(null);
   const isSkippingRef = useRef(false);
+  const statusRef = useRef<PlayerStatus | null>(null);
+  const adminSessionStartedAtRef = useRef(new Date().toISOString());
+  const autoResetTriggeredRef = useRef(false);
   useEffect(() => { isSkippingRef.current = isSkipping; }, [isSkipping]);
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const prefs = usePrefs();
 
@@ -1598,13 +3020,114 @@ function App() {
   // Realtime subscriptions — deps intentionally omit isSkipping; use ref to avoid subscription churn
   useEffect(() => {
     if (!user) return;
-    const q  = subscribeToQueue(PLAYER_ID, setQueue);
-    const s  = subscribeToPlayerStatus(PLAYER_ID, (ns) => {
+    const q = subscribeToQueue(PLAYER_ID, setQueue);
+    const s = subscribeToPlayerStatus(PLAYER_ID, (ns) => {
       setStatus(ns);
       if (isSkippingRef.current && (ns.state === 'playing' || ns.state === 'loading')) setIsSkipping(false);
     });
     const ps = subscribeToPlayerSettings(PLAYER_ID, setSettings);
     return () => { q.unsubscribe(); s.unsubscribe(); ps.unsubscribe(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    adminSessionStartedAtRef.current = new Date().toISOString();
+    const sub = subscribeToAdminBroadcasts((broadcast) => {
+      if (broadcast.event_type !== 'refresh_prompt') return;
+      setRefreshPrompt(broadcast);
+    }, adminSessionStartedAtRef.current);
+    return () => { sub.unsubscribe(); };
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+
+    const evaluatePriorityHeartbeat = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('players')
+          .select('id, last_heartbeat, priority_player_id, priority_endpoint_id')
+          .eq('id', PLAYER_ID)
+          .single();
+
+        if (cancelled || error || !data) return;
+
+        const player = data as Player;
+        const hasPriorityAssigned = player.priority_player_id === PLAYER_ID;
+        const lastHeartbeatMs = player.last_heartbeat ? new Date(player.last_heartbeat).getTime() : 0;
+        const heartbeatAgeMs = Date.now() - lastHeartbeatMs;
+        const masterOffline = hasPriorityAssigned && heartbeatAgeMs > 30000;
+        const activeStatus = statusRef.current;
+        const playbackNeedsDriver = activeStatus?.state === 'loading' || activeStatus?.state === 'playing' || activeStatus?.state === 'paused';
+
+        const { data: endpoints } = await supabase
+          .from('player_endpoints')
+          .select('endpoint_id, role, status, last_seen')
+          .eq('player_id', PLAYER_ID)
+          .eq('status', 'connected');
+
+        const activeEndpoints = ((endpoints as PlayerEndpoint[] | null) ?? []).filter(endpoint => {
+          const lastSeen = endpoint.last_seen ? new Date(endpoint.last_seen).getTime() : 0;
+          return Date.now() - lastSeen <= 45000;
+        });
+        const hasActiveMasterEndpoint = activeEndpoints.some(endpoint => endpoint.role === 'master' && endpoint.endpoint_id === player.priority_endpoint_id);
+
+        if (playbackNeedsDriver && hasPriorityAssigned && !player.priority_endpoint_id && heartbeatAgeMs <= 30000) {
+          setMasterOfflineWarning('LEGACY MASTER HAS NO ENDPOINT - refresh the Player screen to enable endpoint controls');
+          autoResetTriggeredRef.current = false;
+          return;
+        }
+
+        if (playbackNeedsDriver && activeEndpoints.length === 0) {
+          setMasterOfflineWarning('NO CONNECTED PLAYER ENDPOINT - open a Player screen and set it as master');
+          autoResetTriggeredRef.current = false;
+          return;
+        }
+
+        if (playbackNeedsDriver && hasPriorityAssigned && player.priority_endpoint_id && !hasActiveMasterEndpoint) {
+          setMasterOfflineWarning('MASTER ENDPOINT IS STALE - set a connected player as master');
+          return;
+        }
+
+        if (masterOffline) {
+          setMasterOfflineWarning('MASTER PLAYER IS OFFLINE - Reassigning Priority to next PLAYER connection');
+          if (!autoResetTriggeredRef.current) {
+            autoResetTriggeredRef.current = true;
+            try {
+              await callPlayerControl({
+                player_id: PLAYER_ID,
+                action: 'reset_priority',
+                initiator: 'admin_ui',
+                reason: 'master_offline_timeout',
+              });
+            } catch (resetError) {
+              console.error('[Admin] Failed to auto-reset priority player:', resetError);
+            }
+          }
+          return;
+        }
+
+        setMasterOfflineWarning(null);
+        if (!hasPriorityAssigned || heartbeatAgeMs <= 30000) {
+          autoResetTriggeredRef.current = false;
+        }
+      } catch (err) {
+        console.error('[Admin] Failed to evaluate player heartbeat:', err);
+      }
+    };
+
+    evaluatePriorityHeartbeat();
+    const interval = window.setInterval(evaluatePriorityHeartbeat, 5000);
+    const sub = subscribeToTable<Player>('players', { column: 'id', value: PLAYER_ID }, () => {
+      evaluatePriorityHeartbeat().catch?.(() => { });
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      sub.unsubscribe();
+    };
   }, [user]);
 
   // ── Queue handlers ────────────────────────────────────────────────────────
@@ -1622,11 +3145,11 @@ function App() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
     const normalQ = queue.filter(i => i.type === 'normal' && i.media_item_id !== status?.current_media_id && i.id);
-    const oldIdx  = normalQ.findIndex(i => i.id === active.id);
-    const newIdx  = normalQ.findIndex(i => i.id === over.id);
+    const oldIdx = normalQ.findIndex(i => i.id === active.id);
+    const newIdx = normalQ.findIndex(i => i.id === over.id);
     const reordered = arrayMove(normalQ, oldIdx, newIdx);
-    const priority  = queue.filter(i => i.type === 'priority');
-    const current   = queue.filter(i => i.media_item_id === status?.current_media_id);
+    const priority = queue.filter(i => i.type === 'priority');
+    const current = queue.filter(i => i.media_item_id === status?.current_media_id);
     setQueue([...current, ...priority, ...reordered]); // optimistic
     try {
       const ids = Array.from(new Set(reordered.map(i => i.id)));
@@ -1651,16 +3174,48 @@ function App() {
   const handlePlayPause = async () => {
     try {
       const newState = status?.state === 'playing' ? 'paused' : 'playing';
-      await callPlayerControl({ player_id: PLAYER_ID, state: newState, action: 'update' });
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        state: newState,
+        action: 'update',
+        initiator: 'admin_ui',
+        reason: newState === 'playing' ? 'admin_play_button' : 'admin_pause_button',
+      });
     } catch (e) { console.error(e); }
   };
 
   const handleSkip = async () => {
     if (isSkipping) return;
     setIsSkipping(true);
-    try { await callPlayerControl({ player_id: PLAYER_ID, state: 'idle', action: 'skip' }); }
+    try {
+      await callPlayerControl({
+        player_id: PLAYER_ID,
+        state: 'idle',
+        action: 'skip',
+        expected_media_id: status?.current_media_id ?? undefined,
+        initiator: 'admin_ui',
+        reason: 'admin_skip_button',
+      });
+    }
     catch (e) { console.error(e); setIsSkipping(false); }
     setTimeout(() => setIsSkipping(false), 3000); // failsafe
+  };
+
+  const handleStartRadio = async (source: 'now_playing' | 'history' | 'playlist') => {
+    setIsGeneratingRadio(true);
+    try {
+      const result = await callRadioGenerator({
+        player_id: PLAYER_ID,
+        action: 'generate',
+        source,
+      });
+      console.log('[Radio] Generated:', result);
+      setView('queue');
+    } catch (error) {
+      console.error('[Radio] Failed:', error);
+    } finally {
+      setIsGeneratingRadio(false);
+    }
   };
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -1673,10 +3228,14 @@ function App() {
 
   if (!user) return <LoginForm onSignIn={setUser} />;
 
-  const isQueueView     = view.startsWith('queue');
-  const isPlaylistView  = view.startsWith('playlists');
-  const isSettingsView  = view.startsWith('settings');
-  const isScriptsView   = view === 'settings-scripts';
+  const isSearchView = view === 'search';
+  const isLibraryView = view === 'library';
+  const isSystemHealthView = view === 'system-health';
+  const isYouTubeHealthView = view === 'youtube-health';
+  const isQueueView = view.startsWith('queue');
+  const isPlaylistView = view.startsWith('playlists');
+  const isSettingsView = view.startsWith('settings');
+  const isScriptsView = view === 'settings-scripts';
 
   return (
     <div style={{ width: '100%', height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg)' }}>
@@ -1689,6 +3248,7 @@ function App() {
         onSkip={handleSkip}
         isSkipping={isSkipping}
         onRemove={handleRemove}
+        masterOfflineWarning={masterOfflineWarning}
       />
 
       {/* Body */}
@@ -1696,17 +3256,52 @@ function App() {
         <Sidebar view={view} setView={setView} queue={queue} user={user} onSignOut={() => signOut().catch(console.error)} />
 
         <main style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+          {isSearchView && <SearchPanel />}
+          {isLibraryView && <BrowseLibraryPanel />}
+          {isSystemHealthView && <SystemHealthPanel />}
+          {isYouTubeHealthView && <YouTubeHealthPanel />}
           {isQueueView && (
             <QueuePanel queue={queue} status={status}
               onRemove={handleRemove} onReorder={handleReorder}
-              onShuffle={handleShuffle} isShuffling={isShuffling} />
+              onShuffle={handleShuffle} isShuffling={isShuffling}
+              onStartRadio={handleStartRadio} isGeneratingRadio={isGeneratingRadio} />
           )}
           {isPlaylistView && <PlaylistsPanel view={view} />}
-          {isScriptsView  && <ScriptsPanel />}
+          {isScriptsView && <ScriptsPanel user={user} />}
           {isSettingsView && !isScriptsView && <SettingsPanel view={view} settings={settings} prefs={prefs} />}
           {view === 'logs' && <LogsPanel />}
         </main>
       </div>
+
+      {refreshPrompt && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'rgba(0,0,0,0.72)', backdropFilter: 'blur(4px)'
+          }}
+          onClick={() => setRefreshPrompt(null)}
+        >
+          <div
+            style={{
+              background: '#111', border: '1px solid rgba(255,255,255,0.12)', borderRadius: 18, padding: '28px 32px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, minWidth: 320,
+              boxShadow: '0 24px 80px rgba(0,0,0,0.9)'
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700, color: '#fff', letterSpacing: '-0.02em' }}>
+              {typeof refreshPrompt.payload?.title === 'string' ? refreshPrompt.payload.title : 'Update available'}
+            </div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.5, color: 'rgba(255,255,255,0.6)', textAlign: 'center', maxWidth: 360 }}>
+              {typeof refreshPrompt.payload?.message === 'string' ? refreshPrompt.payload.message : 'A newer Obie build is available. Refresh this screen now.'}
+            </div>
+            <div style={{ display: 'flex', gap: 12, marginTop: 4 }}>
+              <Btn variant="ghost" onClick={() => setRefreshPrompt(null)}>Cancel</Btn>
+              <Btn variant="solid" onClick={() => window.location.reload()}>Refresh Now</Btn>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

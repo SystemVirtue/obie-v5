@@ -100,7 +100,6 @@ BEGIN
   RETURN QUERY SELECT v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 -- Fix queue_next to always prioritize priority items, then play normal items sequentially by position (shuffle only affects loading)
 CREATE OR REPLACE FUNCTION queue_next(
   p_player_id UUID
