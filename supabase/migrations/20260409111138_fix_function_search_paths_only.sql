@@ -1,0 +1,21 @@
+
+ALTER FUNCTION public.update_updated_at()                               SET search_path = public;
+ALTER FUNCTION public.cleanup_expired_queue()                           SET search_path = public;
+ALTER FUNCTION public.player_heartbeat(uuid)                            SET search_path = public;
+ALTER FUNCTION public.log_event(uuid, text, text, jsonb)                SET search_path = public;
+ALTER FUNCTION public.queue_add(uuid, uuid, text, text)                 SET search_path = public;
+ALTER FUNCTION public.queue_skip(uuid)                                  SET search_path = public;
+ALTER FUNCTION public.queue_clear(uuid, text)                           SET search_path = public;
+ALTER FUNCTION public.queue_remove(uuid)                                SET search_path = public;
+ALTER FUNCTION public.queue_reorder(uuid, uuid[], text)                 SET search_path = public;
+ALTER FUNCTION public.queue_reorder(uuid, uuid[], text, integer)        SET search_path = public;
+ALTER FUNCTION public.queue_shuffle(uuid, text)                         SET search_path = public;
+ALTER FUNCTION public.queue_next(uuid, uuid)                            SET search_path = public;
+ALTER FUNCTION public.queue_reorder_wrapper(uuid, uuid[], text)         SET search_path = public;
+ALTER FUNCTION public.load_playlist(uuid, uuid, integer, boolean)       SET search_path = public;
+ALTER FUNCTION public.kiosk_increment_credit(uuid, integer)             SET search_path = public;
+ALTER FUNCTION public.kiosk_decrement_credit(uuid, integer)             SET search_path = public;
+ALTER FUNCTION public.kiosk_request_enqueue(uuid, uuid)                 SET search_path = public;
+ALTER FUNCTION public.initialize_player_playlist(uuid)                  SET search_path = public;
+ALTER FUNCTION public.create_or_get_media_item(text, text, text, text, text, integer, text, jsonb) SET search_path = public;
+;

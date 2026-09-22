@@ -1,7 +1,7 @@
 // API Helper Functions for Admin Console
 // Wrapper functions for Supabase Edge Functions
 
-import { supabase } from './supabaseClient';
+import { supabase } from '@shared/supabase-client';
 
 // =============================================================================
 // QUEUE MANAGEMENT

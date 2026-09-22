@@ -30,7 +30,6 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 DROP FUNCTION IF EXISTS load_playlist(UUID, UUID, INT);
-
 CREATE OR REPLACE FUNCTION load_playlist(
   p_player_id    UUID,
   p_playlist_id  UUID,
@@ -144,10 +143,7 @@ BEGIN
   RETURN QUERY SELECT v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION load_playlist(UUID, UUID, INT, BOOLEAN) TO authenticated, service_role;
-
-
 -- 2.  queue_next — pass p_skip_shuffle := TRUE on loop-refill
 -- ─────────────────────────────────────────────────────────────────────────────
 
@@ -247,5 +243,4 @@ BEGIN
   WHERE  m.id = v_next_queue_item.media_item_id;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION queue_next(UUID) TO authenticated, service_role;

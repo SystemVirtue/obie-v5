@@ -209,28 +209,26 @@ function App() {
       return () => clearTimeout(timer);
     }, [searchQuery]);
 
-    // Perform search — routes through kiosk-handler for consistent single entry point
+    // Perform search — runs YouTube and Cloudflare R2 in parallel and merges results
     const performSearch = async (query: string) => {
       try {
         setIsSearching(true);
         setSearchResults([]);
 
-        if (searchSource === 'cloudflare') {
-          // Search R2 files via kiosk-handler
-          const result = await callKioskHandler({ action: 'search_r2', query }) as { videos?: any[] };
-          const videos = result?.videos || [];
-          setSearchResults(videos);
-        } else {
-          // YouTube search
-          let searchQuery = query;
-          if (includeKaraoke) {
-            searchQuery = query + ' Lyric Video Karaoke';
-          }
-          const result = await callKioskHandler({ action: 'search', query: searchQuery }) as { videos?: any[] };
-          const videos = result?.videos || [];
-          setSearchResults(videos);
+        let ytQuery = query;
+        if (includeKaraoke) {
+          ytQuery = query + ' Lyric Video Karaoke';
         }
 
+        const [ytSettled, r2Settled] = await Promise.allSettled([
+          callKioskHandler({ action: 'search', query: ytQuery }) as Promise<{ videos?: any[] }>,
+          callKioskHandler({ action: 'search_r2', query }) as Promise<{ videos?: any[] }>,
+        ]);
+
+        const ytVideos = ytSettled.status === 'fulfilled' ? (ytSettled.value?.videos || []) : [];
+        const r2Videos = r2Settled.status === 'fulfilled' ? (r2Settled.value?.videos || []) : [];
+
+        setSearchResults([...r2Videos, ...ytVideos]);
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {

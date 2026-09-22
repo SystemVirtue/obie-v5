@@ -16,7 +16,6 @@
 --      is currently playing (not just when a normal item is playing).
 
 DROP FUNCTION IF EXISTS load_playlist(UUID, UUID, INT);
-
 CREATE OR REPLACE FUNCTION load_playlist(
   p_player_id    UUID,
   p_playlist_id  UUID,
@@ -148,5 +147,4 @@ BEGIN
   RETURN QUERY SELECT v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION load_playlist(UUID, UUID, INT, BOOLEAN) TO authenticated, service_role;

@@ -84,10 +84,7 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION queue_shuffle(UUID, TEXT) TO authenticated, service_role;
-
-
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 2.  load_playlist — insert in order, then call queue_shuffle if enabled
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -190,5 +187,4 @@ BEGIN
   RETURN QUERY SELECT v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION load_playlist(UUID, UUID, INT) TO authenticated, service_role;

@@ -19,11 +19,27 @@
 
 body {
   margin: 0;
+  width: 100vw;
+  height: 100vh;
   min-height: 100vh;
   cursor: none; /* Hides the mouse cursor */
   overflow: hidden;
 }
 
 #root {
+  width: 100vw;
+  height: 100vh;
   min-height: 100vh;
+}
+
+#player,
+#player > div,
+#player iframe {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#player iframe {
+  display: block;
+  border: 0;
 }

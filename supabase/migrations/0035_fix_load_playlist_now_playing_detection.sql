@@ -135,5 +135,4 @@ BEGIN
   RETURN QUERY SELECT v_loaded_count;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
-
 GRANT EXECUTE ON FUNCTION load_playlist(UUID, UUID, INT) TO authenticated, service_role;
