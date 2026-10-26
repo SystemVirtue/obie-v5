@@ -862,15 +862,21 @@ export async function callKioskHandler(params: {
   duration?: number | null;
 }) {
   try {
-    // Public kiosk endpoint: send the publishable key ONLY as `apikey`.
-    // Do NOT send it as `Authorization: Bearer` -- the publishable key is not a
-    // JWT (it is a single-segment `sb_publishable_...` string), so Kong rejects
-    // it with 401 UNAUTHORIZED_INVALID_JWT_FORMAT when used as a Bearer token.
+    // Public kiosk endpoint. Which auth header the gateway accepts depends on the
+    // project's key generation, so send both and let it pick:
+    //  - legacy projects (legacy anon/service_role JWTs): the gateway ignores
+    //    `apikey` and requires `Authorization: Bearer <JWT>`, otherwise it replies
+    //    401 UNAUTHORIZED_NO_AUTH_HEADER.
+    //  - newer projects (`sb_publishable_...` keys): the anon key is a
+    //    single-segment non-JWT, so `Bearer` is rejected with
+    //    401 UNAUTHORIZED_INVALID_JWT_FORMAT and only `apikey` is accepted.
+    const anonKeyIsJwt = supabaseAnonKey.split('.').length === 3;
     const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: supabaseAnonKey,
+        ...(anonKeyIsJwt ? { 'Authorization': `Bearer ${supabaseAnonKey}` } : {}),
       },
       body: JSON.stringify(params),
     });
