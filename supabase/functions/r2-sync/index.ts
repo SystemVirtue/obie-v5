@@ -5,6 +5,8 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { corsHeaders } from '../_shared/cors.ts';
 
+const DB_BATCH_SIZE = 500;
+
 // S3-compatible request signing for Cloudflare R2
 async function signS3Request(
   method: string,
@@ -57,7 +59,7 @@ async function signS3Request(
   ].join('\n');
 
   // Calculate signature
-  async function hmacSha256(key: ArrayBuffer | Uint8Array, data: string): Promise<ArrayBuffer> {
+  async function hmacSha256(key: ArrayBuffer | Uint8Array<ArrayBuffer>, data: string): Promise<ArrayBuffer> {
     const cryptoKey = await crypto.subtle.importKey(
       'raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']
     );
@@ -365,14 +367,27 @@ Deno.serve(async (req) => {
       // 3. YouTube video ID match (Song [dQw4w9WgXcQ].mp4 ↔ dQw4w9WgXcQ.jpg)
       const thumbnailMap = buildThumbnailLookup(videoObjects, imageObjects, publicUrl);
 
-      // Fetch all existing records for this bucket in one query
-      const { data: existingFiles } = await supabase
-        .from('r2_files')
-        .select('id, object_key, etag, thumbnail, youtube_id')
-        .eq('bucket_name', bucketName);
+      const existingFiles: Array<{
+        id: string;
+        object_key: string;
+        etag: string;
+        thumbnail: string | null;
+        youtube_id: string | null;
+      }> = [];
+      for (let offset = 0; ; offset += DB_BATCH_SIZE) {
+        const { data, error } = await supabase
+          .from('r2_files')
+          .select('id, object_key, etag, thumbnail, youtube_id')
+          .eq('bucket_name', bucketName)
+          .order('id')
+          .range(offset, offset + DB_BATCH_SIZE - 1);
+        if (error) throw error;
+        existingFiles.push(...(data ?? []));
+        if (!data || data.length < DB_BATCH_SIZE) break;
+      }
 
       const existingMap = new Map<string, { id: string; etag: string; thumbnail: string | null; youtube_id: string | null }>();
-      for (const f of existingFiles ?? []) {
+      for (const f of existingFiles) {
         existingMap.set(f.object_key, { id: f.id, etag: f.etag, thumbnail: f.thumbnail, youtube_id: f.youtube_id ?? null });
       }
 
@@ -419,25 +434,28 @@ Deno.serve(async (req) => {
       }
 
       // Batch insert new records (chunks of 500)
-      const CHUNK = 500;
-      for (let i = 0; i < toInsert.length; i += CHUNK) {
-        await supabase.from('r2_files').insert(toInsert.slice(i, i + CHUNK));
+      for (let i = 0; i < toInsert.length; i += DB_BATCH_SIZE) {
+        const { error } = await supabase.from('r2_files').insert(toInsert.slice(i, i + DB_BATCH_SIZE));
+        if (error) throw error;
       }
 
       // Batch updates — upsert by id
-      for (let i = 0; i < toUpdate.length; i += CHUNK) {
-        const chunk = toUpdate.slice(i, i + CHUNK);
-        await supabase.from('r2_files').upsert(
+      for (let i = 0; i < toUpdate.length; i += DB_BATCH_SIZE) {
+        const chunk = toUpdate.slice(i, i + DB_BATCH_SIZE);
+        const { error } = await supabase.from('r2_files').upsert(
           chunk.map(u => ({ id: u.id, ...u.patch }))
         );
+        if (error) throw error;
       }
 
       // Delete rows no longer in bucket
-      const toDelete = (existingFiles ?? []).filter(f => !bucketKeys.has(f.object_key));
+      const toDelete = existingFiles.filter(f => !bucketKeys.has(f.object_key));
       let deletedCount = 0;
-      for (let i = 0; i < toDelete.length; i += CHUNK) {
-        await supabase.from('r2_files').delete().in('id', toDelete.slice(i, i + CHUNK).map(f => f.id));
-        deletedCount += toDelete.slice(i, i + CHUNK).length;
+      for (let i = 0; i < toDelete.length; i += DB_BATCH_SIZE) {
+        const chunk = toDelete.slice(i, i + DB_BATCH_SIZE);
+        const { error } = await supabase.from('r2_files').delete().in('id', chunk.map(f => f.id));
+        if (error) throw error;
+        deletedCount += chunk.length;
       }
 
       const addedCount = toInsert.length;
@@ -487,7 +505,7 @@ Deno.serve(async (req) => {
     });
   } catch (error) {
     console.error('R2 sync error:', error);
-    return new Response(JSON.stringify({ error: error.message }), {
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });

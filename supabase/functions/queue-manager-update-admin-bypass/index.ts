@@ -1,61 +1,89 @@
-import { decode } from "https://deno.land/std@0.170.0/encoding/base64.ts";
+import { createClient } from "npm:@supabase/supabase-js@2";
+import { getAuthenticatedUserId, userOwnsPlayer } from "../_shared/authorization.ts";
+import { corsHeaders } from "../_shared/cors.ts";
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
 Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return jsonResponse({ error: "Method not allowed" }, 405);
+
   try {
-    const { method } = req;
-    if (method !== 'POST') return new Response(JSON.stringify({ error: 'Method not allowed' }), { status: 405 });
-
-    const body = await req.json().catch(() => null);
-    if (!body) return new Response(JSON.stringify({ error: 'Invalid JSON' }), { status: 400 });
-
-    const { player_id, action, queue_id } = body;
-    if (!player_id || !action) return new Response(JSON.stringify({ error: 'Missing fields' }), { status: 400 });
-
-    // Helper: parse JWT payload without verification (we only read claims)
-    const parseJwt = (token = '') => {
-      try {
-        const parts = token.split('.');
-        if (parts.length < 2) return null;
-        const payload = parts[1];
-        // Add padding
-        const pad = payload.length % 4;
-        const padded = payload + (pad ? '='.repeat(4 - pad) : '');
-        const decoded = new TextDecoder().decode(decode(padded));
-        return JSON.parse(decoded);
-      } catch (e) {
-        return null;
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof TypeError) {
+        return jsonResponse({ error: "Invalid JSON body" }, 400);
       }
-    };
-
-    const authHeader = req.headers.get('authorization') || '';
-    const token = authHeader.replace(/^Bearer\s+/i, '');
-    const claims = parseJwt(token) || {};
-    const isAdmin = (claims.role === 'admin');
-
-    // Also allow service role bypass if the raw Authorization header exactly matches the service role
-    const serviceRole = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    const usingServiceRole = serviceRole && authHeader === `Bearer ${serviceRole}`;
-
-    // If not admin or service role, enforce online check
-    if (!isAdmin && !usingServiceRole) {
-      // Query player status from the DB using Supabase REST? Instead, attempt to read from internal API if available.
-      // For safety in this example, return an instruction for existing flow.
-      return new Response(JSON.stringify({ error: 'Not authorized to bypass offline check' }), { status: 403 });
+      throw error;
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return jsonResponse({ error: "JSON body must be an object" }, 400);
+    }
+    const requestBody = body as Record<string, unknown>;
+    const playerId = requestBody.player_id;
+    const action = requestBody.action;
+    if (typeof playerId !== "string" || !playerId || typeof action !== "string") {
+      return jsonResponse({ error: "player_id and action are required" }, 400);
     }
 
-    // Proceed with remove/reorder action bypassing online check
-    if (action === 'remove') {
-      // Implement your removal logic here — for example publish to realtime or call database
-      // Placeholder: return success with intent
-      return new Response(JSON.stringify({ ok: true, message: 'Remove executed bypassing online check', player_id, queue_id }), { headers: { 'Content-Type': 'application/json' } });
+    const userId = await getAuthenticatedUserId(req);
+    if (!userId) return jsonResponse({ error: "Authentication required" }, 401);
+
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+      { auth: { persistSession: false, autoRefreshToken: false } },
+    );
+    if (!await userOwnsPlayer(supabase, userId, playerId)) {
+      return jsonResponse({ error: "Not authorized for this player" }, 403);
     }
 
-    if (action === 'reorder') {
-      return new Response(JSON.stringify({ ok: true, message: 'Reorder executed bypassing online check', player_id, queue_id }), { headers: { 'Content-Type': 'application/json' } });
+    if (action === "remove") {
+      const queueId = requestBody.queue_id;
+      if (typeof queueId !== "string" || !queueId) {
+        return jsonResponse({ error: "queue_id is required for remove" }, 400);
+      }
+      const { data: queueItem, error: queueItemError } = await supabase
+        .from("queue")
+        .select("id")
+        .eq("id", queueId)
+        .eq("player_id", playerId)
+        .is("played_at", null)
+        .maybeSingle();
+      if (queueItemError) throw queueItemError;
+      if (!queueItem) return jsonResponse({ error: "Queue item not found" }, 404);
+
+      const { error } = await supabase.rpc("queue_remove", { p_queue_id: queueId });
+      if (error) throw error;
+    } else if (action === "reorder") {
+      const queueIds = requestBody.queue_ids;
+      const type = requestBody.type === undefined ? "normal" : requestBody.type;
+      if (!Array.isArray(queueIds)
+        || queueIds.some((id) => typeof id !== "string")
+        || (type !== "normal" && type !== "priority")) {
+        return jsonResponse({ error: "Valid queue_ids and type are required for reorder" }, 400);
+      }
+      const { error } = await supabase.rpc("queue_reorder", {
+        p_player_id: playerId,
+        p_queue_ids: queueIds,
+        p_type: type,
+      });
+      if (error) throw error;
+    } else {
+      return jsonResponse({ error: `Unknown action: ${action}` }, 400);
     }
 
-    return new Response(JSON.stringify({ error: 'Unknown action' }), { status: 400 });
-  } catch (err) {
-    console.error(err);
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500 });
+    return jsonResponse({ success: true });
+  } catch (error) {
+    console.error("Queue manager admin bypass error:", error);
+    return jsonResponse({
+      error: error instanceof Error ? error.message : String(error),
+    }, 500);
   }
 });

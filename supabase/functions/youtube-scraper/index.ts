@@ -25,24 +25,42 @@ interface Video {
 
 const SEARCH_EMBED_CHECK_CONCURRENCY = 4;
 
-// API Key rotation — reads from YOUTUBE_API_KEY_1..8 Supabase secrets
+// API Key rotation — reads YOUTUBE_API_KEY_1..11 Supabase secrets, plus the
+// single-key forms documented in YOUTUBE_SETUP.md (YOUTUBE_API_KEY /
+// YOUTUBE_API_KEYS) so the documented setup path works without renaming.
 // These must be configured in your Supabase project settings
-const API_KEYS: ApiKey[] = Array.from({ length: 8 }, (_, i) => {
-  const key = Deno.env.get(`YOUTUBE_API_KEY_${i + 1}`);
-  if (key) {
-    return {
-      key,
-      name: `Key ${i + 1}`,
-    };
+function loadApiKeys(): ApiKey[] {
+  const keys: ApiKey[] = [];
+  const seen = new Set<string>();
+
+  const add = (raw: string | undefined, name: string) => {
+    const key = raw?.trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    keys.push({ key, name });
+  };
+
+  // Single-key forms first, so the documented setup path works out of the box.
+  add(Deno.env.get('YOUTUBE_API_KEY'), 'YOUTUBE_API_KEY');
+  for (const part of (Deno.env.get('YOUTUBE_API_KEYS') ?? '').split(/[,\s]+/)) {
+    add(part, 'YOUTUBE_API_KEYS');
   }
-  return null;
-}).filter((k): k is ApiKey => k !== null);
+
+  // Numbered rotation pool.
+  for (let i = 1; i <= 11; i++) {
+    add(Deno.env.get(`YOUTUBE_API_KEY_${i}`), `Key ${i}`);
+  }
+
+  return keys;
+}
+
+const API_KEYS: ApiKey[] = loadApiKeys();
 let currentKeyIndex = 0;
 const failedKeys = new Set<number>();
 
 // Validate that at least one API key is configured
 if (API_KEYS.length === 0) {
-  console.error('ERROR: No YouTube API keys configured. Set YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_8 in Supabase secrets.');
+  console.error('ERROR: No YouTube API keys configured. Set YOUTUBE_API_KEY (single) or YOUTUBE_API_KEY_1 through YOUTUBE_API_KEY_11 in Supabase secrets.');
 }
 
 function getNextApiKey(): string {

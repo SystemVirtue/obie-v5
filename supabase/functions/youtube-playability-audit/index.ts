@@ -97,7 +97,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         const media = idToMedia.get(video.id);
         if (!media) continue;
 
-        await supabase.rpc('record_youtube_playability', {
+        const { error: recordError } = await supabase.rpc('record_youtube_playability', {
           p_media_item_id: media.id,
           p_youtube_id: video.id,
           p_status: video.playabilityStatus || (video.embeddable === false ? 'embed_blocked' : 'unknown'),
@@ -112,6 +112,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
             url: video.url || null,
           },
         });
+        if (recordError) throw recordError;
       }
     }
 

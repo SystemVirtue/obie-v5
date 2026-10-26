@@ -70,7 +70,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     for (const candidate of candidates) {
       if (!sourceYoutubeId || !candidate?.id) continue;
-      await supabase
+      const { error: upsertError } = await supabase
         .from('youtube_alternative_candidates')
         .upsert({
           source_media_item_id: sourceMedia?.id || null,
@@ -88,6 +88,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         }, {
           onConflict: 'source_youtube_id,candidate_youtube_id',
         });
+      if (upsertError) throw upsertError;
     }
 
     return new Response(JSON.stringify({

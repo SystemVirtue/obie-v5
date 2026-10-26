@@ -1,6 +1,7 @@
 // Kiosk Handler Edge Function
 // Handles kiosk operations: search, credits, song requests
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getAuthenticatedUserId, userOwnsPlayer } from '../_shared/authorization.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const DEFAULT_PLAYER_ID = '00000000-0000-0000-0000-000000000001';
@@ -323,6 +324,12 @@ Deno.serve(async (req)=>{
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
       headers: corsHeaders
+    });
+  }
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   }
   try {
@@ -1021,6 +1028,19 @@ Deno.serve(async (req)=>{
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         });
       }
+      const userId = await getAuthenticatedUserId(req);
+      if (!userId) {
+        return new Response(JSON.stringify({ error: 'Authentication required' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!await userOwnsPlayer(supabase, userId, player_id)) {
+        return new Response(JSON.stringify({ error: 'Not authorized for this player' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
 
       let mediaItemId = null;
 
@@ -1247,9 +1267,9 @@ Deno.serve(async (req)=>{
     // Handle adding credits to a session (e.g., coin insert)
     if (action === 'credit') {
       const { session_id, amount } = body;
-      if (!session_id || typeof amount !== 'number') {
+      if (!session_id || !Number.isSafeInteger(amount) || amount <= 0) {
         return new Response(JSON.stringify({
-          error: 'session_id and numeric amount are required for credit action'
+          error: 'session_id and a positive integer amount are required for credit action'
         }), {
           status: 400,
           headers: {
@@ -1259,28 +1279,16 @@ Deno.serve(async (req)=>{
         });
       }
       try {
-        const { data: existing, error: fetchErr } = await supabase.from('kiosk_sessions').select('credits').eq('session_id', session_id).single();
-        if (fetchErr || !existing) {
+        const { data: credits, error: creditError } = await supabase.rpc('kiosk_add_credits', {
+          p_session_id: session_id,
+          p_amount: amount,
+        });
+        if (creditError) {
+          console.error('Failed to add kiosk credits:', creditError);
           return new Response(JSON.stringify({
-            error: 'Session not found'
+            error: creditError.message || 'Failed to add credits'
           }), {
-            status: 404,
-            headers: {
-              ...corsHeaders,
-              'Content-Type': 'application/json'
-            }
-          });
-        }
-        const newCredits = (existing.credits || 0) + amount;
-        const { data: updated, error: updErr } = await supabase.from('kiosk_sessions').update({
-          credits: newCredits
-        }).eq('session_id', session_id).select().single();
-        if (updErr) {
-          console.error('Failed to update credits:', updErr);
-          return new Response(JSON.stringify({
-            error: updErr.message || updErr
-          }), {
-            status: 500,
+            status: creditError.code === 'P0002' ? 404 : 500,
             headers: {
               ...corsHeaders,
               'Content-Type': 'application/json'
@@ -1288,7 +1296,7 @@ Deno.serve(async (req)=>{
           });
         }
         return new Response(JSON.stringify({
-          credits: updated.credits
+          credits
         }), {
           status: 200,
           headers: {

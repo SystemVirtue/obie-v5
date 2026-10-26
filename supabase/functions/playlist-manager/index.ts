@@ -1,6 +1,7 @@
 // Playlist Manager Edge Function
 // Handles playlist CRUD operations and media scraping
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getAuthenticatedUserId, userOwnsPlayer } from '../_shared/authorization.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 function errorMessage(error: unknown): string {
@@ -35,7 +36,7 @@ function videoPlayabilityReason(video: any): string | null {
 
 async function recordVideoPlayability(supabase: any, mediaItemId: string | null, video: any, checkedBy: string): Promise<void> {
   if (!mediaItemId && !video?.id) return;
-  await supabase.rpc('record_youtube_playability', {
+  const { error } = await supabase.rpc('record_youtube_playability', {
     p_media_item_id: mediaItemId,
     p_youtube_id: video?.id || null,
     p_status: videoPlayabilityStatus(video),
@@ -50,6 +51,7 @@ async function recordVideoPlayability(supabase: any, mediaItemId: string | null,
       url: video?.url || null,
     },
   });
+  if (error) throw error;
 }
 
 async function findCloudflareFallback(supabase: any, youtubeId: string | null): Promise<any | null> {
@@ -252,6 +254,12 @@ Deno.serve(async (req)=>{
       headers: corsHeaders
     });
   }
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   try {
     // Create Supabase client (uses service role for admin operations)
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '', {
@@ -263,6 +271,37 @@ Deno.serve(async (req)=>{
     // Parse request body
     const body = await req.json();
     const { action, player_id, playlist_id, name, description, media_item_id, item_ids, url, current_index } = body;
+    const userId = await getAuthenticatedUserId(req);
+    if (!userId) {
+      return new Response(JSON.stringify({ error: 'Authentication required' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    let targetPlayerId = typeof player_id === 'string' ? player_id : null;
+    if (!targetPlayerId && typeof playlist_id === 'string') {
+      const { data: playlist, error: playlistError } = await supabase
+        .from('playlists')
+        .select('player_id')
+        .eq('id', playlist_id)
+        .maybeSingle();
+      if (playlistError) throw playlistError;
+      if (!playlist) {
+        return new Response(JSON.stringify({ error: 'Playlist not found' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      targetPlayerId = playlist.player_id;
+    }
+
+    if (targetPlayerId && !await userOwnsPlayer(supabase, userId, targetPlayerId)) {
+      return new Response(JSON.stringify({ error: 'Not authorized for this player' }), {
+        status: 403,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
     // Handle playlist creation
     if (action === 'create') {
       if (!player_id || !name) {
@@ -380,17 +419,12 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Get next position
-      const { data: maxPos } = await supabase.from('playlist_items').select('position').eq('playlist_id', playlist_id).order('position', {
-        ascending: false
-      }).limit(1).maybeSingle();
-      const nextPosition = (maxPos?.position ?? -1) + 1;
-      const { data: item, error: addError } = await supabase.from('playlist_items').insert({
-        playlist_id,
-        media_item_id,
-        position: nextPosition
-      }).select().maybeSingle();
+      const { data: items, error: addError } = await supabase.rpc('playlist_add_item', {
+        p_playlist_id: playlist_id,
+        p_media_item_id: media_item_id,
+      });
       if (addError) throw addError;
+      const item = Array.isArray(items) ? items[0] : items;
       if (!item) {
         return new Response(JSON.stringify({
           error: 'Failed to add item to playlist'
@@ -425,19 +459,11 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      const { error: removeError } = await supabase.from('playlist_items').delete().eq('playlist_id', playlist_id).eq('media_item_id', media_item_id);
-      if (removeError) throw removeError;
-      // Reorder remaining items
-      const { data: items } = await supabase.from('playlist_items').select('id').eq('playlist_id', playlist_id).order('position', {
-        ascending: true
+      const { error: removeError } = await supabase.rpc('playlist_remove_item', {
+        p_playlist_id: playlist_id,
+        p_media_item_id: media_item_id,
       });
-      if (items && items.length > 0) {
-        for(let i = 0; i < items.length; i++){
-          await supabase.from('playlist_items').update({
-            position: i
-          }).eq('id', items[i].id);
-        }
-      }
+      if (removeError) throw removeError;
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -461,12 +487,11 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Update positions
-      for(let i = 0; i < item_ids.length; i++){
-        await supabase.from('playlist_items').update({
-          position: i
-        }).eq('id', item_ids[i]).eq('playlist_id', playlist_id);
-      }
+      const { error: reorderError } = await supabase.rpc('playlist_reorder_items', {
+        p_playlist_id: playlist_id,
+        p_item_ids: item_ids,
+      });
+      if (reorderError) throw reorderError;
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -536,7 +561,7 @@ Deno.serve(async (req)=>{
           playabilitySummary.unknown++;
         }
 
-        const { data: mediaId } = await supabase.rpc('create_or_get_media_item', {
+        const { data: mediaId, error: mediaError } = await supabase.rpc('create_or_get_media_item', {
           p_source_id:   video.id,
           p_source_type: 'youtube',
           p_title:       video.title,
@@ -551,29 +576,24 @@ Deno.serve(async (req)=>{
             youtube_oembed_ok: typeof video.oembedOk === 'boolean' ? video.oembedOk : null,
           },
         });
+        if (mediaError) throw mediaError;
         if (mediaId) {
           await recordVideoPlayability(supabase, mediaId, video, playlist_id ? 'playlist_import' : 'playlist_scrape');
           const resolvedMediaId = await resolveImportedYouTubeMedia(supabase, mediaId, video);
           if (!resolvedMediaId) continue;
 
-          const { data: fullItem } = await supabase.from('media_items').select('*').eq('id', resolvedMediaId).maybeSingle();
+          const { data: fullItem, error: fullItemError } = await supabase.from('media_items').select('*').eq('id', resolvedMediaId).maybeSingle();
+          if (fullItemError) throw fullItemError;
           if (fullItem) mediaItems.push(fullItem);
         }
       }
       // If playlist_id provided, add items to playlist
       if (playlist_id) {
-        // Get current max position
-        const { data: maxPos } = await supabase.from('playlist_items').select('position').eq('playlist_id', playlist_id).order('position', {
-          ascending: false
-        }).limit(1).maybeSingle();
-        let position = (maxPos?.position || 0) + 1;
-        // Batch insert playlist items
-        const playlistItems = mediaItems.map((media)=>({
-            playlist_id,
-            media_item_id: media.id,
-            position: position++
-          }));
-        await supabase.from('playlist_items').insert(playlistItems);
+        const { error: appendError } = await supabase.rpc('playlist_append_items', {
+          p_playlist_id: playlist_id,
+          p_media_item_ids: mediaItems.map((media) => media.id),
+        });
+        if (appendError) throw appendError;
       }
       return new Response(JSON.stringify({
         media_items: mediaItems,
@@ -590,9 +610,10 @@ Deno.serve(async (req)=>{
     }
     // Handle setting a playlist as active for a player (server-side)
     if (action === 'set_active') {
-      if (!player_id || !playlist_id) {
+      if (!player_id || !playlist_id
+        || (current_index !== undefined && (!Number.isSafeInteger(current_index) || current_index < -1))) {
         return new Response(JSON.stringify({
-          error: 'player_id and playlist_id are required'
+          error: 'player_id and playlist_id are required; current_index must be an integer of -1 or greater'
         }), {
           status: 400,
           headers: {
@@ -601,28 +622,12 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Unset any existing active playlists for this player
-      const { error: unsetError } = await supabase.from('playlists').update({
-        is_active: false
-      }).eq('player_id', player_id);
-      if (unsetError) throw unsetError;
-      // Set the requested playlist active
-      const { error: setError } = await supabase.from('playlists').update({
-        is_active: true
-      }).eq('id', playlist_id);
-      if (setError) throw setError;
-      // Update player's active_playlist_id
-      const { error: playerUpdateError } = await supabase.from('players').update({
-        active_playlist_id: playlist_id
-      }).eq('id', player_id);
-      if (playerUpdateError) throw playerUpdateError;
-      // If current_index is provided, update player_status
-      if (current_index !== undefined) {
-        const { error: statusError } = await supabase.from('player_status').update({
-          now_playing_index: current_index
-        }).eq('player_id', player_id);
-        if (statusError) throw statusError;
-      }
+      const { error: activeError } = await supabase.rpc('playlist_set_active', {
+        p_player_id: player_id,
+        p_playlist_id: playlist_id,
+        p_current_index: current_index ?? null,
+      });
+      if (activeError) throw activeError;
       return new Response(JSON.stringify({
         success: true
       }), {
@@ -677,8 +682,6 @@ Deno.serve(async (req)=>{
           }
         });
       }
-      // Check current player state
-      const { data: currentStatus } = await supabase.from('player_status').select('state').eq('player_id', player_id).maybeSingle();
       // Use load_playlist RPC to import the playlist into queue
       const { data: loaded, error: importError } = await supabase.rpc('load_playlist', {
         p_player_id: player_id,
@@ -686,19 +689,6 @@ Deno.serve(async (req)=>{
         p_start_index: 0
       });
       if (importError) throw importError;
-      // Reset now_playing_index to -1 (Now Playing position)
-      // Only reset state/progress/current_media if player is not currently playing
-      const updateData: Record<string, unknown> = {
-        now_playing_index: -1
-      };
-      // If player is not playing or paused, reset the playback state
-      if (!currentStatus || currentStatus.state !== 'playing' && currentStatus.state !== 'paused') {
-        updateData.current_media_id = null;
-        updateData.state = 'idle';
-        updateData.progress = 0;
-      }
-      const { error: indexError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
-      if (indexError) throw indexError;
       return new Response(JSON.stringify({
         loaded_count: loaded?.[0]?.loaded_count || 0
       }), {

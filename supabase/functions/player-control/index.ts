@@ -1,6 +1,7 @@
 // Player Control Edge Function
 // Handles player status updates and heartbeat
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { getAuthenticatedUserId, userOwnsPlayer } from '../_shared/authorization.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 
 const nonMasterStatusLogThrottle = new Map<string, number>();
@@ -141,6 +142,12 @@ Deno.serve(async (req)=>{
       headers: corsHeaders
     });
   }
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
   try {
     // Create Supabase client with service role key to bypass RLS
     const supabase = createClient(Deno.env.get('SUPABASE_URL') ?? '', Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '');
@@ -176,6 +183,24 @@ Deno.serve(async (req)=>{
         }
       });
     }
+
+    const adminOnlyAction = ['reset_priority', 'identify_endpoint', 'set_master_endpoint'].includes(action);
+    if (adminOnlyAction || initiator === 'admin_ui') {
+      const userId = await getAuthenticatedUserId(req);
+      if (!userId) {
+        return new Response(JSON.stringify({ error: 'Authentication required' }), {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+      if (!await userOwnsPlayer(supabase, userId, player_id)) {
+        return new Response(JSON.stringify({ error: 'Not authorized for this player' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+    }
+
     // Handle heartbeat
     if (action === 'heartbeat') {
       const { data, error } = endpoint_id && session_id
@@ -759,18 +784,19 @@ Deno.serve(async (req)=>{
 
       if (!callerIsMaster) {
         if (action === 'update' && state === 'playing' && typeof expected_media_id === 'string') {
-          const { data: currentStatusForConfirmation } = await supabase
+          const { data: currentStatusForConfirmation, error: currentStatusError } = await supabase
             .from('player_status')
             .select('state, current_media_id, playback_started_at')
             .eq('player_id', player_id)
             .single();
+          if (currentStatusError) throw currentStatusError;
 
           if (
             currentStatusForConfirmation?.state === 'loading'
             && currentStatusForConfirmation?.current_media_id === expected_media_id
           ) {
             const playbackStartedAt = currentStatusForConfirmation.playback_started_at || new Date().toISOString();
-            const { error: confirmError } = await supabase
+            const { data: confirmedStatus, error: confirmError } = await supabase
               .from('player_status')
               .update({
                 state: 'playing',
@@ -783,8 +809,24 @@ Deno.serve(async (req)=>{
                 last_updated: new Date().toISOString(),
               })
               .eq('player_id', player_id)
-              .eq('current_media_id', expected_media_id);
+              .eq('current_media_id', expected_media_id)
+              .eq('state', 'loading')
+              .select('player_id')
+              .maybeSingle();
             if (confirmError) throw confirmError;
+            if (!confirmedStatus) {
+              return new Response(JSON.stringify({
+                success: true,
+                skipped: true,
+                reason: 'player_state_changed',
+              }), {
+                status: 200,
+                headers: {
+                  ...corsHeaders,
+                  'Content-Type': 'application/json'
+                }
+              });
+            }
 
             const queueConfirmation = await confirmReservedQueueItem(supabase, player_id, expected_media_id);
             await logSystemEvent(supabase, player_id, 'playback_started_confirmed_by_non_master', 'info', {
@@ -842,11 +884,12 @@ Deno.serve(async (req)=>{
         });
       }
 
-      const { data: currentStatusForUpdate } = await supabase
+      const { data: currentStatusForUpdate, error: currentStatusError } = await supabase
         .from('player_status')
         .select('state, current_media_id, source, playback_started_at')
         .eq('player_id', player_id)
         .single();
+      if (currentStatusError) throw currentStatusError;
 
       // For skip: capture current player state BEFORE updating, so we can decide
       // whether the player needs to fade out or whether it's already idle.
@@ -878,8 +921,35 @@ Deno.serve(async (req)=>{
       if (action === 'skip' && initiator === 'admin_ui') {
         updateData.last_recovery_reason = 'admin_skip';
       }
-      const { error: updateError } = await supabase.from('player_status').update(updateData).eq('player_id', player_id);
+      let statusUpdate = supabase
+        .from('player_status')
+        .update(updateData)
+        .eq('player_id', player_id);
+      if (typeof expected_media_id === 'string') {
+        statusUpdate = statusUpdate.eq('current_media_id', expected_media_id);
+      }
+      const { data: updatedStatus, error: updateError } = await statusUpdate
+        .select('player_id')
+        .maybeSingle();
       if (updateError) throw updateError;
+      if (!updatedStatus) {
+        await logSystemEvent(supabase, player_id, 'stale_player_status_update_ignored', 'warn', {
+          source: initiator || 'player_client',
+          action,
+          expected_media_id: typeof expected_media_id === 'string' ? expected_media_id : null,
+        });
+        return new Response(JSON.stringify({
+          success: true,
+          skipped: true,
+          reason: 'media_changed',
+        }), {
+          status: 200,
+          headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json'
+          }
+        });
+      }
       if (state === 'playing' && !currentStatusForUpdate?.playback_started_at) {
         const queueConfirmation = await confirmReservedQueueItem(
           supabase,
