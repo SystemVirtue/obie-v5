@@ -25,15 +25,18 @@ test('nav-01: admin loads and renders sidebar', async ({ page, consoleLogs, isLo
   expect(errors.length, errors.map(e => e.text).join(', ')).toBe(0);
 });
 
+// `expectedText` is matched against the view's <h1> inside <main>. It is kept
+// separate from the sidebar label because the two do not always agree — e.g.
+// the sidebar entry "All Playlists" renders an <h1> of "Playlists".
 const NAV_VIEWS: Array<{ group: string; child: string; expectedText: string }> = [
   { group: 'Queue',     child: '',                     expectedText: 'Queue'               },
-  { group: 'Playlists', child: 'All Playlists',        expectedText: 'All Playlists'       },
+  { group: 'Playlists', child: 'All Playlists',        expectedText: 'Playlists'           },
   { group: 'Playlists', child: 'Import Playlist',      expectedText: 'Import Playlist'     },
-  { group: 'Settings',  child: 'Playback',             expectedText: 'Playback'            },
-  { group: 'Settings',  child: 'Kiosk',                expectedText: 'Kiosk'               },
+  { group: 'Settings',  child: 'Playback',             expectedText: 'Playback Settings'   },
+  { group: 'Settings',  child: 'Kiosk',                expectedText: 'Kiosk Settings'      },
   { group: 'Settings',  child: 'Branding',             expectedText: 'Branding'            },
   { group: 'Settings',  child: 'Console Preferences',  expectedText: 'Console Preferences' },
-  { group: 'Logs',      child: '',                     expectedText: 'Logs'                },
+  { group: 'Logs',      child: '',                     expectedText: 'System Logs'         },
 ];
 
 for (const { group, child, expectedText } of NAV_VIEWS) {
@@ -52,7 +55,10 @@ for (const { group, child, expectedText } of NAV_VIEWS) {
       await page.waitForTimeout(300);
     }
 
-    await expect(page.getByText(expectedText)).toBeVisible({ timeout: 10_000 });
+    // Assert against the view's <h1> inside <main> rather than a page-wide
+    // getByText(), which also matches the identically-named sidebar button.
+    await expect(page.getByRole('main').getByRole('heading', { level: 1 }))
+      .toHaveText(expectedText, { timeout: 10_000 });
 
     const errors = consoleLogs.filter(l => l.type === 'error' && !l.text.includes('Auth session missing'));
     expect(errors.length, `Errors on "${expectedText}" view: ${errors.map(e => e.text).join(', ')}`).toBe(0);

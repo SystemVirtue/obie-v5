@@ -55,7 +55,7 @@ BEGIN
 
   RETURN QUERY SELECT v_queue.id, v_queue.type, v_queue.requested_by;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE OR REPLACE FUNCTION public.mark_queue_playback_failed(
   p_player_id UUID,
@@ -124,7 +124,7 @@ BEGIN
 
   RETURN QUERY SELECT v_queue.id, v_queue.type, v_queue.requested_by, v_action, v_next_retry_count;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE OR REPLACE FUNCTION public.queue_add(
   p_player_id UUID,
@@ -176,7 +176,7 @@ BEGIN
 
   RETURN v_queue_id;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 CREATE OR REPLACE FUNCTION public.queue_next(
   p_player_id         UUID,
@@ -455,7 +455,7 @@ BEGIN
     RETURN;
   END LOOP;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 GRANT EXECUTE ON FUNCTION public.confirm_queue_playback(UUID, UUID) TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.mark_queue_playback_failed(UUID, UUID, TEXT) TO authenticated, service_role;

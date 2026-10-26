@@ -524,7 +524,7 @@ function App() {
                   {queue.length > 0 ? (
                     <>
                       {queue.map((q, index) => (
-                        <div key={`${q.id}-1`} className="px-6 flex items-center gap-2">
+                        <div key={`${q.id}-1`} data-testid="queue-item" data-queue-type={q.type} className="px-6 flex items-center gap-2">
                           {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
                           <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
                           {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}
@@ -532,7 +532,7 @@ function App() {
                       ))}
                       {/* Duplicate content for seamless loop */}
                       {queue.map((q, index) => (
-                        <div key={`${q.id}-2`} className="px-6 flex items-center gap-2">
+                        <div key={`${q.id}-2`} data-testid="queue-item" data-queue-type={q.type} className="px-6 flex items-center gap-2">
                           {q.type === 'priority' && <span className="text-red-400 drop-shadow-lg">★</span>}
                           <span>{cleanDisplayText((q.media_item as any)?.title) || 'Untitled'} - <span className="text-gray-300 drop-shadow-lg">{cleanDisplayText((q.media_item as any)?.artist) || 'Unknown'}</span></span>
                           {q.type === 'priority' && index === queue.filter(item => item.type === 'priority').length - 1 && queue.some(item => item.type === 'normal') && <span className="text-gray-400 mx-4 drop-shadow-lg">•</span>}

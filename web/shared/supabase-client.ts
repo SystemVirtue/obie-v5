@@ -707,7 +707,19 @@ async function getFunctionInvokeErrorMessage(error: any): Promise<string> {
   if (context && typeof context.clone === 'function') {
     try {
       const body = await context.clone().text();
-      if (body) return `${error?.message || 'Edge Function error'}: ${body.slice(0, 500)}`;
+      if (body) {
+        // Edge Functions in this project return `{ "error": "..." }` on failure.
+        // Prefer that human-readable message over the generic supabase-js text
+        // ("Edge Function returned a non-2xx status code").
+        try {
+          const parsed = JSON.parse(body);
+          const message = parsed?.error ?? parsed?.message;
+          if (typeof message === 'string' && message.trim()) return message;
+        } catch {
+          // Not JSON — fall through and use the raw body.
+        }
+        return body.slice(0, 500);
+      }
     } catch {
       // Fall through to the generic message below.
     }
@@ -850,14 +862,15 @@ export async function callKioskHandler(params: {
   duration?: number | null;
 }) {
   try {
-    const apiKey = import.meta.env.VITE_KIOSK_API_KEY;
-    // Call Edge Function directly to bypass authentication requirements for public kiosk
+    // Public kiosk endpoint: send the publishable key ONLY as `apikey`.
+    // Do NOT send it as `Authorization: Bearer` -- the publishable key is not a
+    // JWT (it is a single-segment `sb_publishable_...` string), so Kong rejects
+    // it with 401 UNAUTHORIZED_INVALID_JWT_FORMAT when used as a Bearer token.
     const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${supabaseAnonKey}`,
-        ...(apiKey ? { apikey: apiKey } : {}),
+        apikey: supabaseAnonKey,
       },
       body: JSON.stringify(params),
     });
@@ -899,7 +912,12 @@ export async function callPlaylistManager(params: {
     body: params
   });
 
-  if (error) throw error;
+  // Surface the Edge Function's own JSON error message (e.g. "YouTube API keys
+  // not configured") instead of the generic "non-2xx status code" that
+  // supabase-js produces. Without this the Admin UI shows an opaque failure.
+  if (error) {
+    throw new Error(await getFunctionInvokeErrorMessage(error));
+  }
   return data;
 }
 
@@ -1302,8 +1320,20 @@ export async function signOut() {
  * Get current user
  */
 export async function getCurrentUser(): Promise<AuthUser | null> {
+  // Check for an existing session first. Calling getUser() with no session
+  // throws AuthSessionMissingError, which surfaces as an uncaught promise
+  // rejection on a cold page load before the user has signed in.
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+  if (sessionError) throw sessionError;
+  if (!session) return null;
+
   const { data: { user }, error } = await supabase.auth.getUser();
-  if (error) throw error;
+  if (error) {
+    const name = (error as { name?: string }).name;
+    const code = (error as { code?: string }).code;
+    if (name === 'AuthSessionMissingError' || code === 'session_missing') return null;
+    throw error;
+  }
   if (!user) return null;
 
   return {

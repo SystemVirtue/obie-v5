@@ -20,6 +20,7 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
     // Compact list view for iframe interface
     return (
       <div
+        data-testid="video-result-card"
         onClick={() => {
           console.log('VideoResultCard (list) clicked for video:', video);
           onClick(video);
@@ -53,6 +54,7 @@ export const VideoResultCard: React.FC<VideoResultCardProps> = ({
   // Grid view for standard search interface
   return (
     <div
+      data-testid="video-result-card"
       onClick={() => {
         console.log('VideoResultCard clicked for video:', video);
         onClick(video);

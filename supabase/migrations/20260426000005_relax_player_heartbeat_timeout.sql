@@ -23,4 +23,5 @@ BEGIN
     AND status = 'online'
     AND last_heartbeat < NOW() - INTERVAL '30 seconds';
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public;

@@ -31,7 +31,7 @@ fi
 # Check if YouTube API key is set
 if [ -z "$YOUTUBE_API_KEY" ]; then
   echo "ℹ️  Note: YOUTUBE_API_KEY environment variable is not set"
-  echo "   The Edge Function will use built-in rotating API keys"
+  echo "   The Edge Function will use the rotating key pool from supabase/functions/.env"
   echo ""
 fi
 

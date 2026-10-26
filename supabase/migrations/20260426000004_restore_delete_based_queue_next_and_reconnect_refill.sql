@@ -235,6 +235,7 @@ BEGIN
 
   RETURN QUERY SELECT TRUE, v_playlist_id, v_playlist_name, v_loaded_count;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = public;
 
 GRANT EXECUTE ON FUNCTION public.initialize_player_playlist(UUID) TO authenticated, service_role;

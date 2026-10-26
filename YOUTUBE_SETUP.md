@@ -36,24 +36,35 @@ supabase stop
 supabase start
 ```
 
-### Option B: Supabase Secrets (Recommended)
+### Option B: Supabase Edge Function Secrets (Recommended for CLI v2+)
 
-Create `.env` file in project root:
+Create a `.env` file **inside the `supabase/functions/` directory**:
 
 ```bash
-# /Users/mikeclarkin/Documents/GitHub/obie-v5/.env
-YOUTUBE_API_KEY=your-api-key-here
+# supabase/functions/.env
+YOUTUBE_API_KEY_1=your-first-api-key
+YOUTUBE_API_KEY_2=your-second-api-key
+# ... up to YOUTUBE_API_KEY_11
 ```
 
-Then link to Edge Functions:
+> **Important:** Supabase CLI v2 loads `supabase/functions/.env` into the Edge
+> Runtime automatically when you run `supabase start`. A `.env` in the project
+> root is *not* injected into Edge Functions. You must use the global CLI
+> (`/usr/local/bin/supabase`, v2.x) — the v1 CLI bundled in `node_modules`
+> does not support this path.
+
+Then restart the stack so the secrets are picked up:
 
 ```bash
-# Set the secret
-echo "YOUTUBE_API_KEY=your-api-key-here" > supabase/.env.local
-
-# Restart Supabase
 supabase stop
 supabase start
+```
+
+Verify the variables reached the runtime container:
+
+```bash
+docker inspect supabase_edge_runtime_<project> \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' | grep YOUTUBE
 ```
 
 ## Test It

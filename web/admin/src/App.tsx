@@ -3012,7 +3012,14 @@ function App() {
 
   // Auth
   useEffect(() => {
-    getCurrentUser().then(setUser).finally(() => setAuthLoading(false));
+    getCurrentUser()
+      .then(setUser)
+      .catch((err) => {
+        // No session on cold load is expected; anything else is worth logging.
+        console.warn('[auth] initial getCurrentUser failed:', err);
+        setUser(null);
+      })
+      .finally(() => setAuthLoading(false));
     const sub = subscribeToAuth(setUser);
     return () => sub.unsubscribe();
   }, []);

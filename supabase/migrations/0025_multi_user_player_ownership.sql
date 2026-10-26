@@ -88,11 +88,13 @@ $$ LANGUAGE plpgsql SECURITY DEFINER STABLE;
 
 -- players: owner sees only their row
 DROP POLICY IF EXISTS "Admin full access to players" ON players;
+DROP POLICY IF EXISTS "Owner access to own player" ON players;
 CREATE POLICY "Owner access to own player"
   ON players FOR ALL
   USING (owner_id = auth.uid());
 -- playlists: scoped via player ownership
 DROP POLICY IF EXISTS "Admin full access to playlists" ON playlists;
+DROP POLICY IF EXISTS "Owner access to own playlists" ON playlists;
 CREATE POLICY "Owner access to own playlists"
   ON playlists FOR ALL
   USING (
@@ -100,28 +102,32 @@ CREATE POLICY "Owner access to own playlists"
   );
 -- playlist_items: scoped via playlist → player ownership
 DROP POLICY IF EXISTS "Admin full access to playlist_items" ON playlist_items;
+DROP POLICY IF EXISTS "Owner access to own playlist items" ON playlist_items;
 CREATE POLICY "Owner access to own playlist items"
   ON playlist_items FOR ALL
   USING (
     playlist_id IN (
-      SELECT pi.playlist_id FROM playlists pi
+      SELECT pi.id FROM playlists pi
       JOIN players p ON p.id = pi.player_id
       WHERE p.owner_id = auth.uid()
     )
   );
 -- queue: scoped via player ownership
 DROP POLICY IF EXISTS "Admin full access to queue" ON queue;
+DROP POLICY IF EXISTS "Owner access to own queue" ON queue;
 CREATE POLICY "Owner access to own queue"
   ON queue FOR ALL
   USING (
     player_id IN (SELECT id FROM players WHERE owner_id = auth.uid())
   );
 -- Anon read of queue (for player window and kiosk)
+DROP POLICY IF EXISTS "Anon can read queue for their player" ON queue;
 CREATE POLICY "Anon can read queue for their player"
   ON queue FOR SELECT
   USING (true);
 -- player_status
 DROP POLICY IF EXISTS "Admin full access to player_status" ON player_status;
+DROP POLICY IF EXISTS "Owner full access to own player_status" ON player_status;
 CREATE POLICY "Owner full access to own player_status"
   ON player_status FOR ALL
   USING (
@@ -129,6 +135,7 @@ CREATE POLICY "Owner full access to own player_status"
   );
 -- player_settings
 DROP POLICY IF EXISTS "Admin full access to player_settings" ON player_settings;
+DROP POLICY IF EXISTS "Owner full access to own player_settings" ON player_settings;
 CREATE POLICY "Owner full access to own player_settings"
   ON player_settings FOR ALL
   USING (
@@ -136,27 +143,24 @@ CREATE POLICY "Owner full access to own player_settings"
   );
 -- system_logs
 DROP POLICY IF EXISTS "Admin full access to system_logs" ON system_logs;
+DROP POLICY IF EXISTS "Owner can read own system_logs" ON system_logs;
 CREATE POLICY "Owner can read own system_logs"
   ON system_logs FOR SELECT
   USING (
     player_id IS NULL
     OR player_id IN (SELECT id FROM players WHERE owner_id = auth.uid())
   );
+DROP POLICY IF EXISTS "Service role can insert system_logs" ON system_logs;
 CREATE POLICY "Service role can insert system_logs"
   ON system_logs FOR INSERT
   WITH CHECK (true);
--- playlist_positions (from migration 0024)
-DROP POLICY IF EXISTS "Admin full access to playlist_positions" ON playlist_positions;
-CREATE POLICY "Owner full access to own playlist_positions"
-  ON playlist_positions FOR ALL
-  USING (
-    player_id IN (SELECT id FROM players WHERE owner_id = auth.uid())
-  );
 -- -----------------------------------------------------------------------------
 -- 6. Anon policies for player/kiosk apps (read-only where needed)
 -- -----------------------------------------------------------------------------
+DROP POLICY IF EXISTS "Anon can read player settings" ON player_settings;
 CREATE POLICY "Anon can read player settings"
   ON player_settings FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Anon can read player status" ON player_status;
 CREATE POLICY "Anon can read player status"
   ON player_status FOR SELECT USING (true);
 -- Note: kiosk_sessions already has open anon policies from migration 0001.;
