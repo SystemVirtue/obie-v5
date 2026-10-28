@@ -57,6 +57,9 @@ function loadApiKeys(): ApiKey[] {
 const API_KEYS: ApiKey[] = loadApiKeys();
 let currentKeyIndex = 0;
 const failedKeys = new Set<number>();
+// Remember the most recent key that actually worked so warm isolates go straight
+// to it instead of walking the dead entries at the front of the pool.
+let lastKnownGoodIndex: number | null = null;
 
 // Validate that at least one API key is configured
 if (API_KEYS.length === 0) {
@@ -64,6 +67,12 @@ if (API_KEYS.length === 0) {
 }
 
 function getNextApiKey(): string {
+  // Prefer the last key known to work — dead keys are common in this pool and
+  // re-probing them on every warm invocation costs seconds of latency.
+  if (lastKnownGoodIndex !== null && !failedKeys.has(lastKnownGoodIndex)) {
+    console.log(`Using ${API_KEYS[lastKnownGoodIndex].name} (last known good)`);
+    return API_KEYS[lastKnownGoodIndex].key;
+  }
   // Find next valid key (not in failed list) from the rotation pool
   const startIndex = currentKeyIndex;
   do {
@@ -88,25 +97,69 @@ function markKeyAsFailed(apiKey: string): void {
   const index = API_KEYS.findIndex((k) => k.key === apiKey);
   if (index !== -1) {
     failedKeys.add(index);
+    if (lastKnownGoodIndex === index) lastKnownGoodIndex = null;
     console.log(`Marked ${API_KEYS[index].name} as failed/quota exceeded`);
   }
+}
+
+function markKeyAsGood(apiKey: string): void {
+  const index = API_KEYS.findIndex((k) => k.key === apiKey);
+  if (index !== -1) lastKnownGoodIndex = index;
 }
 
 function getYouTubeErrorReason(errorData: any): string | null {
   return errorData?.error?.errors?.[0]?.reason || errorData?.error?.status || null;
 }
 
-function shouldRotateApiKey(reason: string | null): boolean {
-  return [
-    'quotaExceeded',
-    'dailyLimitExceeded',
-    'dailyLimitExceededUnreg',
-    'ipRefererBlocked',
-    'forbidden',
-    'accessNotConfigured',
-    'youtubeSignupRequired',
-    'keyInvalid',
-  ].includes(reason || '');
+// Reasons that mean "this key is unusable, try the next one" rather than
+// "the query itself is malformed". Keep this list in sync with the key-audit
+// function so a bad key is never mistaken for a bad request.
+const KEY_FAILURE_REASONS = [
+  'quotaExceeded',
+  'dailyLimitExceeded',
+  'dailyLimitExceededUnreg',
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'ipRefererBlocked',
+  'forbidden',
+  'accessNotConfigured',
+  'youtubeSignupRequired',
+  'keyInvalid',
+  'keyExpired',
+  'API_KEY_INVALID',
+  'API_KEY_EXPIRED',
+  'API_KEY_SERVICE_BLOCKED',
+  'API_KEY_HTTP_REFERRER_BLOCKED',
+  'API_KEY_IP_ADDRESS_BLOCKED',
+  'PERMISSION_DENIED',
+  'SERVICE_DISABLED',
+];
+
+// Google returns HTTP 400 with reason "badRequest" (not "keyInvalid") for a
+// deleted/revoked key: "API key not valid. Please pass a valid API key."
+// That used to fall through as a generic failure, so rotation stopped dead on
+// the first dead key and never reached the healthy ones behind it. Match on the
+// message so dead keys are still detected if Google changes the reason code.
+const KEY_FAILURE_MESSAGE_PATTERNS = [
+  'api key not valid',
+  'api key is invalid',
+  'api key expired',
+  'api key is expired',
+  'not a valid api key',
+  'keyinvalid',
+  'api_key_invalid',
+  'api_key_expired',
+  'are blocked',
+  'has not been used in project',
+  'api key restriction',
+  'service is disabled',
+  'billing',
+];
+
+function shouldRotateApiKey(reason: string | null, message: string | null): boolean {
+  if (reason && KEY_FAILURE_REASONS.includes(reason)) return true;
+  const text = (message || '').toLowerCase();
+  return KEY_FAILURE_MESSAGE_PATTERNS.some((pattern) => text.includes(pattern));
 }
 
 async function handleYouTubeApiError(response: Response, apiKey: string): Promise<void> {
@@ -114,10 +167,15 @@ async function handleYouTubeApiError(response: Response, apiKey: string): Promis
 
   const errorData = await response.clone().json().catch(() => ({}));
   const reason = getYouTubeErrorReason(errorData);
-  if (!shouldRotateApiKey(reason)) return;
+  const message = errorData?.error?.message || `${response.status} ${response.statusText}`;
+
+  if (!shouldRotateApiKey(reason, message)) {
+    // Not a key problem (malformed query etc). Surface Google's real message
+    // instead of the opaque "400 Bad Request" statusText so logs are actionable.
+    throw new Error(`YouTube API error (${reason || response.status}): ${message}`);
+  }
 
   markKeyAsFailed(apiKey);
-  const message = errorData?.error?.message || `${response.status} ${response.statusText}`;
   throw new Error(`YouTube API key failed (${reason || response.status}): ${message}`);
 }
 
@@ -230,6 +288,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
             }
           });
         }
+        markKeyAsGood(apiKey);
         break;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));

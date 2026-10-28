@@ -39,6 +39,7 @@ function App() {
   }, [queue]);
   const [playerStatus, setPlayerStatus] = useState<PlayerStatus | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -229,12 +230,28 @@ function App() {
         const r2Videos = r2Settled.status === 'fulfilled' ? (r2Settled.value?.videos || []) : [];
 
         setSearchResults([...r2Videos, ...ytVideos]);
+
+        // Rejections used to be swallowed here, so a broken YouTube backend was
+        // indistinguishable from "no results" on the kiosk screen.
+        const failures: string[] = [];
+        if (ytSettled.status === 'rejected') {
+          failures.push(`YouTube search unavailable (${(ytSettled.reason as any)?.message ?? ytSettled.reason})`);
+          console.error('YouTube search failed:', ytSettled.reason);
+        }
+        if (r2Settled.status === 'rejected') {
+          failures.push(`Library search unavailable (${(r2Settled.reason as any)?.message ?? r2Settled.reason})`);
+          console.error('Library search failed:', r2Settled.reason);
+        }
+        setSearchError(failures.length ? failures.join(' · ') : null);
+
         setShowSearchResults(true);
         setShowKeyboard(false);
       } catch (error) {
         console.error('Search failed:', error);
         setSearchResults([]);
-        setShowSearchResults(false);
+        setSearchError(`Search failed: ${(error as any)?.message ?? error}`);
+        setShowSearchResults(true);
+        setShowKeyboard(false);
       } finally {
         setIsSearching(false);
       }
@@ -477,10 +494,12 @@ function App() {
               setShowKeyboard(true);
               setShowSearchResults(false);
               setSearchQuery('');
+              setSearchError(null);
             }}
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             searchResults={searchResults}
+            searchError={searchError}
             isSearching={isSearching}
             showKeyboard={showKeyboard}
             showSearchResults={showSearchResults}

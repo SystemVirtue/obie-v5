@@ -475,7 +475,10 @@ Deno.serve(async (req)=>{
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${Deno.env.get('SUPABASE_ANON_KEY')}`,
+              // Service role, matching the `search` branch. The anon key here meant
+              // enqueue-time scraping depended on anonymous gateway auth, so a valid
+              // search could still fail at add-to-queue for unrelated reasons.
+              'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
             },
             body: JSON.stringify({ url, type: 'auto' }),
           });
@@ -483,8 +486,23 @@ Deno.serve(async (req)=>{
           if (!scraperResp.ok) {
             const errorText = await scraperResp.text();
             console.error('Scraper failed:', errorText);
+            // This branch previously returned without writing to system_logs, so
+            // kiosk enqueue failures left no trace in the Logs view (which is why
+            // the reported failure looked like nothing happened at all).
+            await supabase.from('system_logs').insert({
+              player_id: requestPlayerId,
+              event: 'kiosk_request_failed',
+              severity: 'error',
+              payload: {
+                reason: 'YouTube scraper failed while resolving request URL',
+                url,
+                scraper_status: scraperResp.status,
+                scraper_error: errorText?.slice(0, 500) || null,
+              }
+            });
             return new Response(JSON.stringify({
-              error: 'Failed to scrape video URL'
+              error: 'Failed to scrape video URL',
+              details: errorText?.slice(0, 300) || null
             }), {
               status: 400,
               headers: {

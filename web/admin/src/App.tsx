@@ -770,6 +770,30 @@ function SearchPanel() {
       const ytVideos = ytSettled.status === 'fulfilled' ? (ytSettled.value?.videos ?? []) : [];
       const r2Videos = r2Settled.status === 'fulfilled' ? (r2Settled.value?.videos ?? []) : [];
       setSearchResults([...r2Videos, ...ytVideos]);
+
+      // Previously allSettled rejections were swallowed, so a broken YouTube
+      // search looked identical to "no results". Surface it instead while
+      // keeping whatever the other branch returned.
+      const failures: string[] = [];
+      if (ytSettled.status === 'rejected') {
+        failures.push(`YouTube search failed (${(ytSettled.reason as any)?.message ?? ytSettled.reason})`);
+        console.error('YouTube search failed:', ytSettled.reason);
+      }
+      if (r2Settled.status === 'rejected') {
+        failures.push(`Library search failed (${(r2Settled.reason as any)?.message ?? r2Settled.reason})`);
+        console.error('Library search failed:', r2Settled.reason);
+      }
+      if (failures.length) {
+        const okCount = r2Videos.length + ytVideos.length;
+        showStatus(
+          okCount
+            ? `${failures.join(' · ')} — showing ${okCount} result(s) from the working source.`
+            : failures.join(' · '),
+          false,
+        );
+      } else if (!ytVideos.length && !r2Videos.length) {
+        showStatus('No results found.', false);
+      }
     } catch (err) {
       console.error('Search failed:', err);
       showStatus('Search failed. Check console for details.', false);
