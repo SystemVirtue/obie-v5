@@ -845,7 +845,7 @@ export async function callDownloadVideo(params: {
 
 /**
  * Call kiosk handler edge function
- */
+ *
 export async function callKioskHandler(params: {
   session_id?: string;
   player_id?: string;
@@ -877,6 +877,85 @@ export async function callKioskHandler(params: {
         'Content-Type': 'application/json',
         apikey: supabaseAnonKey,
         ...(anonKeyIsJwt ? { 'Authorization': `Bearer ${supabaseAnonKey}` } : {}),
+      },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errorData = JSON.parse(errorText);
+        errorMessage = errorData.error || errorData.message || errorMessage;
+      } catch {
+        errorMessage = errorText || errorMessage;
+      }
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (err: any) {
+    throw err;
+  }
+}
+/**
+ * Call kiosk handler edge function
+ *
+ * Replace the existing callKioskHandler() in web/shared/supabase-client.ts
+ * with this version. Everything else in that file stays the same.
+ *
+ * CHANGE: `admin_request` is gated server-side (getAuthenticatedUserId +
+ * userOwnsPlayer), so it must send the signed-in admin's session JWT as
+ * `Authorization: Bearer <access_token>`. All other actions (init, search,
+ * credit, request, check, search_r2, request_r2) remain public/anonymous.
+ */
+export async function callKioskHandler(params: {
+  session_id?: string;
+  player_id?: string;
+  action: 'init' | 'search' | 'credit' | 'request' | 'check' | 'search_r2' | 'request_r2' | 'admin_request';
+  query?: string;
+  media_item_id?: string;
+  amount?: number;
+  url?: string;
+  r2_file_id?: string;
+  add_to_queue?: boolean;
+  title?: string;
+  artist?: string | null;
+  thumbnail?: string | null;
+  duration?: number | null;
+}) {
+  try {
+    // Public kiosk endpoint. Which auth header the gateway accepts depends on the
+    // project's key generation, so send both and let it pick:
+    //  - legacy projects (legacy anon/service_role JWTs): the gateway ignores
+    //    `apikey` and requires `Authorization: Bearer <JWT>`, otherwise it replies
+    //    401 UNAUTHORIZED_NO_AUTH_HEADER.
+    //  - newer projects (`sb_publishable_...` keys): the anon key is a
+    //    single-segment non-JWT, so `Bearer` is rejected with
+    //    401 UNAUTHORIZED_INVALID_JWT_FORMAT and only `apikey` is accepted.
+    const anonKeyIsJwt = supabaseAnonKey.split('.').length === 3;
+
+    let authHeader: Record<string, string> = anonKeyIsJwt
+      ? { Authorization: `Bearer ${supabaseAnonKey}` }
+      : {};
+
+    // Admin-only action: use the signed-in admin's session token instead of the
+    // anon key. `apikey` below stays the anon/publishable key.
+    if (params.action === 'admin_request') {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session?.access_token) {
+        throw new Error('Admin session expired - please sign in again');
+      }
+      authHeader = { Authorization: `Bearer ${session.access_token}` };
+    }
+
+    const response = await fetch(`${supabaseUrl}/functions/v1/kiosk-handler`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        ...authHeader,
       },
       body: JSON.stringify(params),
     });
