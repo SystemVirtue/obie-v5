@@ -27,6 +27,7 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
   searchSource = 'youtube',
   onSearchSourceChange,
   cloudflareEnabled = false,
+  searchError = null,
 }) => {
   console.log('SearchInterface props:', {
     isOpen,
@@ -106,6 +107,12 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
               <BackToSearchButton onClick={onBackToSearch} />
             </div>
 
+            {searchError && !isSearching && (
+              <div className="mx-6 mt-4 px-4 py-3 rounded border-2 border-red-500 bg-red-900/40 text-red-100 text-lg font-semibold">
+                {searchError}
+              </div>
+            )}
+
             {isSearching ? (
               <div className="flex-1 flex items-center justify-center">
                 <div className="text-2xl text-amber-200">Searching...</div>
@@ -150,6 +157,11 @@ export const SearchInterface: React.FC<SearchInterfaceProps> = ({
                       />
                     ))}
                   </div>
+                  {!paginatedResults.length && !searchError && (
+                    <div className="text-center text-2xl text-amber-200 py-12">
+                      No results found
+                    </div>
+                  )}
                   {/* Pagination Controls */}
                   <div className="flex justify-center items-center gap-4 mt-6">
                     <Button

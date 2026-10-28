@@ -34,4 +34,6 @@ export interface SearchInterfaceProps {
   searchSource?: 'youtube' | 'cloudflare';
   onSearchSourceChange?: (source: 'youtube' | 'cloudflare') => void;
   cloudflareEnabled?: boolean;
+  /** Set when one or both search backends failed, so the kiosk shows why results are missing. */
+  searchError?: string | null;
 }
