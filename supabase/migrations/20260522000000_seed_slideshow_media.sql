@@ -12,11 +12,22 @@
 -- regenerate them against the live bucket.
 --
 -- Guarded on an empty manifest so re-running this never clobbers a real scan or
--- an admin's hand-curated list. Deliberately leaves `slideshow_enabled` alone:
--- seeding files should not switch the overlay on by itself.
+-- an admin's hand-curated list.
+--
+-- `slideshow_enabled` IS flipped on here. The column is created by the previous
+-- migration in this same push, so no admin has ever toggled it: there is no prior
+-- intent to override. Seeding files without enabling them would leave the overlay
+-- invisible, so the seed turns it on to make the feature actually render. Toggling
+-- "SlideShow" off in the admin Playback settings still takes precedence from then
+-- on, because the guard means this statement never runs twice.
+--
+-- `slideshow_folder` is deliberately left untouched (default NULL = bucket root),
+-- matching where these 89 files actually live. Set a prefix in the admin if the
+-- media is ever moved into a subfolder.
 
 UPDATE public.player_settings
-SET slideshow_media = $manifest$[
+SET slideshow_enabled = true,
+    slideshow_media = $manifest$[
   {
     "url": "https://syccqoextpxifmumvxqw.supabase.co/storage/v1/object/public/Obie_Birthday_Media/8BE06CD8-55A4-43F4-80E7-693500F55EA6%201.mov",
     "type": "video",
