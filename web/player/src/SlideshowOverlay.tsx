@@ -6,14 +6,23 @@
 //     interaction with the click-prevention overlay. It only paints.
 //   * `pointer-events: none`, so it can never swallow a click or block the
 //     "click to play when paused" behaviour underneath it.
+//   * Transparent layer, and the media itself is inset by 5% of the viewport on
+//     every edge. The now-playing video therefore stays VISIBLE behind and
+//     around the slide — nothing is ever hidden or blacked out.
+//   * Media is FITTED, not cropped to fill: `object-fit: contain` keeps the
+//     whole still/clip on screen inside the allowed inset area, and the Ken
+//     Burns move travels *under* fit so a zoom never crops it either.
 //   * Occlusion does not change layout geometry, so the YouTube iframe's
-//     IntersectionObserver viewability is unaffected — the music video keeps
+//     IntersectionObserver viewability is unaffected (now unobstructed, so
+//     viewability is at least as good as before) — the music video keeps
 //     playing and its audio keeps flowing at the configured level.
 //   * Every slideshow <video> is muted with volume pinned to 0. Only the music
 //     video is ever audible. Slideshow media never enters the audio graph.
 //   * Single-slot renderer: exactly one media element is mounted at a time, so
 //     TV/kiosk hardware never has to decode two clips at once.
-//   * Fades are plain CSS opacity transitions — no requestAnimationFrame loop.
+//   * Stills use a randomly chosen transition: a plain fade-in/fade-out, or a
+//     slow 2s "Ken Burns" push-in / pull-back. Both are plain CSS transitions —
+//     no requestAnimationFrame animation loop.
 //   * Fail-open: a bad URL skips forward; the overlay never black-screens or
 //     blocks playback.
 
@@ -29,6 +38,26 @@ const VIDEO_EXT = /\.(mp4|webm|m4v|mov|ogv|ogg|mkv)(?:[?#]|$)/i;
 const VIDEO_SAFETY_MS = 180_000;
 /** Grace period added to an image's hold time in case `load` never fires. */
 const IMAGE_LOAD_GRACE_MS = 15_000;
+/** Duration of the slow "Ken Burns" push/pull applied to still images. */
+const IMAGE_ZOOM_MS = 2_000;
+/** How far the Ken Burns move travels: the still starts 8% under fit and grows. */
+const IMAGE_ZOOM_SCALE = 1.08;
+/** Inset from every edge so the now-playing video stays visible around a slide. */
+const MEDIA_INSET = '5%';
+
+/** Transition style for a still image. */
+type ImageMotion = 'fade' | 'zoom-in' | 'zoom-out';
+
+/**
+ * Pick a transition for the next still. Half the stills fade plainly; the other
+ * half use the slow Ken Burns move, split evenly between pushing in and pulling
+ * back. Randomised per slide so the rotation never feels mechanical.
+ */
+function pickImageMotion(): ImageMotion {
+  if (Math.random() < 0.5) return 'fade';
+  return Math.random() < 0.5 ? 'zoom-in' : 'zoom-out';
+}
+
 
 /**
  * Coerce whatever is stored in `player_settings.slideshow_media` into a clean,
@@ -100,6 +129,11 @@ export default function SlideshowOverlay({
 
   const [current, setCurrent] = useState<Slide | null>(null);
   const [visible, setVisible] = useState(false);
+  // Transition chosen for the current still, plus whether its Ken Burns move has
+  // been kicked off. `motionOn` only ever flips false -> true for a slide, so a
+  // zoom never rewinds while the slide is fading out.
+  const [imageMotion, setImageMotion] = useState<ImageMotion>('fade');
+  const [motionOn, setMotionOn] = useState(false);
 
   const orderRef = useRef<number[]>([]);
   const cursorRef = useRef(0);
@@ -185,6 +219,8 @@ export default function SlideshowOverlay({
     if (!active || list.length === 0) {
       setVisible(false);
       setCurrent(null);
+      setMotionOn(false);
+      setImageMotion('fade');
       return;
     }
 
@@ -195,7 +231,7 @@ export default function SlideshowOverlay({
     const advance = () => {
       if (cancelled) return;
       clearTimer();
-      setVisible(false); // fade the current slide out onto the opaque black backdrop
+      setVisible(false); // fade the current slide out, revealing the video behind
 
       timerRef.current = window.setTimeout(() => {
         if (cancelled) return;
@@ -209,12 +245,21 @@ export default function SlideshowOverlay({
 
         lastUrlRef.current = slide.url;
         currentUrlRef.current = slide.url;
+
+        // Pick this still's transition up front so the new element mounts at its
+        // *starting* transform (under fit for a push-in, exactly fit for a
+        // pull-back) and the CSS transition has somewhere to travel from.
+        // Videos never zoom.
+        setImageMotion(slide.type === 'image' ? pickImageMotion() : 'fade');
+        setMotionOn(false);
         setCurrent(slide);
 
-        // Next frame, so the new element mounts at opacity 0 and the CSS
-        // transition actually runs 0 -> 1 instead of snapping in.
+        // Next frame, so the new element mounts at opacity 0 (and at its base
+        // scale) and the CSS transition actually runs instead of snapping in.
         requestAnimationFrame(() => {
-          if (!cancelled) setVisible(true);
+          if (cancelled) return;
+          setVisible(true);
+          setMotionOn(true);
         });
 
         preload(peekNext());
@@ -270,57 +315,87 @@ export default function SlideshowOverlay({
   if (!active || !current) return null;
 
   const fadeSeconds = Math.max(0, fadeMs) / 1000;
+  const zoomSeconds = IMAGE_ZOOM_MS / 1000;
+  const zooming = current.type === 'image' && imageMotion !== 'fade';
+
+  // The move travels *below* fit rather than above it, so a still is never
+  // cropped or pushed off screen: a push-in starts at fit-and-shrunk and grows
+  // to exactly fit, a pull-back starts at fit and settles back down.
+  // `motionOn` only flips true once, so the move never rewinds while the slide
+  // is fading out.
+  const fitScale = 1 / IMAGE_ZOOM_SCALE;
+  const scale = !zooming
+    ? 1
+    : imageMotion === 'zoom-in'
+      ? motionOn
+        ? 1
+        : fitScale
+      : motionOn
+        ? fitScale
+        : 1;
+
   const mediaStyle = {
     position: 'absolute' as const,
     inset: 0,
     width: '100%',
     height: '100%',
-    objectFit: 'cover' as const,
+    // `contain`, not `cover`: fit the whole still/clip inside the allowed area
+    // instead of zooming-to-fill and cropping its edges off screen.
+    objectFit: 'contain' as const,
     objectPosition: 'center center',
+    transform: zooming ? `scale(${scale})` : 'none',
+    transformOrigin: 'center center',
     opacity: visible ? 1 : 0,
-    transition: `opacity ${fadeSeconds}s ease-in-out`,
+    transition: zooming
+      ? `opacity ${fadeSeconds}s ease-in-out, transform ${zoomSeconds}s ease-in-out`
+      : `opacity ${fadeSeconds}s ease-in-out`,
   };
 
   return (
     <div
       aria-hidden="true"
-      className="absolute inset-0 w-full h-full overflow-hidden pointer-events-none"
-      style={{ zIndex: 9, background: '#000' }}
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      style={{ zIndex: 9 }}
     >
-      {current.type === 'image' ? (
-        <img
-          key={current.url}
-          src={current.url}
-          alt=""
-          draggable={false}
-          onLoad={handleImageLoad}
-          onError={() => advanceRef.current()}
-          style={mediaStyle}
-        />
-      ) : (
-        <video
-          key={current.url}
-          ref={setVideoEl}
-          src={current.url}
-          muted
-          autoPlay
-          playsInline
-          preload="auto"
-          controls={false}
-          disablePictureInPicture
-          tabIndex={-1}
-          onEnded={() => advanceRef.current()}
-          onError={() => advanceRef.current()}
-          // Belt-and-braces for "mute all slideshow audio": if anything nudges
-          // the element's volume, snap it straight back to silent.
-          onVolumeChange={(event) => {
-            const el = event.currentTarget;
-            if (!el.muted) el.muted = true;
-            if (el.volume !== 0) el.volume = 0;
-          }}
-          style={mediaStyle}
-        />
-      )}
+      {/* Transparent layer: the now-playing video stays visible behind the slide
+          and in the border. The inner clip box holds the 5% inset and stops the
+          Ken Burns zoom from spilling into that border. */}
+      <div style={{ position: 'absolute', inset: MEDIA_INSET, overflow: 'hidden' }}>
+        {current.type === 'image' ? (
+          <img
+            key={current.url}
+            src={current.url}
+            alt=""
+            draggable={false}
+            onLoad={handleImageLoad}
+            onError={() => advanceRef.current()}
+            style={mediaStyle}
+          />
+        ) : (
+          <video
+            key={current.url}
+            ref={setVideoEl}
+            src={current.url}
+            muted
+            autoPlay
+            playsInline
+            preload="auto"
+            controls={false}
+            disablePictureInPicture
+            tabIndex={-1}
+            onEnded={() => advanceRef.current()}
+            onError={() => advanceRef.current()}
+            // Belt-and-braces for "mute all slideshow audio": if anything nudges
+            // the element's volume, snap it straight back to silent.
+            onVolumeChange={(event) => {
+              const el = event.currentTarget;
+              if (!el.muted) el.muted = true;
+              if (el.volume !== 0) el.volume = 0;
+            }}
+            style={mediaStyle}
+          />
+        )}
+      </div>
     </div>
   );
 }
