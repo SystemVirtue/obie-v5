@@ -117,6 +117,16 @@ export interface PlayerStatus {
   local_url?: string | null;
 }
 
+/** One entry in the slideshow manifest (cached from the Supabase Storage slideshow folder). */
+export interface SlideshowMediaItem {
+  /** Public URL of the image or video file */
+  url: string;
+  /** Media kind; inferred from the file extension when omitted */
+  type?: 'image' | 'video';
+  /** Optional display name, only used for the admin preview list */
+  title?: string;
+}
+
 export interface PlayerSettings {
   player_id: string;
   loop: boolean;
@@ -144,6 +154,16 @@ export interface PlayerSettings {
   silence_skip_tail_seconds?: number;
   silence_skip_duration_ms?: number;
   silence_skip_threshold?: number;
+  /** When true the player renders a slideshow overlay on top of the now-playing video */
+  slideshow_enabled?: boolean;
+  /** Supabase Storage folder prefix scanned for slideshow media (source of truth) */
+  slideshow_folder?: string | null;
+  /** Cached manifest of `slideshow_folder`, so players never list Storage directly */
+  slideshow_media?: SlideshowMediaItem[];
+  /** How long each still image is shown, in seconds */
+  slideshow_image_seconds?: number;
+  /** Fade in/out duration between slides, in milliseconds */
+  slideshow_fade_ms?: number;
 }
 
 export interface KioskSession {
@@ -918,6 +938,99 @@ export async function callKioskHandler(params: {
   } catch (err: any) {
     throw err;
   }
+}
+
+// =============================================================================
+// SLIDESHOW MEDIA (Supabase Storage)
+// =============================================================================
+
+/** Public Supabase Storage bucket holding the slideshow stills and clips. */
+export const SLIDESHOW_BUCKET = 'Obie_Birthday_Media';
+
+const SLIDESHOW_IMAGE_RE = /\.(jpe?g|png|gif|webp|avif|bmp|svg)(?:[?#]|$)/i;
+const SLIDESHOW_VIDEO_RE = /\.(mp4|webm|m4v|mov|ogv|ogg|mkv)(?:[?#]|$)/i;
+
+/** True when a file name has an image extension the slideshow can render. */
+export function isSlideshowImageFile(name: string): boolean {
+  return SLIDESHOW_IMAGE_RE.test(name);
+}
+
+/** True when a file name has a video extension the slideshow can render. */
+export function isSlideshowVideoFile(name: string): boolean {
+  return SLIDESHOW_VIDEO_RE.test(name);
+}
+
+/**
+ * List the image/video files in a Supabase Storage folder, recursively.
+ *
+ * The bucket is public, so this runs straight from the browser with the anon key:
+ * no Edge Function, no R2 credentials. The result is cached in
+ * `player_settings.slideshow_media` so players never list the bucket themselves.
+ *
+ * Supabase's `list()` is not recursive — it returns one directory's immediate
+ * children — so subfolders are walked explicitly. Folder rows arrive with a null
+ * `metadata`, which is what distinguishes them from real files.
+ *
+ * @param prefix Optional folder prefix inside the bucket ('' or null = bucket root).
+ */
+export async function listSlideshowMedia(prefix?: string | null): Promise<SlideshowMediaItem[]> {
+  const root = String(prefix ?? '')
+    .trim()
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '');
+
+  const pageSize = 100;
+  const maxDepth = 4;
+  const found = new Map<string, SlideshowMediaItem>();
+  const visitedDirs = new Set<string>();
+
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (depth > maxDepth || visitedDirs.has(dir)) return;
+    visitedDirs.add(dir);
+
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await supabase.storage
+        .from(SLIDESHOW_BUCKET)
+        .list(dir, { limit: pageSize, offset, sortBy: { column: 'name', order: 'asc' } });
+
+      if (error) {
+        throw new Error(
+          `Could not list ${SLIDESHOW_BUCKET}${dir ? `/${dir}` : ''}: ${error.message}`,
+        );
+      }
+
+      const entries = data ?? [];
+      for (const entry of entries) {
+        const path = dir ? `${dir}/${entry.name}` : entry.name;
+
+        // Folders have no metadata; recurse instead of treating them as files.
+        if (!entry.metadata) {
+          await walk(path, depth + 1);
+          continue;
+        }
+
+        const type: 'image' | 'video' | null = SLIDESHOW_VIDEO_RE.test(entry.name)
+          ? 'video'
+          : SLIDESHOW_IMAGE_RE.test(entry.name)
+            ? 'image'
+            : null;
+        if (!type) continue;
+
+        const { data: publicData } = supabase.storage
+          .from(SLIDESHOW_BUCKET)
+          .getPublicUrl(path);
+        const url = publicData?.publicUrl;
+        if (!url) continue;
+
+        found.set(path, { url, type, title: entry.name });
+      }
+
+      if (entries.length < pageSize) break;
+    }
+  };
+
+  await walk(root, 0);
+  return [...found.values()];
 }
 
 /**

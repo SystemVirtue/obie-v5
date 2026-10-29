@@ -57,3 +57,6 @@ audit-playlists-vs-cloudflare.txt
 tests/.auth/
 playwright-report/
 test-results/
+
+# Tool cache
+.impeccable/

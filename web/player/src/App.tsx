@@ -19,6 +19,7 @@ import {
   type PlayerEndpoint,
   type AdminBroadcast,
 } from '@shared/supabase-client';
+import SlideshowOverlay from './SlideshowOverlay';
 
 const PLAYER_ID = '00000000-0000-0000-0000-000000000001';
 const YOUTUBE_EMBED_HOST = 'https://www.youtube-nocookie.com';
@@ -2480,6 +2481,18 @@ function App() {
           return false;
         }}
         style={{ pointerEvents: playerMode === 'ytm_desktop' ? 'none' : 'auto' }}
+      />
+
+      {/* Slideshow Overlay — presentational layer painted above the now-playing video.
+          Purely visual: pointer-events-none, all slideshow audio muted, and it never
+          calls into player control. Reads the manifest cached in player_settings by the
+          admin Playback settings, so the player never lists the Storage bucket itself.
+          Suppressed during error states so the error message underneath stays readable. */}
+      <SlideshowOverlay
+        active={!!settings?.slideshow_enabled && status?.state !== 'error'}
+        slides={settings?.slideshow_media}
+        imageSeconds={settings?.slideshow_image_seconds ?? 5}
+        fadeMs={settings?.slideshow_fade_ms ?? 600}
       />
 
       {identifyUntil && (

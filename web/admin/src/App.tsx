@@ -16,6 +16,8 @@ import {
   callPlayerControl,
   callPlaylistManager,
   callKioskHandler,
+  listSlideshowMedia,
+  SLIDESHOW_BUCKET,
   callYouTubeAlternativeFinder,
   callYouTubePlayabilityAudit,
   callYouTubeRemediationWorker,
@@ -37,6 +39,7 @@ import {
   type MediaItem,
   type AdminBroadcast,
   type R2File,
+  type SlideshowMediaItem,
   type SystemHealthReport,
   type YouTubeAlternativeCandidate,
   signIn,
@@ -1631,6 +1634,10 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
   const [promotingEndpointId, setPromotingEndpointId] = useState<string | null>(null);
   const [localMediaScanning, setLocalMediaScanning] = useState(false);
   const [localMediaScanResult, setLocalMediaScanResult] = useState<{ count: number; path: string } | null>(null);
+  const [slideshowScanning, setSlideshowScanning] = useState(false);
+  const [slideshowScanError, setSlideshowScanError] = useState<string | null>(null);
+  const [slideshowScanResult, setSlideshowScanResult] = useState<{ count: number; images: number; videos: number } | null>(null);
+  const [slideshowManualUrl, setSlideshowManualUrl] = useState('');
 
   useEffect(() => { setLocal(settings ? { ...settings } : null); }, [settings]);
   useEffect(() => {
@@ -1671,6 +1678,11 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     silence_skip_tail_seconds: local.silence_skip_tail_seconds ?? 20,
     silence_skip_duration_ms: local.silence_skip_duration_ms ?? 3000,
     silence_skip_threshold: local.silence_skip_threshold ?? 0.01,
+    slideshow_enabled: local.slideshow_enabled ?? false,
+    slideshow_folder: local.slideshow_folder ?? null,
+    slideshow_media: local.slideshow_media ?? [],
+    slideshow_image_seconds: local.slideshow_image_seconds ?? 5,
+    slideshow_fade_ms: local.slideshow_fade_ms ?? 600,
   }) : Promise.resolve();
   const handleSaveKiosk = () => local ? saveFields({
     freeplay: local.freeplay,
@@ -1692,6 +1704,76 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await (supabase as any).from('player_settings').update({ [field]: newVal }).eq('player_id', PLAYER_ID);
     } catch (e) { console.error(e); set(field, !newVal); }
+  };
+
+  /**
+   * Scan the configured Supabase Storage folder prefix and cache the manifest.
+   *
+   * Slideshow media lives in the public `Obie_Birthday_Media` Storage bucket, not
+   * in the song catalog's R2 bucket, so the folder is listed straight from the
+   * browser with the anon key — no Edge Function and no credentials. The result
+   * is persisted immediately: "Scan" is an explicit action with an expected
+   * result, so leaving it unsaved would look broken.
+   */
+  const handleScanSlideshowFolder = async () => {
+    const prefix = (local?.slideshow_folder ?? '').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    setSlideshowScanning(true);
+    setSlideshowScanError(null);
+    setSlideshowScanResult(null);
+    try {
+      const media = await listSlideshowMedia(prefix);
+      // An empty result is treated as a failed scan, not a request to empty the
+      // slideshow: a mistyped prefix, a permissions block, or a network hiccup
+      // all surface as "zero files", and persisting that would blank the player,
+      // which reads only this cache. "Clear All" is the explicit way to empty it.
+      if (media.length === 0) {
+        setSlideshowScanError(
+          `No image or video files found under "${prefix || '(bucket root)'}". Existing cached list was left unchanged — use "Clear All" to empty it.`
+        );
+        return;
+      }
+      set('slideshow_media', media);
+      setSlideshowScanResult({
+        count: media.length,
+        images: media.filter(m => m.type === 'image').length,
+        videos: media.filter(m => m.type === 'video').length,
+      });
+      await saveFields({ slideshow_folder: local?.slideshow_folder ?? null, slideshow_media: media });
+    } catch (e: unknown) {
+      setSlideshowScanError(e instanceof Error ? e.message : 'Folder scan failed');
+    } finally {
+      setSlideshowScanning(false);
+    }
+  };
+
+  /** Fallback when the folder scan is unavailable: paste a single media URL. */
+  const handleAddSlideshowUrl = async () => {
+    const url = slideshowManualUrl.trim();
+    if (!url) return;
+    if (!/^https?:\/\//i.test(url)) { setSlideshowScanError('URL must start with http:// or https://'); return; }
+    const existing = local?.slideshow_media ?? [];
+    if (existing.some(m => m.url === url)) { setSlideshowScanError('That URL is already in the slideshow.'); return; }
+    const type: 'image' | 'video' = /\.(mp4|webm|m4v|mov|ogv|ogg|mkv)(?:[?#]|$)/i.test(url) ? 'video' : 'image';
+    const next: SlideshowMediaItem[] = [...existing, { url, type }];
+    set('slideshow_media', next);
+    setSlideshowManualUrl('');
+    setSlideshowScanError(null);
+    setSlideshowScanResult(null);
+    await saveFields({ slideshow_media: next });
+  };
+
+  const handleRemoveSlideshowUrl = async (url: string) => {
+    const next: SlideshowMediaItem[] = (local?.slideshow_media ?? []).filter(m => m.url !== url);
+    set('slideshow_media', next);
+    setSlideshowScanResult(null);
+    await saveFields({ slideshow_media: next });
+  };
+
+  const handleClearSlideshowMedia = async () => {
+    set('slideshow_media', []);
+    setSlideshowScanResult(null);
+    setSlideshowScanError(null);
+    await saveFields({ slideshow_media: [] });
   };
 
   const handleAddCredits = async (amt: number) => {
@@ -1832,6 +1914,7 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     const leftContent = <>
       <SettingsRow label="Shuffle Playlist when loaded" desc="Randomly reorder Up Next when a new playlist is loaded (Now Playing is never moved)"><Toggle checked={!!local.shuffle} onChange={() => handleToggle('shuffle')} /></SettingsRow>
       <SettingsRow label="Loop Playlist" desc="Restart from beginning when queue ends"><Toggle checked={!!local.loop} onChange={() => handleToggle('loop')} /></SettingsRow>
+      <SettingsRow label="SlideShow" desc="Overlay shuffled stills and short clips on top of the now-playing video. Slideshow audio is always muted and music playback is never interrupted."><Toggle checked={!!local.slideshow_enabled} onChange={() => handleToggle('slideshow_enabled' as keyof PlayerSettings)} /></SettingsRow>
       {'karaoke_mode' in local && <SettingsRow label="Karaoke Mode" desc="Enable karaoke UI on kiosk"><Toggle checked={!!local.karaoke_mode} onChange={() => handleToggle('karaoke_mode')} /></SettingsRow>}
       <SettingsRow label={`Volume: ${local.volume ?? 75}`} desc="Default player volume">
         <input type="range" min={0} max={100} value={local.volume ?? 75} onChange={e => set('volume', Number(e.target.value))} style={{ width: 160 }} />
@@ -1891,6 +1974,86 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
           )}
         </>
       )}
+      <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff' }}>Slideshow Media</div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+            {(local.slideshow_media ?? []).length} cached
+          </div>
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12, lineHeight: 1.7 }}>
+          Media is read from the public <strong style={{ color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>{SLIDESHOW_BUCKET}</strong> Storage bucket — no credentials needed.
+          Leave the prefix blank to scan the whole bucket, or enter a subfolder to scan just part of it.
+          Scan caches the file list; the player only ever reads that cache, never Storage itself.
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            placeholder="optional subfolder, e.g. photos/"
+            value={local.slideshow_folder ?? ''}
+            onChange={e => set('slideshow_folder', e.target.value)}
+            style={{ flex: '1 1 220px', minWidth: 180, padding: '8px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }}
+          />
+          <Btn variant="ghost" onClick={handleScanSlideshowFolder} disabled={slideshowScanning}>
+            {slideshowScanning ? <><Spinner size={12} /> Scanning…</> : 'Scan Folder'}
+          </Btn>
+          {(local.slideshow_media ?? []).length > 0 && (
+            <Btn variant="danger" onClick={handleClearSlideshowMedia} disabled={saving}>Clear All</Btn>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 10 }}>
+          <input
+            type="text"
+            placeholder="…or paste a single image / video URL"
+            value={slideshowManualUrl}
+            onChange={e => setSlideshowManualUrl(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddSlideshowUrl(); } }}
+            style={{ flex: '1 1 260px', minWidth: 200, padding: '8px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }}
+          />
+          <Btn variant="ghost" onClick={handleAddSlideshowUrl} disabled={!slideshowManualUrl.trim() || saving}>Add URL</Btn>
+        </div>
+        {slideshowScanResult && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11, color: '#4ade80' }}>
+            ✓ {slideshowScanResult.count} item{slideshowScanResult.count === 1 ? '' : 's'} — {slideshowScanResult.images} image{slideshowScanResult.images === 1 ? '' : 's'}, {slideshowScanResult.videos} video{slideshowScanResult.videos === 1 ? '' : 's'}
+          </div>
+        )}
+        {slideshowScanError && (
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 11, color: '#f87171' }}>✗ {slideshowScanError}</div>
+        )}
+        {(local.slideshow_media ?? []).length > 0 && (
+          <div style={{ marginTop: 14, display: 'flex', flexWrap: 'wrap', gap: 8, maxHeight: 168, overflowY: 'auto' }}>
+            {(local.slideshow_media ?? []).map((item, idx) => (
+              <div key={`${item.url}-${idx}`} style={{ position: 'relative', width: 78, height: 48, borderRadius: 8, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.12)', background: '#000' }}>
+                {item.type === 'video' ? (
+                  <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'rgba(255,255,255,0.55)', fontSize: 16 }}>▶</div>
+                ) : (
+                  <img src={item.url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                )}
+                <button
+                  onClick={() => handleRemoveSlideshowUrl(item.url)}
+                  title="Remove from slideshow"
+                  style={{ position: 'absolute', top: 2, right: 2, width: 16, height: 16, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.72)', color: '#fff', fontSize: 11, lineHeight: '16px', padding: 0, cursor: 'pointer' }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', marginTop: 14, alignItems: 'center' }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+            Image duration
+            <input type="number" min={1} max={60} value={local.slideshow_image_seconds ?? 5} onChange={e => set('slideshow_image_seconds', Number(e.target.value))} style={{ width: 64, textAlign: 'center', padding: '6px 8px', borderRadius: 8, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }} />
+            s
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+            Fade
+            <input type="number" min={0} max={3000} step={100} value={local.slideshow_fade_ms ?? 600} onChange={e => set('slideshow_fade_ms', Number(e.target.value))} style={{ width: 76, textAlign: 'center', padding: '6px 8px', borderRadius: 8, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none' }} />
+            ms
+          </label>
+        </div>
+        <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', lineHeight: 1.6 }}>
+          Scan results and item removals save immediately. Duration and fade changes save with the Save button below.
+        </div>
+      </div>
       <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 600, color: '#fff', marginBottom: 6 }}>Priority Player</div>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12 }}>
