@@ -1683,6 +1683,9 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
     slideshow_media: local.slideshow_media ?? [],
     slideshow_image_seconds: local.slideshow_image_seconds ?? 5,
     slideshow_fade_ms: local.slideshow_fade_ms ?? 600,
+    slideshow_kenburns_enabled: local.slideshow_kenburns_enabled ?? false,
+    slideshow_kenburns_style: local.slideshow_kenburns_style ?? 'random',
+    slideshow_vignette_strength: local.slideshow_vignette_strength ?? 0,
   }) : Promise.resolve();
   const handleSaveKiosk = () => local ? saveFields({
     freeplay: local.freeplay,
@@ -2052,6 +2055,42 @@ function SettingsPanel({ view, settings, prefs }: { view: ViewId; settings: Play
         </div>
         <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', lineHeight: 1.6 }}>
           Scan results and item removals save immediately. Duration and fade changes save with the Save button below.
+        </div>
+
+        <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+            <div style={{ fontFamily: 'var(--font-display)', fontSize: 13, fontWeight: 600, color: '#fff' }}>Still Image Motion</div>
+            <Toggle checked={!!local.slideshow_kenburns_enabled} onChange={() => handleToggle('slideshow_kenburns_enabled' as keyof PlayerSettings)} />
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.35)', marginBottom: 12, lineHeight: 1.7 }}>
+            Ken Burns keeps the move running for the whole image duration, so stills drift continuously instead of settling after 2s.
+            Stills are always shown in full within the framed area — they are never cropped to fill the screen.
+          </div>
+          <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'center', opacity: local.slideshow_kenburns_enabled ? 1 : 0.45 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+              Style
+              <select
+                value={local.slideshow_kenburns_style ?? 'random'}
+                disabled={!local.slideshow_kenburns_enabled}
+                onChange={e => set('slideshow_kenburns_style', e.target.value)}
+                style={{ padding: '7px 12px', borderRadius: 9, background: '#111', border: '1px solid rgba(255,255,255,0.1)', color: '#fff', fontFamily: 'var(--font-mono)', fontSize: 12, outline: 'none', cursor: local.slideshow_kenburns_enabled ? 'pointer' : 'default' }}
+              >
+                <option value="random">Random mix</option>
+                <option value="both">Zoom + drift</option>
+                <option value="zoom">Zoom only</option>
+                <option value="pan">Drift only</option>
+                <option value="fade">Fade only</option>
+              </select>
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+              Vignette
+              <input type="range" min={0} max={100} step={5} value={local.slideshow_vignette_strength ?? 0} onChange={e => set('slideshow_vignette_strength', Number(e.target.value))} style={{ width: 140 }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'rgba(255,255,255,0.6)', width: 34, textAlign: 'right' }}>{local.slideshow_vignette_strength ?? 0}%</span>
+            </label>
+          </div>
+          <div style={{ marginTop: 10, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'rgba(255,255,255,0.28)', lineHeight: 1.6 }}>
+            Vignette softens each still's edges into the video behind it. 0% disables it. Motion and vignette changes save with the Save button below.
+          </div>
         </div>
       </div>
       <div style={{ marginTop: 18, padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.025)', border: '1px solid var(--border)' }}>

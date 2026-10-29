@@ -54,6 +54,9 @@ const MEDIA_INSET = '5%';
 const PAN_DRIFT_PERCENT = 2;
 /** Advance a video slide if no frame arrives within this window. */
 const VIDEO_WATCHDOG_MS = 12_000;
+/** Slack added to a known clip duration before the safety net fires (covers a
+ *  late `ended` event, e.g. buffering stalls, without cutting the clip short). */
+const VIDEO_END_BUFFER_MS = 10_000;
 
 /** Transition style for a still image. */
 type ImageMotion = 'fade' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
@@ -386,7 +389,25 @@ export default function SlideshowOverlay({
       () => advanceRef.current(),
       Math.max(1000, videoWatchdogMsRef.current),
     );
-  }, [clearVideoWatchdog]);
+
+    // Once the true duration is known, replace the flat 3-minute ceiling with a
+    // duration-derived one. A clip that starts playing and then stalls mid-way
+    // disarms the watchdog above, so without this it would park until the flat
+    // ceiling and leave a gap.
+    el.addEventListener(
+      'loadedmetadata',
+      () => {
+        const seconds = el.duration;
+        if (!Number.isFinite(seconds) || seconds <= 0) return;
+        clearTimer();
+        timerRef.current = window.setTimeout(
+          () => advanceRef.current(),
+          Math.min(VIDEO_SAFETY_MS, seconds * 1000 + VIDEO_END_BUFFER_MS),
+        );
+      },
+      { once: true },
+    );
+  }, [clearVideoWatchdog, clearTimer]);
 
   if (!active || !current) return null;
 

@@ -2493,6 +2493,18 @@ function App() {
         slides={settings?.slideshow_media}
         imageSeconds={settings?.slideshow_image_seconds ?? 5}
         fadeMs={settings?.slideshow_fade_ms ?? 600}
+        kenburnsEnabled={!!settings?.slideshow_kenburns_enabled}
+        kenburnsStyle={
+          (settings?.slideshow_kenburns_style as
+            | 'fade'
+            | 'zoom'
+            | 'pan'
+            | 'both'
+            | 'random'
+            | null
+            | undefined) ?? 'random'
+        }
+        vignetteStrength={settings?.slideshow_vignette_strength ?? 0}
       />
 
       {identifyUntil && (
