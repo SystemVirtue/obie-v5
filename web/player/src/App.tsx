@@ -78,6 +78,10 @@ function App() {
   const ignoreEndedUntilRef = useRef(0); // Ignore YouTube ENDED events until this timestamp for the current load
   const firstPlayAtRef = useRef(0); // Timestamp of the first confirmed PLAYING state for the current load
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  // Media that most recently fired 'ended' on the local <video>. Lets the server-state
+  // sync below reject a play() for that same finished media, which would rewind the
+  // ended element to 0 and replay it instead of waiting for the queue advance.
+  const endedMediaIdRef = useRef<string | null>(null);
   const isAdminSkipStoppingRef = useRef(false);
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
@@ -2202,7 +2206,13 @@ function App() {
     if ((statusSourceIsLocal || statusPlaybackIsLocal) && statusPlaybackIsLocal) {
       if (localVideoRef.current) {
         if (status.state === 'playing') {
-          localVideoRef.current.play().catch(() => {});
+          // A status snapshot can still report 'playing' for the media that just ended.
+          // Calling play() on an ended element rewinds it to 0 and replays the entire
+          // song, so ignore that command until the queue advances to different media.
+          const v = localVideoRef.current;
+          if (!(v.ended && status.current_media_id === endedMediaIdRef.current)) {
+            v.play().catch(() => {});
+          }
         } else if (status.state === 'paused') {
           localVideoRef.current.pause();
         }
@@ -2302,6 +2312,7 @@ function App() {
           }}
           onEnded={() => {
             resetSilenceTracking(true);
+            endedMediaIdRef.current = currentMediaIdRef.current;
             console.log('[Player][local-video] ■ ENDED — triggering queue_next');
             reportEndedAndNext(false);
           }}
