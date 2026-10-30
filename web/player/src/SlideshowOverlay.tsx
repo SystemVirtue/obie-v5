@@ -21,16 +21,10 @@
 //   * Single-slot renderer: exactly one media element is mounted at a time, so
 //     TV/kiosk hardware never has to decode two clips at once.
 //   * Stills use a randomly chosen transition: a plain fade-in/fade-out, or a
-//     slow "Ken Burns" move (push-in, pull-back, or a horizontal drift). All are
-//     plain CSS transitions — no requestAnimationFrame animation loop. When the
-//     Ken Burns option is on, the move runs for the whole hold time, so the
-//     image appears to move continuously rather than settling.
-//   * Optional vignette feathers the slide's edges into the video behind it via
-//     `mask-image`, so borders never read as a hard rectangle. Unlike a darkened
-//     gradient it never dims the picture — it fades the edges to transparent.
+//     slow 2s "Ken Burns" push-in / pull-back. Both are plain CSS transitions —
+//     no requestAnimationFrame animation loop.
 //   * Fail-open: a bad URL skips forward; the overlay never black-screens or
-//     blocks playback. A video watchdog advances if no frame ever arrives, so a
-//     stalled or undecodable clip can never leave a permanent gap.
+//     blocks playback.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SlideshowMediaItem } from '@shared/supabase-client';
@@ -50,42 +44,18 @@ const IMAGE_ZOOM_MS = 2_000;
 const IMAGE_ZOOM_SCALE = 1.08;
 /** Inset from every edge so the now-playing video stays visible around a slide. */
 const MEDIA_INSET = '5%';
-/** Horizontal travel of a "pan" Ken Burns move, as a percentage of slide width. */
-const PAN_DRIFT_PERCENT = 2;
-/** Advance a video slide if no frame arrives within this window. */
-const VIDEO_WATCHDOG_MS = 12_000;
-/** Slack added to a known clip duration before the safety net fires (covers a
- *  late `ended` event, e.g. buffering stalls, without cutting the clip short). */
-const VIDEO_END_BUFFER_MS = 10_000;
 
 /** Transition style for a still image. */
-type ImageMotion = 'fade' | 'zoom-in' | 'zoom-out' | 'pan-left' | 'pan-right';
-
-/** Ken Burns configuration resolved from `player_settings`. */
-type KenBurnsStyle = 'fade' | 'zoom' | 'pan' | 'both' | 'random';
+type ImageMotion = 'fade' | 'zoom-in' | 'zoom-out';
 
 /**
- * Pick a transition for the next still. With Ken Burns off this reproduces the
- * original behaviour: half the stills fade plainly, the rest split evenly between
- * pushing in and pulling back. With Ken Burns on the configured style decides the
- * palette — `both`/`random` mix fades, zooms and drifts. Randomised per slide so
- * the rotation never feels mechanical.
+ * Pick a transition for the next still. Half the stills fade plainly; the other
+ * half use the slow Ken Burns move, split evenly between pushing in and pulling
+ * back. Randomised per slide so the rotation never feels mechanical.
  */
-function pickImageMotion(kenburns: boolean, style: KenBurnsStyle): ImageMotion {
-  if (!kenburns) {
-    if (Math.random() < 0.5) return 'fade';
-    return Math.random() < 0.5 ? 'zoom-in' : 'zoom-out';
-  }
-
-  const modes: ImageMotion[] =
-    style === 'fade'
-      ? ['fade']
-      : style === 'zoom'
-        ? ['zoom-in', 'zoom-out']
-        : style === 'pan'
-          ? ['pan-left', 'pan-right']
-          : ['fade', 'zoom-in', 'zoom-out', 'pan-left', 'pan-right'];
-  return modes[Math.floor(Math.random() * modes.length)] ?? 'fade';
+function pickImageMotion(): ImageMotion {
+  if (Math.random() < 0.5) return 'fade';
+  return Math.random() < 0.5 ? 'zoom-in' : 'zoom-out';
 }
 
 
@@ -139,14 +109,6 @@ interface SlideshowOverlayProps {
   imageSeconds?: number;
   /** Cross-fade duration in milliseconds. Defaults to 600. */
   fadeMs?: number;
-  /** Run the Ken Burns move for the whole hold time instead of a fixed 2s. */
-  kenburnsEnabled?: boolean;
-  /** Which moves the Ken Burns option may pick from. Defaults to `random`. */
-  kenburnsStyle?: KenBurnsStyle;
-  /** Vignette strength 0-100; 0 disables it. Defaults to 0. */
-  vignetteStrength?: number;
-  /** Advance a video slide if no frame arrives within this window. Defaults to 12s. */
-  videoWatchdogMs?: number;
 }
 
 export default function SlideshowOverlay({
@@ -154,10 +116,6 @@ export default function SlideshowOverlay({
   slides,
   imageSeconds = 5,
   fadeMs = 600,
-  kenburnsEnabled = false,
-  kenburnsStyle = 'random',
-  vignetteStrength = 0,
-  videoWatchdogMs = VIDEO_WATCHDOG_MS,
 }: SlideshowOverlayProps) {
   // Normalise once per distinct URL set. `poolKey` is what drives restarts, so
   // an unrelated settings save (new object identity, same URLs) never restarts
@@ -184,28 +142,11 @@ export default function SlideshowOverlay({
   const preloadedRef = useRef<Set<string>>(new Set());
   const timerRef = useRef<number | null>(null);
   const advanceRef = useRef<() => void>(() => {});
-  // Purely visual settings. Held in refs so changing them never restarts the
-  // rotation or resets the timer that is already running.
-  const kenburnsRef = useRef(kenburnsEnabled);
-  kenburnsRef.current = kenburnsEnabled;
-  const kenburnsStyleRef = useRef(kenburnsStyle);
-  kenburnsStyleRef.current = kenburnsStyle;
-  const videoWatchdogMsRef = useRef(videoWatchdogMs);
-  videoWatchdogMsRef.current = videoWatchdogMs;
 
   const clearTimer = useCallback(() => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
-    }
-  }, []);
-
-  const videoWatchdogRef = useRef<number | null>(null);
-
-  const clearVideoWatchdog = useCallback(() => {
-    if (videoWatchdogRef.current !== null) {
-      window.clearTimeout(videoWatchdogRef.current);
-      videoWatchdogRef.current = null;
     }
   }, []);
 
@@ -290,7 +231,6 @@ export default function SlideshowOverlay({
     const advance = () => {
       if (cancelled) return;
       clearTimer();
-      clearVideoWatchdog();
       setVisible(false); // fade the current slide out, revealing the video behind
 
       timerRef.current = window.setTimeout(() => {
@@ -310,11 +250,7 @@ export default function SlideshowOverlay({
         // *starting* transform (under fit for a push-in, exactly fit for a
         // pull-back) and the CSS transition has somewhere to travel from.
         // Videos never zoom.
-        setImageMotion(
-          slide.type === 'image'
-            ? pickImageMotion(kenburnsRef.current, kenburnsStyleRef.current)
-            : 'fade',
-        );
+        setImageMotion(slide.type === 'image' ? pickImageMotion() : 'fade');
         setMotionOn(false);
         setCurrent(slide);
 
@@ -346,9 +282,8 @@ export default function SlideshowOverlay({
       cancelled = true;
       advanceRef.current = () => {};
       clearTimer();
-      clearVideoWatchdog();
     };
-  }, [active, poolKey, imageSeconds, fadeMs, clearTimer, clearVideoWatchdog, takeNext, peekNext, preload]);
+  }, [active, poolKey, imageSeconds, fadeMs, clearTimer, takeNext, peekNext, preload]);
 
   /**
    * Start the image's hold time when it actually decodes, so a slow load does
@@ -367,10 +302,6 @@ export default function SlideshowOverlay({
    * Pin the clip silent at mount time. React's `muted` prop is not reliably
    * reflected as the DOM property, and autoplay only works when the element is
    * genuinely muted, so set it explicitly before play().
-   *
-   * Also arms the watchdog. A `.mov` (QuickTime) or otherwise undecodable clip
-   * cannot play in Chromium; if it never reaches `playing`, this timer advances
-   * past it instead of leaving a gap on screen for the full safety ceiling.
    */
   const setVideoEl = useCallback((el: HTMLVideoElement | null) => {
     if (!el) return;
@@ -379,79 +310,29 @@ export default function SlideshowOverlay({
     el.volume = 0;
     const played = el.play();
     if (played && typeof played.catch === 'function') played.catch(() => {});
-
-    clearVideoWatchdog();
-    const disarm = () => clearVideoWatchdog();
-    el.addEventListener('playing', disarm);
-    el.addEventListener('timeupdate', disarm);
-    el.addEventListener('loadeddata', disarm);
-    videoWatchdogRef.current = window.setTimeout(
-      () => advanceRef.current(),
-      Math.max(1000, videoWatchdogMsRef.current),
-    );
-
-    // Once the true duration is known, replace the flat 3-minute ceiling with a
-    // duration-derived one. A clip that starts playing and then stalls mid-way
-    // disarms the watchdog above, so without this it would park until the flat
-    // ceiling and leave a gap.
-    el.addEventListener(
-      'loadedmetadata',
-      () => {
-        const seconds = el.duration;
-        if (!Number.isFinite(seconds) || seconds <= 0) return;
-        clearTimer();
-        timerRef.current = window.setTimeout(
-          () => advanceRef.current(),
-          Math.min(VIDEO_SAFETY_MS, seconds * 1000 + VIDEO_END_BUFFER_MS),
-        );
-      },
-      { once: true },
-    );
-  }, [clearVideoWatchdog, clearTimer]);
+  }, []);
 
   if (!active || !current) return null;
 
   const fadeSeconds = Math.max(0, fadeMs) / 1000;
+  const zoomSeconds = IMAGE_ZOOM_MS / 1000;
   const zooming = current.type === 'image' && imageMotion !== 'fade';
-  const panning = imageMotion === 'pan-left' || imageMotion === 'pan-right';
-
-  // With Ken Burns on the move runs for the whole hold, so the image drifts
-  // continuously instead of settling after 2s. With it off the original fixed
-  // 2s move is kept.
-  const motionSeconds = kenburnsEnabled
-    ? Math.max(1, imageSeconds)
-    : IMAGE_ZOOM_MS / 1000;
 
   // The move travels *below* fit rather than above it, so a still is never
   // cropped or pushed off screen: a push-in starts at fit-and-shrunk and grows
-  // to exactly fit, a pull-back starts at fit and settles back down. A drift
-  // stays at fit-and-shrunk throughout, so its slack absorbs the sideways travel
-  // and the clip box never crops it.
+  // to exactly fit, a pull-back starts at fit and settles back down.
   // `motionOn` only flips true once, so the move never rewinds while the slide
   // is fading out.
   const fitScale = 1 / IMAGE_ZOOM_SCALE;
-  let scale = 1;
-  let drift = 0;
-  if (zooming) {
-    if (imageMotion === 'zoom-in') {
-      scale = motionOn ? 1 : fitScale;
-    } else if (imageMotion === 'zoom-out') {
-      scale = motionOn ? fitScale : 1;
-    } else if (panning) {
-      scale = fitScale;
-      const dir = imageMotion === 'pan-left' ? 1 : -1;
-      drift = motionOn ? -dir * PAN_DRIFT_PERCENT : dir * PAN_DRIFT_PERCENT;
-    }
-  }
-
-  // Vignette: fade the slide's own edges to transparent so its border melts into
-  // the playing video instead of reading as a hard rectangle. A mask (rather than
-  // a darkened gradient) never dims the picture itself.
-  const vignette = Math.max(0, Math.min(100, vignetteStrength));
-  const vignetteMask =
-    current.type === 'image' && vignette > 0
-      ? `radial-gradient(ellipse at center, rgba(0,0,0,1) ${Math.max(0, 100 - vignette)}%, rgba(0,0,0,0) 100%)`
-      : undefined;
+  const scale = !zooming
+    ? 1
+    : imageMotion === 'zoom-in'
+      ? motionOn
+        ? 1
+        : fitScale
+      : motionOn
+        ? fitScale
+        : 1;
 
   const mediaStyle = {
     position: 'absolute' as const,
@@ -462,16 +343,11 @@ export default function SlideshowOverlay({
     // instead of zooming-to-fill and cropping its edges off screen.
     objectFit: 'contain' as const,
     objectPosition: 'center center',
-    transform: zooming
-      ? `scale(${scale})${panning ? ` translateX(${drift}%)` : ''}`
-      : 'none',
+    transform: zooming ? `scale(${scale})` : 'none',
     transformOrigin: 'center center',
-    ...(vignetteMask
-      ? { maskImage: vignetteMask, WebkitMaskImage: vignetteMask }
-      : {}),
     opacity: visible ? 1 : 0,
     transition: zooming
-      ? `opacity ${fadeSeconds}s ease-in-out, transform ${motionSeconds}s ${kenburnsEnabled ? 'linear' : 'ease-in-out'}`
+      ? `opacity ${fadeSeconds}s ease-in-out, transform ${zoomSeconds}s ease-in-out`
       : `opacity ${fadeSeconds}s ease-in-out`,
   };
 

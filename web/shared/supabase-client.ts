@@ -164,12 +164,6 @@ export interface PlayerSettings {
   slideshow_image_seconds?: number;
   /** Fade in/out duration between slides, in milliseconds */
   slideshow_fade_ms?: number;
-  /** Run the Ken Burns move for the whole hold time instead of a fixed 2s */
-  slideshow_kenburns_enabled?: boolean;
-  /** Which Ken Burns moves may be used: fade | zoom | pan | both | random */
-  slideshow_kenburns_style?: string | null;
-  /** Feather still-image edges into the video behind, 0-100. 0 disables. */
-  slideshow_vignette_strength?: number;
 }
 
 export interface KioskSession {
