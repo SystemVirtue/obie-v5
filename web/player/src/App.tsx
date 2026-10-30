@@ -78,6 +78,12 @@ function App() {
   const ignoreEndedUntilRef = useRef(0); // Ignore YouTube ENDED events until this timestamp for the current load
   const firstPlayAtRef = useRef(0); // Timestamp of the first confirmed PLAYING state for the current load
   const isEndingRef = useRef(false); // In-flight guard: prevents double queue_next from concurrent calls
+  // Queue-advance transition guard. After an advance the queue holds a NEW media, but the player
+  // can still receive a Realtime snapshot describing the media that just ENDED (the 120ms refetch
+  // in subscribeToPlayerStatus races the RPC). Adopting such a snapshot replays the finished song,
+  // because currentMediaIdRef is nulled for the handover so the "media changed" test still passes.
+  // player-control likewise rejects these writes ("stale_player_status_update_ignored").
+  const advanceGuardRef = useRef<{ fromMediaId: string; until: number } | null>(null);
   const isAdminSkipStoppingRef = useRef(false);
   const loadingTimeoutRef = useRef<number | null>(null); // Timeout to skip if status stays in 'loading' for 4+ seconds
   const videoHasPlayedRef = useRef(false); // true once current video reaches YouTube state PLAYING; reset on new media
@@ -659,6 +665,12 @@ function App() {
     }
     isEndingRef.current = true;
     const expectedMediaId = currentMediaIdRef.current;
+
+    // Arm the transition guard before the RPC so snapshots for the finishing media are rejected
+    // for the whole handover window (a skip fade can take seconds). Expires as a backstop.
+    if (expectedMediaId) {
+      advanceGuardRef.current = { fromMediaId: expectedMediaId, until: Date.now() + 3000 };
+    }
 
     console.log(isSkip ? '[Player] Video SKIPPED - triggering queue_next' : '[Player] Video ENDED - triggering queue_next');
 
@@ -1388,6 +1400,28 @@ function App() {
           currentYouTubeIdRef.current === expectedStatusYouTubeId
         );
       
+      // STALE-ADVANCE GUARD: drop snapshots that still describe the media we are advancing away
+      // from. Without this, the "new media" block at the end of this handler sees
+      // newMediaId !== currentMediaIdRef.current (nulled for the handover) and reloads the song
+      // that just finished, replaying it from the start.
+      const advanceGuard = advanceGuardRef.current;
+      if (
+        advanceGuard &&
+        newMediaId &&
+        newMediaId === advanceGuard.fromMediaId &&
+        currentMediaIdRef.current !== newMediaId
+      ) {
+        if (Date.now() < advanceGuard.until) {
+          console.warn('[Player] Ignoring status snapshot for media we already advanced past', {
+            status_media_id: newMediaId,
+            state: newState,
+          });
+          // prevStateRef is deliberately not advanced, so the authoritative transition still fires.
+          return;
+        }
+        advanceGuardRef.current = null;
+      }
+
       // SKIP: Admin set state to 'idle' while video was playing.
       if (newState === 'idle' && (prevState === 'playing' || prevState === 'paused')) {
         console.log('[Player] Skip detected from Admin - stopping current media and waiting for server queue advance');
@@ -2268,7 +2302,7 @@ function App() {
       {localPlaybackUrl && (
         <video
           ref={localVideoRef}
-          key={localPlaybackUrl}
+          key={`${currentMedia?.id ?? 'none'}::${localPlaybackUrl}`}
           src={localPlaybackUrl}
           autoPlay
           className="absolute inset-0 w-full h-full"
