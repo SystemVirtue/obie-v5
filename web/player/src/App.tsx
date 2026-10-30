@@ -637,12 +637,18 @@ function App() {
     }
   }, [isSlavePlayer]);
 
-  // Report video ended and trigger queue_next (disabled for slave players)
+  // Report video ended and trigger queue_next. Skips are master-only; a natural end may
+  // also be reported by a slave so the queue still advances when the designated master is
+  // throttled, suspended, or stalled mid-video. A duplicate report cannot double-advance:
+  // queue_next re-reads player_status.current_media_id under an advisory lock and no-ops
+  // when expected_media_id no longer matches the item it just advanced.
   const reportEndedAndNext = useCallback(async (isSkip = false) => {
-    // Slave players do not trigger queue operations
     if (isSlavePlayer) {
-      console.log('[Slave Player] Skipping ended/next report');
-      return;
+      if (isSkip) {
+        console.log('[Slave Player] Skipping skip report');
+        return;
+      }
+      console.log('[Slave Player] Reporting natural end as failover');
     }
     if (!endpointIdRef.current || !sessionIdRef.current) {
       console.warn('[Player] Ignoring ended/skip until endpoint/session registration is ready');

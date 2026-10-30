@@ -782,7 +782,15 @@ Deno.serve(async (req)=>{
         ? true
         : await isMasterEndpoint(supabase, player_id, endpoint_id, session_id);
 
-      if (!callerIsMaster) {
+      // A live slave may report a natural end as failover, so the queue still advances when
+      // the designated master is throttled, suspended, or stalled mid-video. This cannot
+      // double-advance: queue_next re-reads player_status.current_media_id under
+      // pg_advisory_xact_lock and returns empty (queue_next_skipped/idempotency_guard) when
+      // p_expected_media_id no longer matches the row it just advanced. The already_advanced
+      // guard below absorbs the common case first.
+      const endedFromNonMaster = !callerIsMaster && action === 'ended';
+
+      if (!callerIsMaster && !endedFromNonMaster) {
         if (action === 'update' && state === 'playing' && typeof expected_media_id === 'string') {
           const { data: currentStatusForConfirmation, error: currentStatusError } = await supabase
             .from('player_status')
@@ -881,6 +889,15 @@ Deno.serve(async (req)=>{
             ...corsHeaders,
             'Content-Type': 'application/json'
           }
+        });
+      }
+
+      if (endedFromNonMaster) {
+        await logSystemEvent(supabase, player_id, 'ended_report_accepted_from_non_master', 'warn', {
+          source: initiator || 'player_client',
+          endpoint_id: endpoint_id || null,
+          session_id: session_id || null,
+          media_item_id: typeof expected_media_id === 'string' ? expected_media_id : null,
         });
       }
 
